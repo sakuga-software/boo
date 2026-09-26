@@ -55,7 +55,7 @@ const CHROME_LINES = 11;
 
 const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
-const rowHeight = (row: Row) => (row.posted ? 4 : 3);
+const rowHeight = (row: Row, view: View) => 2 + (view.detail ? 1 : 0) + (row.posted ? 1 : 0);
 
 function needsWatch(row: Row, dryRun: boolean): boolean {
   if (row.left) return false;
@@ -577,8 +577,9 @@ function mergeWarning(row: Row): string | undefined {
 
   const clock = options.watch ? now : new Date();
   const selectedIndex = selection ? keys.indexOf(selection) : 0;
+  const views = new Map(shownRows.map((row) => [row, describe(row, clock, options)]));
   const range = options.interactive
-    ? visibleRange(shownRows.map(rowHeight), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
+    ? visibleRange(shownRows.map((row) => rowHeight(row, views.get(row)!)), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
     : { start: 0, end: shownRows.length };
   scrollStart.current = range.start;
 
@@ -593,7 +594,7 @@ function mergeWarning(row: Row): string | undefined {
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Header options={options} />
+      <Header options={options} mood={fatal ? "failed" : done ? "done" : nextCheckAt ? "sleeping" : "checking"} now={clock} nextCheckAt={nextCheckAt} />
       {rows === null && !fatal && (
         <Text>
           <Text color="cyan">
@@ -622,7 +623,7 @@ function mergeWarning(row: Row): string | undefined {
               key={keyOf(row.pr)}
               ref={registerRow(keyOf(row.pr))}
               row={row}
-              now={clock}
+              view={views.get(row)!}
               options={options}
               selected={options.interactive && keyOf(row.pr) === selection}
             />
@@ -638,8 +639,6 @@ function mergeWarning(row: Row): string | undefined {
           rows={rows}
           triggered={triggered}
           done={done}
-          now={clock}
-          nextCheckAt={nextCheckAt}
           listError={listError}
           options={options}
         />
@@ -658,19 +657,46 @@ function mergeWarning(row: Row): string | undefined {
   );
 }
 
-function Header({ options }: { options: Options }) {
+type Mood = "checking" | "sleeping" | "done" | "failed";
+
+const EYES: Record<Mood, string> = { checking: "o.o", sleeping: "-.-", done: "^.^", failed: "x.x" };
+
+interface HeaderProps {
+  options: Options;
+  mood: Mood;
+  now: Date;
+  nextCheckAt?: Date;
+}
+
+function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
+  const rabbit = [" (\\(\\", ` ( ${EYES[mood]})`, ' o_(")(")'];
+  const status = !options.watch || mood === "done" || mood === "failed"
+    ? " "
+    : `${nextCheckAt ? `next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : "checking…"}${options.interactive ? "" : " · Ctrl+C to quit"}`;
   return (
-    <Box flexDirection="column">
-      <Text wrap="truncate-end">
-        <Text color={BRAND} bold>
-          🐇 coderabbit-retry
+    <Box>
+      <Box flexDirection="column" width={11} flexShrink={0}>
+        {rabbit.map((line) => (
+          <Text key={line} color={BRAND}>
+            {line}
+          </Text>
+        ))}
+      </Box>
+      <Box flexDirection="column">
+        <Text wrap="truncate-end">
+          <Text color={BRAND} bold>
+            coderabbit-retry
+          </Text>
+          {options.watch && <Text color="cyan"> watch</Text>}
+          {options.dryRun && <Text color="yellow"> dry run</Text>}
         </Text>
-        {options.watch && <Text color="cyan"> [watch]</Text>}
-        {options.dryRun && <Text color="yellow"> [dry-run]</Text>}
-      </Text>
-      <Text dimColor wrap="truncate-end">
-        Open pull requests by {options.author} in {options.org} since {formatDay(options.since)}
-      </Text>
+        <Text dimColor wrap="truncate-end">
+          {options.author} · {options.org} · since {formatDay(options.since)}
+        </Text>
+        <Text dimColor wrap="truncate-end">
+          {status}
+        </Text>
+      </Box>
     </Box>
   );
 }
@@ -679,39 +705,19 @@ interface View {
   icon: ReactNode;
   label: string;
   color: string;
-  detail: string;
+  detail?: string;
 }
 
 const REVIEWED_VIEWS: Record<Verdict, View> = {
-  approved: {
-    icon: <Text color="green">✔</Text>,
-    label: "approved",
-    color: "green",
-    detail: "the last commit is reviewed, and CodeRabbit approves",
-  },
-  "changes requested": {
-    icon: <Text color="red">✎</Text>,
-    label: "changes requested",
-    color: "red",
-    detail: "the last commit is reviewed, and CodeRabbit requests changes",
-  },
-  commented: {
-    icon: <Text color="cyan">✔</Text>,
-    label: "reviewed",
-    color: "cyan",
-    detail: "the last commit is reviewed, with no verdict (comments only or dismissed)",
-  },
+  approved: { icon: <Text color="green">✔</Text>, label: "approved", color: "green" },
+  "changes requested": { icon: <Text color="red">✎</Text>, label: "changes requested", color: "red" },
+  commented: { icon: <Text color="cyan">✔</Text>, label: "reviewed", color: "cyan" },
 };
 
 const LEFT_VIEWS: Record<LeftStatus, View> = {
-  merged: { icon: <Text color="magenta">◆</Text>, label: "merged", color: "magenta", detail: "merged, no longer watched" },
-  closed: { icon: <Text color="red">○</Text>, label: "closed", color: "red", detail: "closed, no longer watched" },
-  draft: {
-    icon: <Text color="gray">◌</Text>,
-    label: "draft",
-    color: "gray",
-    detail: "back to draft, not watched until it is ready for review",
-  },
+  merged: { icon: <Text color="magenta">◆</Text>, label: "merged", color: "magenta" },
+  closed: { icon: <Text color="red">○</Text>, label: "closed", color: "red" },
+  draft: { icon: <Text color="gray">◌</Text>, label: "draft", color: "gray", detail: "watched again when it is ready for review" },
 };
 
 function describe(row: Row, now: Date, options: Options): View {
@@ -726,49 +732,46 @@ function describe(row: Row, now: Date, options: Options): View {
       icon: spinner("blue"),
       label: command === "review" ? "retrying" : "posting",
       color: "blue",
-      detail: `posting "${commandBody(command)}"…`,
+      detail: `"${commandBody(command)}"…`,
     };
   }
   if (row.left) return LEFT_VIEWS[row.left];
   if (row.error) return { icon: <Text color="red">✖</Text>, label: "error", color: "red", detail: row.error };
 
   const decision = row.decision;
-  if (!decision) return { icon: spinner("gray"), label: "checking", color: "gray", detail: "reading the reviews…" };
+  if (!decision) return { icon: spinner("gray"), label: "checking", color: "gray" };
 
   switch (decision.kind) {
     case "reviewed":
       return REVIEWED_VIEWS[decision.verdict];
     case "busy":
-      return { icon: spinner("cyan"), label: "reviewing", color: "cyan", detail: "CodeRabbit is reviewing the pull request" };
+      return { icon: spinner("cyan"), label: "reviewing", color: "cyan" };
     case "idle":
       return {
         icon: <Text color="gray">·</Text>,
         label: "nothing to do",
         color: "gray",
-        detail: decision.limitLifted
-          ? "rate limit lifted, but the last commit has no review"
-          : "no rate limit, but the last commit has no review",
+        detail: `${decision.limitLifted ? "rate limit lifted" : "no rate limit"}, but the last commit has no review`,
       };
     case "skipped":
       return {
         icon: <Text color="gray">⊘</Text>,
         label: "skipped",
         color: "gray",
-        detail: `CodeRabbit skipped the review: ${decision.reason}${options.interactive ? " · r requests one" : ""}`,
+        detail: `${decision.reason}${options.interactive ? " · r requests one" : ""}`,
       };
     case "paused":
       return {
         icon: <Text color="gray">‖</Text>,
         label: "paused",
         color: "gray",
-        detail: `automatic reviews are paused, and the last commit has no review${options.interactive ? " · r reviews it once" : ""}`,
+        detail: `automatic reviews are paused${options.interactive ? " · r reviews it once" : ""}`,
       };
     case "unseen":
       return {
         icon: <Text color="gray">?</Text>,
         label: "no review yet",
         color: "gray",
-        detail: "CodeRabbit has not commented on this pull request",
       };
     case "wait": {
       const remaining = decision.availableAt.getTime() - now.getTime();
@@ -786,7 +789,7 @@ function describe(row: Row, now: Date, options: Options): View {
         icon: spinner("magenta"),
         label: "requested",
         color: "magenta",
-        detail: `request of ${formatTime(decision.requestedAt)} has no reply from CodeRabbit`,
+        detail: `asked at ${formatTime(decision.requestedAt)}, no reply yet`,
       };
     case "trigger": {
       const since = formatDuration(now.getTime() - decision.availableAt.getTime(), false);
@@ -803,13 +806,12 @@ function describe(row: Row, now: Date, options: Options): View {
 interface RowViewProps {
   ref: (node: DOMElement | null) => void;
   row: Row;
-  now: Date;
+  view: View;
   options: Options;
   selected: boolean;
 }
 
-function RowView({ ref, row, now, options, selected }: RowViewProps) {
-  const view = describe(row, now, options);
+function RowView({ ref, row, view, options, selected }: RowViewProps) {
   const name = row.pr.repo.startsWith(`${options.org}/`) ? row.pr.repo.slice(options.org.length + 1) : row.pr.repo;
   const indent = options.interactive ? 24 : 22;
   return (
@@ -837,11 +839,13 @@ function RowView({ ref, row, now, options, selected }: RowViewProps) {
         </Box>
         <Text wrap="truncate-end">{row.pr.title}</Text>
       </Box>
-      <Box paddingLeft={indent}>
-        <Text dimColor wrap="truncate-end">
-          {view.detail}
-        </Text>
-      </Box>
+      {view.detail && (
+        <Box paddingLeft={indent}>
+          <Text dimColor wrap="truncate-end">
+            {view.detail}
+          </Text>
+        </Box>
+      )}
       {row.posted && (
         <Box paddingLeft={indent}>
           <Text color="green" wrap="truncate-end">
@@ -857,46 +861,51 @@ interface FooterProps {
   rows: Row[];
   triggered: number;
   done: boolean;
-  now: Date;
-  nextCheckAt?: Date;
   listError?: string;
   options: Options;
 }
 
-function Footer({ rows, triggered, done, now, nextCheckAt, listError, options }: FooterProps) {
+function Footer({ rows, triggered, done, listError, options }: FooterProps) {
   const active = rows.filter((row) => !row.left);
   const count = (kind: Decision["kind"]) => active.filter((row) => row.decision?.kind === kind).length;
   const verdicts = (verdict: Verdict) =>
     active.filter((row) => row.decision?.kind === "reviewed" && row.decision.verdict === verdict).length;
   const countLeft = (status: LeftStatus) => rows.filter((row) => row.left === status).length;
   const waiting = count("wait");
-  const parts = [
-    triggered > 0 && `${triggered} retried`,
-    count("trigger") > 0 && `${count("trigger")} to retry`,
-    waiting > 0 && `${waiting} waiting for quota`,
-    count("busy") > 0 && `${count("busy")} reviewing`,
-    verdicts("approved") > 0 && `${verdicts("approved")} approved`,
-    verdicts("changes requested") > 0 && `${verdicts("changes requested")} with changes requested`,
-    verdicts("commented") > 0 && `${verdicts("commented")} reviewed with no verdict`,
-    count("idle") > 0 && `${count("idle")} with nothing to do`,
-    count("skipped") > 0 && `${count("skipped")} skipped`,
-    count("paused") > 0 && `${count("paused")} paused`,
-    count("unseen") > 0 && `${count("unseen")} with no review yet`,
-    countLeft("merged") > 0 && `${countLeft("merged")} merged`,
-    countLeft("closed") > 0 && `${countLeft("closed")} closed`,
-    countLeft("draft") > 0 && `${countLeft("draft")} back to draft`,
-  ].filter(Boolean);
+  const parts: [number, string, string][] = [
+    [triggered, "retried", "green"],
+    [count("trigger"), "to retry", "blue"],
+    [waiting, "waiting for quota", "yellow"],
+    [count("busy"), "reviewing", "cyan"],
+    [count("pending"), "requested", "magenta"],
+    [verdicts("approved"), "approved", "green"],
+    [verdicts("changes requested"), "changes requested", "red"],
+    [verdicts("commented"), "reviewed", "cyan"],
+    [count("idle"), "nothing to do", "gray"],
+    [count("skipped"), "skipped", "gray"],
+    [count("paused"), "paused", "gray"],
+    [count("unseen"), "no review yet", "gray"],
+    [countLeft("merged"), "merged", "magenta"],
+    [countLeft("closed"), "closed", "red"],
+    [countLeft("draft"), "draft", "gray"],
+  ];
+  const shown = parts.filter(([amount]) => amount > 0);
 
   return (
     <Box flexDirection="column">
-      <Text wrap="truncate-end">{parts.length > 0 ? parts.join(" · ") : "Nothing to do."}</Text>
-      {options.watch && !done && (
-        <Text dimColor wrap="truncate-end">
-          Watching
-          {nextCheckAt ? ` · next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : " · checking…"}
-          {options.interactive ? "" : " · Ctrl+C to quit"}
-        </Text>
-      )}
+      <Text wrap="truncate-end">
+        {shown.length === 0
+          ? "Nothing to do."
+          : shown.map(([amount, label, color], index) => (
+              <Text key={label}>
+                {index > 0 && <Text dimColor> · </Text>}
+                <Text color={color} bold>
+                  {amount}
+                </Text>{" "}
+                {label}
+              </Text>
+            ))}
+      </Text>
       {listError && (
         <Text color="red" wrap="truncate-end">
           The list refresh failed: {listError}

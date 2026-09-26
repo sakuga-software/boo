@@ -16,7 +16,7 @@
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js",
     "prepare": "pnpm build",
-    "dev": "tsx src/cli.tsx",
+    "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/*.test.ts",
     "demo": "tsx --tsconfig demo/tsconfig.json demo/demo.tsx"
