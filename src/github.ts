@@ -55,9 +55,17 @@ export async function listPullRequests({ org, author, since }: SearchOptions): P
     }));
 }
 
-async function paginate<T>(path: string): Promise<T[]> {
-  const pages = JSON.parse(await gh(["api", "--paginate", "--slurp", path])) as T[][];
-  return pages.flat();
+const USER = "user: (if .user then {login: .user.login} else null end)";
+const COMMENT_FIELDS = `{id, ${USER}, body, created_at, updated_at}`;
+const REVIEW_FIELDS = `{${USER}, commit_id, submitted_at, state, body}`;
+
+/** Reads every page of a list, and keeps only the fields that `fields` selects in each item. */
+async function paginate<T>(path: string, fields: string): Promise<T[]> {
+  const output = await gh(["api", "--paginate", path, "--jq", `.[] | ${fields}`]);
+  return output
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as T);
 }
 
 export type PullRequestStatus = "open" | "draft" | "merged" | "closed";
@@ -80,8 +88,8 @@ export async function fetchReviewState(pr: PullRequest) {
   const base = `repos/${pr.repo}`;
   const [pull, reviews, comments] = await Promise.all([
     gh(["api", `${base}/pulls/${pr.number}`, "--jq", "{head: {sha: .head.sha}, state, draft, merged_at, mergeable_state}"]).then((output) => JSON.parse(output) as PullSummary),
-    paginate<Review>(`${base}/pulls/${pr.number}/reviews`),
-    paginate<Comment>(`${base}/issues/${pr.number}/comments`),
+    paginate<Review>(`${base}/pulls/${pr.number}/reviews`, REVIEW_FIELDS),
+    paginate<Comment>(`${base}/issues/${pr.number}/comments`, COMMENT_FIELDS),
   ]);
   return { head: pull.head.sha, status: statusOf(pull), mergeState: pull.mergeable_state ?? "unknown", reviews, comments };
 }
