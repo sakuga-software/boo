@@ -877,6 +877,7 @@ function Footer({ rows, triggered, done, listError, options }: FooterProps) {
     [count("trigger"), "to retry", "blue"],
     [waiting, "waiting for quota", "yellow"],
     [count("busy"), "reviewing", "cyan"],
+    [count("pending"), "requested", "magenta"],
     [verdicts("approved"), "approved", "green"],
     [verdicts("changes requested"), "changes requested", "red"],
     [verdicts("commented"), "reviewed", "cyan"],
