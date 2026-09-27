@@ -3,17 +3,18 @@ import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect, type Action, type Command } from "./actions.js";
-import { botReplied, decide, quotaScope, quotaSignals, type Comment, type Decision, type QuotaSignal, type QuotaSource, type Review, type Verdict } from "./decide.js";
+import { BOT_LOGIN, botReplied, decide, quotaScope, quotaSignals, type Comment, type Decision, type QuotaSignal, type QuotaSource } from "./decide.js";
 import * as github from "./github.js";
-import type { PullRequest } from "./github.js";
+import type { PullRequest, PullRequestSnapshot } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
+import { summarize, type Overall, type Reviewer, type ReviewerStatus, type Summary } from "./reviewers.js";
 import { planSync, type LeftStatus } from "./sync.js";
 import { visibleRange } from "./viewport.js";
 
 export interface Options {
   org: string;
   author: string;
-  since: string;
+  since?: string;
   watch: boolean;
   dryRun: boolean;
   interactive: boolean;
@@ -21,15 +22,17 @@ export interface Options {
 
 interface Row {
   pr: PullRequest;
+  /** The CodeRabbit decision, which drives the automatic retries. */
   decision?: Decision;
+  summary?: Summary;
   activity?: "loading" | { posting: Command };
   posted?: { command: Command; url: string };
   error?: string;
   left?: LeftStatus;
-  fetched?: { head: string; mergeState?: string; reviews: Review[]; comments: Comment[] };
+  fetched?: Omit<PullRequestSnapshot, "status">;
 }
 
-export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "postCommand" | "openInBrowser" | "mergePullRequest">;
+export type GitHub = Pick<typeof github, "listPullRequests" | "fetchPullRequest" | "postCommand" | "openInBrowser" | "mergePullRequest">;
 
 export interface Timing {
   replyPollMs: number;
@@ -40,13 +43,12 @@ export interface Timing {
 
 const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, watchPollMs: 30_000, listRefreshMs: 60_000 };
 const REPOST_GUARD_MS = 15 * 60_000;
-const BRAND = "#FF570A";
+const BRAND = "#A78BFA";
 const REVIEW_COMMANDS: readonly Command[] = ["review", "full review"];
 // GitHub mergeable_state values that deserve a warning before a merge.
 const MERGE_STATE_WARNINGS: Record<string, string> = {
   dirty: "conflicts with the base branch",
   blocked: "blocked by the branch protection rules",
-  unstable: "some checks fail",
   behind: "behind the base branch",
   unknown: "GitHub has not computed the merge state yet",
 };
@@ -55,11 +57,16 @@ const CHROME_LINES = 11;
 
 const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
-const rowHeight = (row: Row, view: View) => 2 + (view.detail ? 1 : 0) + (row.posted ? 1 : 0);
+const rowHeight = (row: Row, view: View, expanded: boolean) =>
+  2 + (row.summary ? 1 : 0) + (expanded && view.detail ? 1 : 0) + (row.posted ? 1 : 0);
+
+// A review or a check in progress changes soon. The watch reads such a row at each poll, even during a CodeRabbit quota wait.
+const inProgress = (row: Row) =>
+  Boolean(row.summary?.checks.pending) || Boolean(row.summary?.reviewers.some((reviewer) => reviewer.status === "reviewing"));
 
 function needsWatch(row: Row, dryRun: boolean): boolean {
   if (row.left) return false;
-  if (row.error) return true;
+  if (row.error || inProgress(row)) return true;
   switch (row.decision?.kind) {
     case "busy":
     case "pending":
@@ -167,9 +174,9 @@ export function App(props: AppProps) {
       return run;
     }
 
-    // The quota belongs to the developer, so every row reads the quota signals of the rows in the
-    // same quota scope (see quotaScope). A new fetch on one row can thus change the decision of the
-    // others, with no API call.
+    // The CodeRabbit quota belongs to the developer, so every row reads the quota signals of the rows
+    // in the same quota scope (see quotaScope). A new fetch on one row can thus change the decision
+    // of the others, with no API call.
     function redecide() {
       const now = new Date();
       const scopeOf = (row: Row) => quotaScope(row.pr.repo, row.fetched?.comments ?? [], row.fetched?.reviews ?? []);
@@ -182,7 +189,8 @@ export function App(props: AppProps) {
       for (const [key, row] of rowsRef.current) {
         if (!row.fetched || row.left) continue;
         const quota = signalsByScope.get(scopeOf(row)) ?? [];
-        rowsRef.current.set(key, { ...row, decision: decide({ ...row.fetched, now, pr: key, quota }) });
+        const decision = decide({ ...row.fetched, now, pr: key, quota });
+        rowsRef.current.set(key, { ...row, decision, summary: summarize({ ...row.fetched, now, coderabbit: decision }) });
       }
       setRows([...rowsRef.current.values()]);
     }
@@ -190,7 +198,7 @@ export function App(props: AppProps) {
     async function refresh(pr: PullRequest): Promise<Decision | undefined> {
       update(pr, { activity: "loading" });
       try {
-        const { status, ...state } = await gitHub.fetchReviewState(pr);
+        const { status, ...state } = await gitHub.fetchPullRequest(pr);
         if (status !== "open") {
           update(pr, { left: status, activity: undefined, error: undefined });
           return undefined;
@@ -319,7 +327,7 @@ export function App(props: AppProps) {
           // or someone approves a pull request that waits for the quota. The loop below refreshes the others.
           const quiet = tracked().filter((pr) => {
             const row = rowOf(pr);
-            return !row.left && (!needsWatch(row, options.dryRun) || row.decision?.kind === "wait");
+            return !row.left && !inProgress(row) && (!needsWatch(row, options.dryRun) || row.decision?.kind === "wait");
           });
           await Promise.all(quiet.map(refresh));
         }
@@ -327,7 +335,7 @@ export function App(props: AppProps) {
         const due = watched.filter((pr) => {
           const row = rowOf(pr);
           if (row.left) return false;
-          return row.decision?.kind !== "wait" || row.decision.availableAt.getTime() <= Date.now();
+          return inProgress(row) || row.decision?.kind !== "wait" || row.decision.availableAt.getTime() <= Date.now();
         });
         await Promise.all(due.map(refresh));
         await triggerReady(tracked());
@@ -398,20 +406,29 @@ export function App(props: AppProps) {
     );
   }
 
-function mergeWarning(row: Row): string | undefined {
+  function mergeWarning(row: Row): string | undefined {
     const warnings: string[] = [];
-    const decision = row.decision;
-    if (decision?.kind === "reviewed" && decision.verdict === "changes requested") warnings.push("CodeRabbit requests changes");
-    else if (decision?.kind !== "reviewed" || decision.verdict !== "approved") warnings.push("CodeRabbit has not approved the last commit");
+    const reviewers = row.summary?.reviewers ?? [];
+    const requesting = reviewers.filter((reviewer) => reviewer.verdict === "changes requested").map((reviewer) => reviewer.name);
+    if (requesting.length > 0) warnings.push(`${requesting.join(", ")} ${requesting.length === 1 ? "requests" : "request"} changes`);
+    else if (!reviewers.some((reviewer) => reviewer.verdict === "approved")) warnings.push("no reviewer approves");
+    const failed = row.summary?.checks.failed ?? [];
+    if (failed.length > 0) warnings.push(`${failed.length} failing check${failed.length === 1 ? "" : "s"}`);
+    if (row.summary?.checks.pending) warnings.push(`${row.summary.checks.pending} running check${row.summary.checks.pending === 1 ? "" : "s"}`);
     const state = MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? "unknown"];
     if (state) warnings.push(state);
     return warnings.length > 0 ? `Warning: ${warnings.join(", ")}.` : undefined;
   }
 
+  function targetOf(row: Row) {
+    const coderabbit = row.decision === undefined ? undefined : row.decision.kind !== "unseen";
+    return { left: row.left !== undefined, dryRun: options.dryRun, ...(coderabbit !== undefined && { coderabbit }) };
+  }
+
   function request(action: Action, key = live().key) {
     const row = key ? rowsRef.current.get(key) : undefined;
     if (!row || !key) return;
-    const refused = refusal(action, { left: row.left !== undefined, dryRun: options.dryRun });
+    const refused = refusal(action, targetOf(row));
     if (refused) {
       setFlash({ text: `Cannot ${action.label} ${key}: ${refused}.`, color: "yellow" });
       return;
@@ -439,7 +456,7 @@ function mergeWarning(row: Row): string | undefined {
     }
     const quota =
       REVIEW_COMMANDS.includes(action.command) && row.decision?.kind === "wait"
-        ? `The quota comes back at ${formatTime(row.decision.availableAt)}: CodeRabbit will likely refuse.`
+        ? `The CodeRabbit quota comes back at ${formatTime(row.decision.availableAt)}: CodeRabbit will likely refuse.`
         : undefined;
     setFlash(undefined);
     confirm({ key, action, warning: quota });
@@ -455,7 +472,7 @@ function mergeWarning(row: Row): string | undefined {
       return;
     }
     // A list refresh can close the pull request while the prompt waits.
-    const refused = refusal(pending.action, { left: row.left !== undefined, dryRun: options.dryRun });
+    const refused = refusal(pending.action, targetOf(row));
     if (refused) {
       setFlash({ text: `Cannot ${pending.action.label} ${pending.key}: ${refused}.`, color: "yellow" });
       return;
@@ -578,8 +595,10 @@ function mergeWarning(row: Row): string | undefined {
   const clock = options.watch ? now : new Date();
   const selectedIndex = selection ? keys.indexOf(selection) : 0;
   const views = new Map(shownRows.map((row) => [row, describe(row, clock, options)]));
+  // In a terminal, only the selected row shows its details. A piped run shows them all.
+  const expanded = (row: Row) => !options.interactive || keyOf(row.pr) === selection;
   const range = options.interactive
-    ? visibleRange(shownRows.map((row) => rowHeight(row, views.get(row)!)), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
+    ? visibleRange(shownRows.map((row) => rowHeight(row, views.get(row)!, expanded(row))), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
     : { start: 0, end: shownRows.length };
   scrollStart.current = range.start;
 
@@ -605,7 +624,7 @@ function mergeWarning(row: Row): string | undefined {
       )}
       {rows?.length === 0 && (
         <Text dimColor>
-          No open pull request by {options.author} in {options.org} since {formatDay(options.since)}.
+          No open pull request by {options.author}{options.org ? ` in ${options.org}` : ""}{options.since ? ` since ${formatDay(options.since)}` : ""}.
         </Text>
       )}
       {rows && rows.length > 0 && (
@@ -625,6 +644,8 @@ function mergeWarning(row: Row): string | undefined {
               row={row}
               view={views.get(row)!}
               options={options}
+              now={clock}
+              expanded={expanded(row)}
               selected={options.interactive && keyOf(row.pr) === selection}
             />
           ))}
@@ -659,7 +680,7 @@ function mergeWarning(row: Row): string | undefined {
 
 type Mood = "checking" | "sleeping" | "done" | "failed";
 
-const EYES: Record<Mood, string> = { checking: "o.o", sleeping: "-.-", done: "^.^", failed: "x.x" };
+const EYES: Record<Mood, string> = { checking: "o o", sleeping: "- -", done: "^ ^", failed: "x x" };
 
 interface HeaderProps {
   options: Options;
@@ -668,30 +689,41 @@ interface HeaderProps {
   nextCheckAt?: Date;
 }
 
+function Ghost({ mood }: { mood: Mood }) {
+  return (
+    <Box flexDirection="column" width={9} flexShrink={0}>
+      <Text color={BRAND}> ▄███▄</Text>
+      <Text color={BRAND}>
+        {" █"}
+        <Text backgroundColor={BRAND} color="#1E1B2E" bold>
+          {EYES[mood]}
+        </Text>
+        {"█"}
+      </Text>
+      <Text color={BRAND}> ▀▄▀▄▀</Text>
+    </Box>
+  );
+}
+
 function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
-  const rabbit = [" (\\(\\", ` ( ${EYES[mood]})`, ' o_(")(")'];
   const status = !options.watch || mood === "done" || mood === "failed"
     ? " "
     : `${nextCheckAt ? `next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : "checking…"}${options.interactive ? "" : " · Ctrl+C to quit"}`;
+  const scope = [options.author, options.org || "all organizations", options.since && `since ${formatDay(options.since)}`].filter(Boolean);
   return (
     <Box>
-      <Box flexDirection="column" width={11} flexShrink={0}>
-        {rabbit.map((line) => (
-          <Text key={line} color={BRAND}>
-            {line}
-          </Text>
-        ))}
-      </Box>
+      <Ghost mood={mood} />
       <Box flexDirection="column">
         <Text wrap="truncate-end">
           <Text color={BRAND} bold>
-            coderabbit-retry
+            boo
           </Text>
+          <Text dimColor> · open pull requests</Text>
           {options.watch && <Text color="cyan"> watch</Text>}
           {options.dryRun && <Text color="yellow"> dry run</Text>}
         </Text>
         <Text dimColor wrap="truncate-end">
-          {options.author} · {options.org} · since {formatDay(options.since)}
+          {scope.join(" · ")}
         </Text>
         <Text dimColor wrap="truncate-end">
           {status}
@@ -708,10 +740,22 @@ interface View {
   detail?: string;
 }
 
-const REVIEWED_VIEWS: Record<Verdict, View> = {
-  approved: { icon: <Text color="green">✔</Text>, label: "approved", color: "green" },
-  "changes requested": { icon: <Text color="red">✎</Text>, label: "changes requested", color: "red" },
-  commented: { icon: <Text color="cyan">✔</Text>, label: "reviewed", color: "cyan" },
+const spinner = (color: string) => (
+  <Text color={color}>
+    <Spinner type="dots" />
+  </Text>
+);
+
+const OVERALL_VIEWS: Record<Overall, Omit<View, "icon"> & { icon: () => ReactNode }> = {
+  ready: { icon: () => <Text color="green">✔</Text>, label: "ready to merge", color: "green" },
+  approved: { icon: () => <Text color="green">✔</Text>, label: "approved", color: "green" },
+  "changes requested": { icon: () => <Text color="red">✎</Text>, label: "changes requested", color: "red" },
+  "checks failing": { icon: () => <Text color="red">✖</Text>, label: "checks failing", color: "red" },
+  conflicts: { icon: () => <Text color="red">⚠</Text>, label: "conflicts", color: "red" },
+  reviewing: { icon: () => spinner("cyan"), label: "reviewing", color: "cyan" },
+  reviewed: { icon: () => <Text color="cyan">●</Text>, label: "reviewed", color: "cyan" },
+  quota: { icon: () => <Text color="yellow">◷</Text>, label: "quota", color: "yellow" },
+  "awaiting review": { icon: () => <Text color="gray">○</Text>, label: "awaiting review", color: "gray" },
 };
 
 const LEFT_VIEWS: Record<LeftStatus, View> = {
@@ -720,12 +764,47 @@ const LEFT_VIEWS: Record<LeftStatus, View> = {
   draft: { icon: <Text color="gray">◌</Text>, label: "draft", color: "gray", detail: "watched again when it is ready for review" },
 };
 
+function coderabbitDetail(decision: Decision | undefined, now: Date, options: Options): string | undefined {
+  switch (decision?.kind) {
+    case "wait": {
+      const remaining = decision.availableAt.getTime() - now.getTime();
+      const guess = decision.delayGuessed ? " · unreadable delay, 1 h assumed" : "";
+      const when = remaining > 0 ? `in ${formatDuration(remaining, options.watch)}` : "now, checking…";
+      return `CodeRabbit quota back ${when} (at ${formatTime(decision.availableAt)})${guess}${sourceNote(decision.source, options)}`;
+    }
+    case "trigger": {
+      const since = formatDuration(now.getTime() - decision.availableAt.getTime(), false);
+      return `CodeRabbit quota back for ${since}${sourceNote(decision.source, options)}${options.dryRun ? " · dry run, nothing posted" : ", retry queued"}`;
+    }
+    case "pending":
+      return `CodeRabbit asked at ${formatTime(decision.requestedAt)}, no reply yet`;
+    case "skipped":
+      return `CodeRabbit skipped the review: ${decision.reason}${options.interactive ? " · r requests one" : ""}`;
+    case "paused":
+      return `CodeRabbit reviews are paused${options.interactive ? " · r reviews it once" : ""}`;
+    case "idle":
+      return `CodeRabbit: ${decision.limitLifted ? "rate limit lifted" : "no rate limit"}, but the last commit has no review`;
+    default:
+      return undefined;
+  }
+}
+
+function details(row: Row, now: Date, options: Options): string | undefined {
+  const summary = row.summary;
+  if (!summary) return undefined;
+  const parts = [
+    summary.checks.failed.length > 0 && `failing: ${summary.checks.failed.join(", ")}`,
+    summary.checks.pending > 0 && `${summary.checks.pending} check${summary.checks.pending === 1 ? "" : "s"} running`,
+    MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? "unknown"],
+    ...summary.reviewers
+      .filter((reviewer) => reviewer.login !== BOT_LOGIN && reviewer.status === "quota")
+      .map((reviewer) => `${reviewer.name} quota ${reviewer.until ? `back at ${formatTime(reviewer.until)}` : "with no return time"}`),
+    coderabbitDetail(row.decision, now, options),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
 function describe(row: Row, now: Date, options: Options): View {
-  const spinner = (color: string) => (
-    <Text color={color}>
-      <Spinner type="dots" />
-    </Text>
-  );
   if (typeof row.activity === "object") {
     const command = row.activity.posting;
     return {
@@ -737,70 +816,52 @@ function describe(row: Row, now: Date, options: Options): View {
   }
   if (row.left) return LEFT_VIEWS[row.left];
   if (row.error) return { icon: <Text color="red">✖</Text>, label: "error", color: "red", detail: row.error };
+  if (!row.summary) return { icon: spinner("gray"), label: "checking", color: "gray" };
+  const { icon, ...view } = OVERALL_VIEWS[row.summary.overall];
+  const detail = details(row, now, options);
+  return { ...view, icon: icon(), ...(detail && { detail }) };
+}
 
-  const decision = row.decision;
-  if (!decision) return { icon: spinner("gray"), label: "checking", color: "gray" };
+const CHIPS: Record<ReviewerStatus, { icon: string; color: string }> = {
+  approved: { icon: "✔", color: "green" },
+  "changes requested": { icon: "✎", color: "red" },
+  commented: { icon: "●", color: "cyan" },
+  reviewing: { icon: "⟳", color: "cyan" },
+  quota: { icon: "◷", color: "yellow" },
+  "to retry": { icon: "↻", color: "blue" },
+  requested: { icon: "○", color: "magenta" },
+  stale: { icon: "◌", color: "gray" },
+  skipped: { icon: "⊘", color: "gray" },
+  paused: { icon: "‖", color: "gray" },
+};
 
-  switch (decision.kind) {
-    case "reviewed":
-      return REVIEWED_VIEWS[decision.verdict];
-    case "busy":
-      return { icon: spinner("cyan"), label: "reviewing", color: "cyan" };
-    case "idle":
-      return {
-        icon: <Text color="gray">·</Text>,
-        label: "nothing to do",
-        color: "gray",
-        detail: `${decision.limitLifted ? "rate limit lifted" : "no rate limit"}, but the last commit has no review`,
-      };
-    case "skipped":
-      return {
-        icon: <Text color="gray">⊘</Text>,
-        label: "skipped",
-        color: "gray",
-        detail: `${decision.reason}${options.interactive ? " · r requests one" : ""}`,
-      };
-    case "paused":
-      return {
-        icon: <Text color="gray">‖</Text>,
-        label: "paused",
-        color: "gray",
-        detail: `automatic reviews are paused${options.interactive ? " · r reviews it once" : ""}`,
-      };
-    case "unseen":
-      return {
-        icon: <Text color="gray">?</Text>,
-        label: "no review yet",
-        color: "gray",
-      };
-    case "wait": {
-      const remaining = decision.availableAt.getTime() - now.getTime();
-      const guess = decision.delayGuessed ? " · unreadable delay, 1 h assumed" : "";
-      const when = remaining > 0 ? `in ${formatDuration(remaining, options.watch)}` : "now, checking…";
-      return {
-        icon: <Text color="yellow">◷</Text>,
-        label: "quota",
-        color: "yellow",
-        detail: `quota back ${when} (at ${formatTime(decision.availableAt)})${guess}${sourceNote(decision.source, options)}`,
-      };
-    }
-    case "pending":
-      return {
-        icon: spinner("magenta"),
-        label: "requested",
-        color: "magenta",
-        detail: `asked at ${formatTime(decision.requestedAt)}, no reply yet`,
-      };
-    case "trigger": {
-      const since = formatDuration(now.getTime() - decision.availableAt.getTime(), false);
-      return {
-        icon: <Text color="blue">↻</Text>,
-        label: "to retry",
-        color: "blue",
-        detail: `quota back for ${since}${sourceNote(decision.source, options)}${options.dryRun ? " · dry run, nothing posted" : ""}`,
-      };
-    }
-  }
+function chipSuffix(reviewer: Reviewer): string {
+  if (reviewer.progress) return ` ${reviewer.progress.done}/${reviewer.progress.total}`;
+  if (reviewer.status === "quota") return reviewer.until ? ` ${formatTime(reviewer.until)}` : "";
+  if (reviewer.status === "stale" && reviewer.verdict && reviewer.verdict !== "commented") return ` ${CHIPS[reviewer.verdict].icon} old`;
+  return "";
+}
+
+function ReviewerChip({ reviewer }: { reviewer: Reviewer }) {
+  const chip = CHIPS[reviewer.status];
+  const muted = reviewer.status === "stale" || reviewer.status === "skipped" || reviewer.status === "paused";
+  return (
+    <Box marginRight={2} flexShrink={0}>
+      <Text dimColor={muted}>
+        <Text color={chip.color}>{chip.icon}</Text> {reviewer.name}
+        <Text dimColor>{chipSuffix(reviewer)}</Text>
+      </Text>
+    </Box>
+  );
+}
+
+function ChecksBadge({ summary }: { summary: Summary }) {
+  const { checks } = summary;
+  const counted = checks.passed + checks.failed.length + checks.pending;
+  if (checks.failed.length > 0) return <Text color="red">✖ {checks.failed.length}/{counted} failing</Text>;
+  if (checks.pending > 0) return <Text color="yellow">◌ {checks.pending}/{counted} running</Text>;
+  if (counted === 0) return <Text dimColor>no checks</Text>;
+  return <Text color="green">✔ {checks.passed}/{counted} checks</Text>;
 }
 
 interface RowViewProps {
@@ -808,12 +869,15 @@ interface RowViewProps {
   row: Row;
   view: View;
   options: Options;
+  now: Date;
+  expanded: boolean;
   selected: boolean;
 }
 
-function RowView({ ref, row, view, options, selected }: RowViewProps) {
-  const name = row.pr.repo.startsWith(`${options.org}/`) ? row.pr.repo.slice(options.org.length + 1) : row.pr.repo;
+function RowView({ ref, row, view, options, now, expanded, selected }: RowViewProps) {
+  const name = options.org && row.pr.repo.startsWith(`${options.org}/`) ? row.pr.repo.slice(options.org.length + 1) : row.pr.repo;
   const indent = options.interactive ? 24 : 22;
+  const summary = row.summary;
   return (
     <Box ref={ref} flexDirection="column" marginBottom={1}>
       <Box>
@@ -837,9 +901,41 @@ function RowView({ ref, row, view, options, selected }: RowViewProps) {
             {name}#{row.pr.number}
           </Text>
         </Box>
-        <Text wrap="truncate-end">{row.pr.title}</Text>
+        <Box flexGrow={1} flexShrink={1}>
+          <Text wrap="truncate-end">{row.pr.title}</Text>
+        </Box>
+        {summary && !row.left && (
+          <Box flexShrink={0} marginLeft={2}>
+            <ChecksBadge summary={summary} />
+            <Text dimColor>
+              {"  "}
+              {summary.reviewers.length > 0 && `${summary.onHead}/${summary.reviewers.length} on head · `}
+              {summary.reviews} review{summary.reviews === 1 ? "" : "s"}
+            </Text>
+          </Box>
+        )}
       </Box>
-      {view.detail && (
+      {summary && (
+        <Box paddingLeft={indent}>
+          {summary.lastReview ? (
+            <Box flexShrink={0} marginRight={2}>
+              <Text dimColor>
+                last {summary.lastReview.name} {formatAgo(now, summary.lastReview.at)}
+              </Text>
+            </Box>
+          ) : (
+            <Box flexShrink={0} marginRight={2}>
+              <Text dimColor>{summary.reviewers.length === 0 ? "no reviewer yet" : "no review yet"}</Text>
+            </Box>
+          )}
+          <Box flexShrink={1} overflow="hidden">
+            {summary.reviewers.map((reviewer) => (
+              <ReviewerChip key={reviewer.login} reviewer={reviewer} />
+            ))}
+          </Box>
+        </Box>
+      )}
+      {expanded && view.detail && (
         <Box paddingLeft={indent}>
           <Text dimColor wrap="truncate-end">
             {view.detail}
@@ -849,7 +945,7 @@ function RowView({ ref, row, view, options, selected }: RowViewProps) {
       {row.posted && (
         <Box paddingLeft={indent}>
           <Text color="green" wrap="truncate-end">
-            ↻ {row.posted.command === "review" ? "retried" : commandBody(row.posted.command)} → {row.posted.url}
+            ↻ {commandBody(row.posted.command)} → {row.posted.url}
           </Text>
         </Box>
       )}
@@ -865,26 +961,19 @@ interface FooterProps {
   options: Options;
 }
 
+const FOOTER_ORDER: Overall[] = ["ready", "approved", "changes requested", "checks failing", "conflicts", "reviewing", "reviewed", "quota", "awaiting review"];
+
 function Footer({ rows, triggered, done, listError, options }: FooterProps) {
   const active = rows.filter((row) => !row.left);
-  const count = (kind: Decision["kind"]) => active.filter((row) => row.decision?.kind === kind).length;
-  const verdicts = (verdict: Verdict) =>
-    active.filter((row) => row.decision?.kind === "reviewed" && row.decision.verdict === verdict).length;
   const countLeft = (status: LeftStatus) => rows.filter((row) => row.left === status).length;
-  const waiting = count("wait");
+  const waiting = active.filter((row) => row.decision?.kind === "wait").length;
   const parts: [number, string, string][] = [
-    [triggered, "retried", "green"],
-    [count("trigger"), "to retry", "blue"],
-    [waiting, "waiting for quota", "yellow"],
-    [count("busy"), "reviewing", "cyan"],
-    [count("pending"), "requested", "magenta"],
-    [verdicts("approved"), "approved", "green"],
-    [verdicts("changes requested"), "changes requested", "red"],
-    [verdicts("commented"), "reviewed", "cyan"],
-    [count("idle"), "nothing to do", "gray"],
-    [count("skipped"), "skipped", "gray"],
-    [count("paused"), "paused", "gray"],
-    [count("unseen"), "no review yet", "gray"],
+    ...FOOTER_ORDER.map((overall): [number, string, string] => [
+      active.filter((row) => row.summary?.overall === overall).length,
+      OVERALL_VIEWS[overall].label,
+      OVERALL_VIEWS[overall].color,
+    ]),
+    [triggered, "CodeRabbit retried", "blue"],
     [countLeft("merged"), "merged", "magenta"],
     [countLeft("closed"), "closed", "red"],
     [countLeft("draft"), "draft", "gray"],
@@ -895,7 +984,7 @@ function Footer({ rows, triggered, done, listError, options }: FooterProps) {
     <Box flexDirection="column">
       <Text wrap="truncate-end">
         {shown.length === 0
-          ? "Nothing to do."
+          ? "Nothing to show."
           : shown.map(([amount, label, color], index) => (
               <Text key={label}>
                 {index > 0 && <Text dimColor> · </Text>}
@@ -913,7 +1002,7 @@ function Footer({ rows, triggered, done, listError, options }: FooterProps) {
       )}
       {!options.watch && done && waiting > 0 && (
         <Text dimColor>
-          Tip: <Text color={BRAND}>coderabbit-retry --watch</Text> waits for the quota and retries by itself.
+          Tip: <Text color={BRAND}>boo --watch</Text> waits for the CodeRabbit quota and retries by itself.
         </Text>
       )}
     </Box>
@@ -970,15 +1059,8 @@ function Controls({ confirmation, flash, registerButton, disabledCommands, hideL
       ) : (
         <>
           <Box>
-            {ACTIONS.map((action) => (
-              <Button
-                key={action.key}
-                id={action.key}
-                hotkey={action.key}
-                label={action.label}
-                dim={disabledCommands && action.command !== undefined}
-                register={registerButton}
-              />
+            {ACTIONS.filter((action) => !action.command).map((action) => (
+              <Button key={action.key} id={action.key} hotkey={action.key} label={action.label} dim={disabledCommands && action.merge} register={registerButton} />
             ))}
             <Button
               id="h"
@@ -986,7 +1068,13 @@ function Controls({ confirmation, flash, registerButton, disabledCommands, hideL
               label={hideLeft ? `show ${hiddenCount} hidden` : "hide inactive"}
               register={registerButton}
             />
-            <Text dimColor>↑↓ select · q quit</Text>
+            <Box marginRight={1} flexShrink={0}>
+              <Text dimColor>CodeRabbit</Text>
+            </Box>
+            {ACTIONS.filter((action) => action.command).map((action) => (
+              <Button key={action.key} id={action.key} hotkey={action.key} label={action.label} dim={disabledCommands} register={registerButton} />
+            ))}
+            <Text dimColor wrap="truncate-end">↑↓ q</Text>
           </Box>
           <Text color={flash?.color} wrap="truncate-end">
             {flash?.text ?? " "}
@@ -1017,6 +1105,14 @@ function formatDuration(ms: number, precise: boolean): string {
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatAgo(now: Date, at: Date): string {
+  const minutes = Math.max(0, Math.round((now.getTime() - at.getTime()) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 }
 
 function formatDay(day: string): string {

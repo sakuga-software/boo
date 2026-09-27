@@ -9,12 +9,12 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 45ms
 
 Hide
-Type "export PS1='$ ' && alias coderabbit-retry='./node_modules/.bin/tsx --tsconfig demo/tsconfig.json demo/demo.tsx' && clear"
+Type "export PS1='$ ' && alias boo='./node_modules/.bin/tsx --tsconfig demo/tsconfig.json demo/demo.tsx' && clear"
 Enter
 Sleep 500ms
 Show
 
-Type "coderabbit-retry --watch"
+Type "boo --watch"
 Sleep 600ms
 Enter
 Sleep 19s

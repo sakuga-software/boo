@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { commandBody, type Command } from "./actions.js";
 import type { Comment, Review } from "./decide.js";
+import type { Check, CheckState } from "./reviewers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,16 +26,17 @@ export interface PullRequest {
 export interface SearchOptions {
   org: string;
   author: string;
-  since: string;
+  since?: string;
 }
 
 export async function listPullRequests({ org, author, since }: SearchOptions): Promise<PullRequest[]> {
   const output = await gh([
     "search", "prs",
-    "--owner", org,
+    ...(org ? ["--owner", org] : []),
     "--author", author,
     "--state", "open",
-    "--created", `>=${since}`,
+    ...(since ? ["--created", `>=${since}`] : []),
+    "--sort", "updated",
     "--limit", "200",
     "--json", "repository,number,title,url,isDraft",
   ]);
@@ -55,43 +57,159 @@ export async function listPullRequests({ org, author, since }: SearchOptions): P
     }));
 }
 
-const USER = "user: (if .user then {login: .user.login} else null end)";
-const COMMENT_FIELDS = `{id, ${USER}, body, created_at, updated_at}`;
-const REVIEW_FIELDS = `{${USER}, commit_id, submitted_at, state, body}`;
-
-/** Reads every page of a list, and keeps only the fields that `fields` selects in each item. */
-async function paginate<T>(path: string, fields: string): Promise<T[]> {
-  const output = await gh(["api", "--paginate", path, "--jq", `.[] | ${fields}`]);
-  return output
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as T);
-}
-
 export type PullRequestStatus = "open" | "draft" | "merged" | "closed";
 
-interface PullSummary {
-  head: { sha: string };
-  state: "open" | "closed";
-  draft: boolean;
-  merged_at: string | null;
-  mergeable_state?: string;
+export interface PullRequestSnapshot {
+  status: PullRequestStatus;
+  head: string;
+  author: string;
+  /** The GitHub mergeable state in lower case: clean, dirty, blocked, unstable, behind, unknown… */
+  mergeState: string;
+  reviews: Review[];
+  comments: Comment[];
+  checks: Check[];
+  /** The logins that GitHub still asks for a review. */
+  requested: string[];
 }
 
-function statusOf(pull: PullSummary): PullRequestStatus {
-  if (pull.merged_at) return "merged";
-  if (pull.state === "closed") return "closed";
-  return pull.draft ? "draft" : "open";
+// The first comments hold the CodeRabbit summary. The last ones hold the recent replies.
+// A long pull request can have more than 100 comments, so the query reads both ends.
+const QUERY = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      state isDraft merged mergeStateStatus headRefOid
+      author { login __typename }
+      reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
+      reviews(last: 100) { nodes { author { login __typename } state submittedAt body commit { oid } comments(first: 10) { nodes { replyTo { id } } } } }
+      first: comments(first: 10) { nodes { ...comment } }
+      last: comments(last: 100) { nodes { ...comment } }
+      commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+        __typename
+        ... on CheckRun { name status conclusion }
+        ... on StatusContext { context state description }
+      } } } } } }
+    }
+  }
+}
+fragment comment on IssueComment { databaseId author { login __typename } body createdAt updatedAt }
+`;
+
+interface Actor {
+  login: string;
+  __typename: string;
 }
 
-export async function fetchReviewState(pr: PullRequest) {
-  const base = `repos/${pr.repo}`;
-  const [pull, reviews, comments] = await Promise.all([
-    gh(["api", `${base}/pulls/${pr.number}`, "--jq", "{head: {sha: .head.sha}, state, draft, merged_at, mergeable_state}"]).then((output) => JSON.parse(output) as PullSummary),
-    paginate<Review>(`${base}/pulls/${pr.number}/reviews`, REVIEW_FIELDS),
-    paginate<Comment>(`${base}/issues/${pr.number}/comments`, COMMENT_FIELDS),
-  ]);
-  return { head: pull.head.sha, status: statusOf(pull), mergeState: pull.mergeable_state ?? "unknown", reviews, comments };
+interface CommentNode {
+  databaseId: number;
+  author: Actor | null;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ReviewNode {
+  author: Actor | null;
+  state: string;
+  submittedAt: string | null;
+  body: string;
+  commit: { oid: string } | null;
+  comments: { nodes: { replyTo: { id: string } | null }[] };
+}
+
+type ContextNode =
+  | { __typename: "CheckRun"; name: string; status: string; conclusion: string | null }
+  | { __typename: "StatusContext"; context: string; state: string; description: string | null };
+
+interface PullRequestNode {
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  merged: boolean;
+  mergeStateStatus: string;
+  headRefOid: string;
+  author: Actor | null;
+  reviewRequests: { nodes: { requestedReviewer: ({ __typename: string; login?: string; slug?: string }) | null }[] };
+  reviews: { nodes: ReviewNode[] };
+  first: { nodes: CommentNode[] };
+  last: { nodes: CommentNode[] };
+  commits: { nodes: { commit: { statusCheckRollup: { contexts: { nodes: ContextNode[] } } | null } }[] };
+}
+
+/** GraphQL drops the "[bot]" suffix of a bot login. The REST API and the decision rules keep it. */
+export const loginOf = (actor: Actor | null) =>
+  actor ? (actor.__typename === "Bot" ? `${actor.login}[bot]` : actor.login) : null;
+
+const userOf = (actor: Actor | null) => {
+  const login = loginOf(actor);
+  return login ? { login } : null;
+};
+
+function toComment(node: CommentNode): Comment {
+  return { id: node.databaseId, user: userOf(node.author), body: node.body, created_at: node.createdAt, updated_at: node.updatedAt };
+}
+
+// A reply in a review thread makes GitHub add a review whose line comments all answer an earlier comment.
+// A review with an empty body can be a real review: Greptile puts all its findings on the lines.
+function toReview(node: ReviewNode): Review | null {
+  if (!node.submittedAt || !node.commit) return null;
+  const comments = node.comments.nodes;
+  const threadReply = node.body === "" && comments.length > 0 && comments.every((comment) => comment.replyTo !== null);
+  return {
+    user: userOf(node.author),
+    commit_id: node.commit.oid,
+    submitted_at: node.submittedAt,
+    state: node.state,
+    body: node.body,
+    threadReply,
+  };
+}
+
+function checkState(node: ContextNode): CheckState {
+  if (node.__typename === "StatusContext") {
+    if (node.state === "PENDING" || node.state === "EXPECTED") return "pending";
+    return node.state === "SUCCESS" ? "success" : "failure";
+  }
+  if (node.status !== "COMPLETED") return "pending";
+  if (node.conclusion === "SUCCESS" || node.conclusion === "NEUTRAL") return "success";
+  return node.conclusion === "SKIPPED" ? "skipped" : "failure";
+}
+
+function toCheck(node: ContextNode): Check {
+  if (node.__typename === "StatusContext") {
+    return { name: node.context, state: checkState(node), ...(node.description && { description: node.description }) };
+  }
+  return { name: node.name, state: checkState(node) };
+}
+
+function statusOf(pull: PullRequestNode): PullRequestStatus {
+  if (pull.merged || pull.state === "MERGED") return "merged";
+  if (pull.state === "CLOSED") return "closed";
+  return pull.isDraft ? "draft" : "open";
+}
+
+export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
+  const comments = new Map([...pull.first.nodes, ...pull.last.nodes].map((node) => [node.databaseId, toComment(node)]));
+  return {
+    status: statusOf(pull),
+    head: pull.headRefOid,
+    author: loginOf(pull.author) ?? "",
+    mergeState: pull.mergeStateStatus.toLowerCase(),
+    reviews: pull.reviews.nodes.map(toReview).filter((review) => review !== null),
+    comments: [...comments.values()].toSorted((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
+    checks: (pull.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []).map(toCheck),
+    requested: pull.reviewRequests.nodes
+      .map(({ requestedReviewer: reviewer }) =>
+        reviewer?.__typename === "Team" ? reviewer.slug : reviewer?.login && loginOf({ login: reviewer.login, __typename: reviewer.__typename }),
+      )
+      .filter((login): login is string => Boolean(login)),
+  };
+}
+
+export async function fetchPullRequest(pr: PullRequest): Promise<PullRequestSnapshot> {
+  const [owner, name] = pr.repo.split("/");
+  const output = await gh(["api", "graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${pr.number}`, "-f", `query=${QUERY}`]);
+  const pull = (JSON.parse(output) as { data: { repository: { pullRequest: PullRequestNode } } }).data.repository.pullRequest;
+  return toSnapshot(pull);
 }
 
 export async function postCommand(pr: PullRequest, command: Command): Promise<string> {

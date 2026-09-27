@@ -6,79 +6,85 @@ const DEFAULT_ORG = "sakuga-software";
 
 const cli = meow(
   `
-  Posts "@coderabbitai review" on your open pull requests after their CodeRabbit quota comes back.
+  Watches your open pull requests: the approval, the reviewers, the checks.
+  Retries CodeRabbit by itself after its quota comes back.
 
   Usage
-    $ coderabbit-retry [options]
+    $ boo [options]
 
   Options
-    -s, --since <YYYY-MM-DD>  Pull requests created on or after this date   (default: Monday of this week)
-    -o, --org <org>           GitHub organization                           (default: ${DEFAULT_ORG})
-    -a, --author <login>      Pull request author                           (default: @me)
-    -w, --watch               Stay open until Ctrl+C: retry each pull request when its quota comes back
-    -n, --dry-run             Show the decisions, but post no comment
+    -s, --since <YYYY-MM-DD>  Only the pull requests created on or after this date
+    -o, --org <org>           GitHub organization, or "all"   (default: ${DEFAULT_ORG})
+    -a, --author <login>      Pull request author             (default: @me)
+    -w, --watch               Stay open until Ctrl+C, and refresh the list once a minute
+    -n, --dry-run             Show the state, but post and merge nothing
     -h, --help                Show this help
         --version             Show the version
 
-  States
-    approved       CodeRabbit reviewed the last commit, and its last verdict approves
-    changes requested
-                   CodeRabbit reviewed the last commit, and its last verdict requests changes
-    reviewed       CodeRabbit reviewed the last commit, with no verdict: comments only,
-                   or a dismissed verdict
-    reviewing      the CodeRabbit summary shows a review in progress
-    quota          the quota is not back; shows when it comes back
-    requested      a bare "@coderabbitai review" of less than 15 min waits for a reply
-    nothing to do  the last commit has no review, but no rate limit is active
-    to retry       the quota is back: posts a bare "@coderabbitai review"
-    skipped        CodeRabbit skipped the review (a bot author, a draft…); r requests one
-    paused         automatic reviews are paused and the last commit has no review
-    no review yet  CodeRabbit has not commented on the pull request
-    merged         the pull request is merged; the tool no longer watches it
-    closed         the pull request is closed; the tool no longer watches it
-    draft          the pull request is back to draft; watched again if it is ready
+  States of a pull request, from the first that applies
+    conflicts          GitHub reports a conflict with the base branch
+    changes requested  a reviewer requests changes (the last verdict of each
+                       reviewer counts, as on GitHub)
+    checks failing     a check of the last commit fails
+    ready to merge     approved, every check passes, and GitHub can merge
+    approved           approved, but a check runs or a rule blocks the merge
+    reviewing          a reviewer reviews the pull request now
+    reviewed           a reviewer reviewed the last commit, with no verdict
+    quota              the reviewers that have not reviewed the last commit are
+                       out of quota
+    awaiting review    no reviewer reviewed the last commit yet
+    merged, closed, draft
+                       the pull request left the list; a draft comes back when
+                       it is ready for review
 
-  A commit counts as reviewed with a GitHub review on it, or with a finished
-  review of it in the CodeRabbit summary. The verdict is the last CodeRabbit
-  review that approves, requests changes or is dismissed, as on GitHub.
+  Reviewers
+    A reviewer is a person or a bot that submitted a review, that GitHub asks
+    for a review, or CodeRabbit if it commented. The tool knows no list of bots.
+    The author is not a reviewer. Each reviewer shows one mark:
+    ✔ approved  ✎ changes requested  ● commented   on the last commit
+    ⟳ reviewing (with "2/3" if the bot shows its progress)
+    ◷ quota (with the return time if the notice gives one)
+    ↻ CodeRabbit to retry   ○ requested   ◌ an older commit only
+    ⊘ skipped   ‖ paused
+    A review that says "quota", "rate limit" or "usage limit" in its first
+    paragraph is a refusal, not a review. A red check of a refused reviewer
+    does not count as a failing check.
 
-  The quota belongs to the developer, so the tool reads one clock from all the
-  listed pull requests (per repository on the CodeRabbit Open source plan).
-  The time comes from the newest notice with a delay ("available in …",
-  counted from the last edit of that comment, plus 30 s because CodeRabbit
-  rounds its delays), on this pull request or on another one. A refused
-  command with no delay only dates the refusal. "N remain after this review"
-  on a later review means the quota is back. If a refusal came after the time
-  that the newest notice gave, the tool assumes 1 hour. It posts one request
-  at a time, and polls for the reply to each one for about 90 s.
-
-  With --watch, the tool searches the pull requests again once a minute. It
-  adds the new ones, shows the ones that are merged, closed or back to draft,
-  and checks the settled and waiting ones again. A first review then shows up
-  when it starts and when it ends, and so does an approval during a quota wait.
+  CodeRabbit retries
+    The CodeRabbit quota belongs to the developer, so the tool reads one clock
+    from all the listed pull requests (per repository on the CodeRabbit Open
+    source plan). The time comes from the newest notice with a delay
+    ("available in …", counted from the last edit of that comment, plus 30 s
+    because CodeRabbit rounds its delays). A refused command with no delay only
+    dates the refusal. "N remain after this review" on a later review means the
+    quota is back. If a refusal came after the time that the newest notice
+    gave, the tool assumes 1 hour. After the quota comes back, the tool posts a
+    bare "@coderabbitai review", one request at a time, and polls for the reply
+    for about 90 s.
 
   Keys and mouse
-    With --watch in a terminal, the list takes keys and mouse clicks:
+    With --watch in a terminal, the list takes keys and mouse clicks. The
+    selected row shows its details: failing checks, quota times.
     ↑ ↓  or  k j    select a pull request; the mouse wheel does it too
     o  or  Enter    open the pull request in the browser
+    m               merge the pull request (squash, else merge, else rebase)
+    h               hide or show the merged, closed and draft pull requests
     r               post "@coderabbitai review"
     f               post "@coderabbitai full review"
     a               post "@coderabbitai approve": resolve the threads, then approve
     s               post "@coderabbitai resolve": resolve the threads
-    m               merge the pull request (squash, else merge, else rebase)
-    h               hide or show the merged, closed and draft pull requests
     q               quit
   Each post and each merge asks for a confirmation: y or Enter confirms, n or
-  Esc cancels. Before a merge, the confirmation warns if CodeRabbit has not
-  approved the last commit, or if GitHub reports a conflict, failing checks or
-  a protection rule. A click selects a row or presses a button. The mouse mode
+  Esc cancels. Before a merge, the confirmation warns about a request for
+  changes, a missing approval, a failing or running check, a conflict or a
+  protection rule. A click selects a row or presses a button. The mouse mode
   takes over text selection: hold Shift or Option, depending on the terminal,
   to select text.
 
   Examples
-    $ coderabbit-retry
-    $ coderabbit-retry --watch
-    $ coderabbit-retry --dry-run --since 2026-09-15
+    $ boo --watch
+    $ boo --org all
+    $ boo --dry-run --since 2026-09-15
 
   Requires an authenticated gh (gh auth status).
 `,
@@ -97,21 +103,15 @@ const cli = meow(
   },
 );
 
-function mondayOfThisWeek(): string {
-  const day = new Date();
-  day.setDate(day.getDate() - ((day.getDay() + 6) % 7));
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
-}
-
-const since = cli.flags.since ?? mondayOfThisWeek();
-if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(Date.parse(since))) {
+const { since } = cli.flags;
+if (since !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(Date.parse(since)))) {
   console.error(`--since expects a YYYY-MM-DD date, got "${since}".`);
   process.exit(2);
 }
+const org = cli.flags.org === "all" ? "" : cli.flags.org;
 
 const interactive = cli.flags.watch && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
-const app = render(<App options={{ ...cli.flags, since, interactive }} />, { alternateScreen: interactive });
+const app = render(<App options={{ ...cli.flags, org, ...(since && { since }), interactive }} />, { alternateScreen: interactive });
 process.once("SIGTERM", () => app.unmount());
 try {
   await app.waitUntilExit();
