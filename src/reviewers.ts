@@ -57,10 +57,14 @@ const time = (iso: string) => Date.parse(iso);
 // A refusal and a progress bar sit in the first paragraph of a body. A review can quote both words further down.
 const firstParagraph = (body = "") => body.trimStart().split(/\n\s*\n/)[0]!;
 const isRefusal = (body = "") => QUOTA.test(firstParagraph(body));
-// A progress bar counts in the first paragraph, or on a line that starts with "progress" or "review progress".
-const PROGRESS_LINE = /^[^\S\n]*(?:review\s+)?progress\b[^\n]*?(\d+)\s*\/\s*(\d+)\s+files/im;
+// A progress bar counts in the first paragraph, or on a line at column 0 that starts with "progress" or "review progress".
+// Column 0 excludes an indented code block.
+const PROGRESS_LINE = /^(?:review\s+)?progress\b[^\n]*?(\d+)\s*\/\s*(\d+)\s+files/im;
 // A code block or a quote only shows an example. The progress of a review is in the prose of its body.
-const prose = (body: string) => body.replace(/^[^\S\n]*(```|~~~)[^\n]*\n[\s\S]*?(?:^[^\S\n]*\1[^\n]*$|(?![\s\S]))/gm, "").replace(/^[^\S\n]*>.*$/gm, "");
+// A quote runs from its first ">" line to the end of its paragraph, because Markdown continues it on lines with no ">".
+const FENCED_BLOCK = /^[^\S\n]*(```|~~~)[^\n]*\n[\s\S]*?(?:^[^\S\n]*\1[^\n]*$|(?![\s\S]))/gm;
+const QUOTE_PARAGRAPH = /^[^\S\n]*>[\s\S]*?(?=\n[^\S\n]*\n|(?![\s\S]))/gm;
+const prose = (body: string) => body.replace(FENCED_BLOCK, "").replace(QUOTE_PARAGRAPH, "");
 const progressIn = (body: string) => {
   const text = prose(body);
   return PROGRESS.exec(firstParagraph(text)) ?? PROGRESS_LINE.exec(text);

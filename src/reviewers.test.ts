@@ -117,17 +117,25 @@ test("a progress line after an introduction still counts", () => {
   assert.deepEqual([reviewer!.status, reviewer!.progress], ["reviewing", { done: 2, total: 3 }]);
 });
 
-test("a progress line in a code block or a quote is an example, not a live progress", () => {
+test("a progress line in a fenced or indented code block, or in a quote, is an example, not a live progress", () => {
   const bodies = [
     "All good.\n\n```\nReview progress `██░` 2/3 files\n```",
     "~~~text\nProgress: 2/3 files\n~~~\n\nAll good.",
     "All good.\n\n> Review progress 2/3 files",
     "All good.\n\n```\nReview progress 2/3 files",
+    "All good.\n\n    Review progress 2/3 files",
+    "All good.\n\n> The reviewer said:\nReview progress 2/3 files",
   ];
   for (const body of bodies) {
     const [reviewer] = summarize(facts({ reviews: [review(VORTEX, "head", 5, "APPROVED", body)] })).reviewers;
     assert.deepEqual([reviewer!.status, reviewer!.progress], ["approved", undefined], body);
   }
+});
+
+test("a live progress line after a quote paragraph still counts", () => {
+  const body = "Intro.\n\n> An earlier note\nstill quoted\n\nReview progress `██░` 2/3 files";
+  const [reviewer] = summarize(facts({ reviews: [review(VORTEX, "old", 5, "COMMENTED", body)] })).reviewers;
+  assert.deepEqual(reviewer!.progress, { done: 2, total: 3 });
 });
 
 test("a live progress line after a code block still counts", () => {
