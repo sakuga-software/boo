@@ -9,6 +9,7 @@ import type { PullRequest, PullRequestSnapshot } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
 import { summarize, type Overall, type Reviewer, type ReviewerStatus, type Summary } from "./reviewers.js";
 import { planSync, type LeftStatus } from "./sync.js";
+import { createReplyFilter, GHOST_PALETTES, type Background } from "./theme.js";
 import { visibleRange } from "./viewport.js";
 
 export interface Options {
@@ -18,6 +19,8 @@ export interface Options {
   watch: boolean;
   dryRun: boolean;
   interactive: boolean;
+  /** The background of the terminal. It picks the colors of the ghost. */
+  background?: Background;
 }
 
 interface Row {
@@ -43,7 +46,7 @@ export interface Timing {
 
 const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, watchPollMs: 30_000, listRefreshMs: 60_000 };
 const REPOST_GUARD_MS = 15 * 60_000;
-const BRAND = "#A78BFA";
+const BRAND = "#8B5CF6";
 const REVIEW_COMMANDS: readonly Command[] = ["review", "full review"];
 // GitHub mergeable_state values that deserve a warning before a merge.
 const MERGE_STATE_WARNINGS: Record<string, string> = {
@@ -52,8 +55,10 @@ const MERGE_STATE_WARNINGS: Record<string, string> = {
   behind: "behind the base branch",
   unknown: "GitHub has not computed the merge state yet",
 };
+/** The height of the header: the crown and the three lines of the head. */
+export const HEADER_LINES = 4;
 // Lines outside the list in interactive mode: the header, the margin, the scroll hints and the footer.
-const CHROME_LINES = 11;
+const CHROME_LINES = HEADER_LINES + 8;
 
 const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -141,6 +146,7 @@ export function App(props: AppProps) {
   const [hideLeft, setHideLeft] = useState(false);
   const hideLeftRef = useRef(false);
   const pendingEscape = useRef<NodeJS.Timeout>(undefined);
+  const isLateReply = useRef(createReplyFilter());
   const merging = useRef(new Set<string>());
   const selectedRef = useRef<string>(undefined);
   const confirmationRef = useRef<Confirmation>(undefined);
@@ -529,7 +535,7 @@ export function App(props: AppProps) {
 
   useInput(
     (input, key) => {
-      if (isMouseFragment(input)) return;
+      if (isMouseFragment(input) || isLateReply.current(input)) return;
       // The raw stdin listener handles a lone "m": only the mouse parser knows if it ends a split report.
       if (input === "m") return;
       if (key.upArrow) return confirmationRef.current ? undefined : move(-1);
@@ -678,10 +684,14 @@ export function App(props: AppProps) {
   );
 }
 
-type Mood = "checking" | "sleeping" | "done" | "failed";
+export type Mood = "checking" | "sleeping" | "done" | "failed";
 
-const EYES: Record<Mood, string> = { checking: "o o", sleeping: "- -", done: "^ ^", failed: "x x" };
-
+const FACES: Record<Mood, { eyes: [string, string]; mouth: string }> = {
+  checking: { eyes: ["ò", "ó"], mouth: "v" },
+  sleeping: { eyes: ["-", "-"], mouth: "ᴗ" },
+  done: { eyes: ["^", "^"], mouth: "v" },
+  failed: { eyes: ["x", "x"], mouth: "~" },
+};
 interface HeaderProps {
   options: Options;
   mood: Mood;
@@ -689,31 +699,36 @@ interface HeaderProps {
   nextCheckAt?: Date;
 }
 
-function Ghost({ mood }: { mood: Mood }) {
+export function Ghost({ mood, background = "unknown" }: { mood: Mood; background?: Background | undefined }) {
+  const { eyes: [left, right], mouth } = FACES[mood];
+  const palette = GHOST_PALETTES[background];
   return (
-    <Box flexDirection="column" width={9} flexShrink={0}>
-      <Text color={BRAND}> ▄███▄</Text>
-      <Text color={BRAND}>
-        {" █"}
-        <Text backgroundColor={BRAND} color="#1E1B2E" bold>
-          {EYES[mood]}
-        </Text>
-        {"█"}
+    <Box flexDirection="column" width={10} flexShrink={0}>
+      <Text color={palette.crown} bold>
+        {"   wWw"}
       </Text>
-      <Text color={BRAND}> ▀▄▀▄▀</Text>
+      <Text color={palette.line}> ╭─────╮</Text>
+      <Text color={palette.line}>
+        (
+        <Text color={palette.face} bold>
+          {` ${left} ${mouth} ${right} `}
+        </Text>
+        )
+      </Text>
+      <Text color={palette.line}> ╰─────╯</Text>
     </Box>
   );
 }
 
-function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
+export function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
   const status = !options.watch || mood === "done" || mood === "failed"
     ? " "
     : `${nextCheckAt ? `next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : "checking…"}${options.interactive ? "" : " · Ctrl+C to quit"}`;
   const scope = [options.author, options.org || "all organizations", options.since && `since ${formatDay(options.since)}`].filter(Boolean);
   return (
     <Box>
-      <Ghost mood={mood} />
-      <Box flexDirection="column">
+      <Ghost mood={mood} background={options.background} />
+      <Box flexDirection="column" marginTop={1}>
         <Text wrap="truncate-end">
           <Text color={BRAND} bold>
             boo

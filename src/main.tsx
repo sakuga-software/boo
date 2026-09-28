@@ -1,6 +1,7 @@
 import { render } from "ink";
 import meow from "meow";
 import { App } from "./app.js";
+import { detectBackground } from "./theme.js";
 
 const DEFAULT_ORG = "sakuga-software";
 
@@ -111,7 +112,8 @@ if (since !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(D
 const org = cli.flags.org === "all" ? "" : cli.flags.org;
 
 const interactive = cli.flags.watch && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
-const app = render(<App options={{ ...cli.flags, org, ...(since && { since }), interactive }} />, { alternateScreen: interactive });
+const background = process.stdout.isTTY ? await detectBackground(process.stdin, process.stdout, process.env) : "unknown";
+const app = render(<App options={{ ...cli.flags, org, ...(since && { since }), interactive, background }} />, { alternateScreen: interactive });
 process.once("SIGTERM", () => app.unmount());
 try {
   await app.waitUntilExit();

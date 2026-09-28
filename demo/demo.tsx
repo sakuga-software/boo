@@ -4,6 +4,7 @@ import { App, type GitHub } from "../src/app.js";
 import { BOT_LOGIN, REQUEST_BODY, type Comment, type Review } from "../src/decide.js";
 import type { PullRequest, PullRequestSnapshot, PullRequestStatus } from "../src/github.js";
 import type { Check } from "../src/reviewers.js";
+import { detectBackground } from "../src/theme.js";
 
 const start = Date.now();
 const iso = (offsetMs: number) => new Date(start + offsetMs).toISOString();
@@ -143,9 +144,10 @@ const fakeGitHub: GitHub = {
 };
 
 const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+const background = interactive ? await detectBackground(process.stdin, process.stdout, process.env) : "unknown";
 const app = render(
   <App
-    options={{ org: "acme", author: "@me", watch: true, dryRun: false, interactive }}
+    options={{ org: "acme", author: "@me", watch: true, dryRun: false, interactive, background }}
     gitHub={fakeGitHub}
     timing={{ replyPollMs: 1_500, replyTimeoutMs: 30_000, watchPollMs: 3_000, listRefreshMs: 4_000 }}
   />,
