@@ -9,6 +9,7 @@ import type { PullRequest, PullRequestSnapshot } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
 import { summarize, type Overall, type Reviewer, type ReviewerStatus, type Summary } from "./reviewers.js";
 import { planSync, type LeftStatus } from "./sync.js";
+import { GHOST_PALETTES, isBackgroundReply, type Background } from "./theme.js";
 import { visibleRange } from "./viewport.js";
 
 export interface Options {
@@ -18,6 +19,8 @@ export interface Options {
   watch: boolean;
   dryRun: boolean;
   interactive: boolean;
+  /** The background of the terminal. It picks the colors of the ghost. */
+  background?: Background;
 }
 
 interface Row {
@@ -52,8 +55,10 @@ const MERGE_STATE_WARNINGS: Record<string, string> = {
   behind: "behind the base branch",
   unknown: "GitHub has not computed the merge state yet",
 };
+/** The height of the header: the crown and the three lines of the head. */
+export const HEADER_LINES = 4;
 // Lines outside the list in interactive mode: the header, the margin, the scroll hints and the footer.
-const CHROME_LINES = 12;
+const CHROME_LINES = HEADER_LINES + 8;
 
 const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -529,7 +534,7 @@ export function App(props: AppProps) {
 
   useInput(
     (input, key) => {
-      if (isMouseFragment(input)) return;
+      if (isMouseFragment(input) || isBackgroundReply(input)) return;
       // The raw stdin listener handles a lone "m": only the mouse parser knows if it ends a split report.
       if (input === "m") return;
       if (key.upArrow) return confirmationRef.current ? undefined : move(-1);
@@ -678,7 +683,7 @@ export function App(props: AppProps) {
   );
 }
 
-type Mood = "checking" | "sleeping" | "done" | "failed";
+export type Mood = "checking" | "sleeping" | "done" | "failed";
 
 const FACES: Record<Mood, { eyes: [string, string]; mouth: string }> = {
   checking: { eyes: ["ò", "ó"], mouth: "v" },
@@ -686,9 +691,6 @@ const FACES: Record<Mood, { eyes: [string, string]; mouth: string }> = {
   done: { eyes: ["^", "^"], mouth: "v" },
   failed: { eyes: ["x", "x"], mouth: "~" },
 };
-// Mid tones: the ghost must read on a dark and on a light terminal background.
-const GHOST = { line: BRAND, crown: "#EAB308", face: "#6D28D9" };
-
 interface HeaderProps {
   options: Options;
   mood: Mood;
@@ -696,34 +698,35 @@ interface HeaderProps {
   nextCheckAt?: Date;
 }
 
-function Ghost({ mood }: { mood: Mood }) {
+export function Ghost({ mood, background = "unknown" }: { mood: Mood; background?: Background | undefined }) {
   const { eyes: [left, right], mouth } = FACES[mood];
+  const palette = GHOST_PALETTES[background];
   return (
     <Box flexDirection="column" width={10} flexShrink={0}>
-      <Text color={GHOST.crown} bold>
+      <Text color={palette.crown} bold>
         {"   wWw"}
       </Text>
-      <Text color={GHOST.line}> ╭─────╮</Text>
-      <Text color={GHOST.line}>
+      <Text color={palette.line}> ╭─────╮</Text>
+      <Text color={palette.line}>
         (
-        <Text color={GHOST.face} bold>
+        <Text color={palette.face} bold>
           {` ${left} ${mouth} ${right} `}
         </Text>
         )
       </Text>
-      <Text color={GHOST.line}> ╰─────╯</Text>
+      <Text color={palette.line}> ╰─────╯</Text>
     </Box>
   );
 }
 
-function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
+export function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
   const status = !options.watch || mood === "done" || mood === "failed"
     ? " "
     : `${nextCheckAt ? `next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : "checking…"}${options.interactive ? "" : " · Ctrl+C to quit"}`;
   const scope = [options.author, options.org || "all organizations", options.since && `since ${formatDay(options.since)}`].filter(Boolean);
   return (
     <Box>
-      <Ghost mood={mood} />
+      <Ghost mood={mood} background={options.background} />
       <Box flexDirection="column" marginTop={1}>
         <Text wrap="truncate-end">
           <Text color={BRAND} bold>

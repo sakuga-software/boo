@@ -51,6 +51,9 @@ boo --help              # options, states and marks
   return time if the notice gives one; `↻` CodeRabbit to retry; `○` requested; `◌` reviewed an
   older commit only (`✔ old` if its approval still stands); `⊘` skipped; `‖` paused.
 
+The ghost at the top left asks the terminal for its background color (OSC 11, or `COLORFGBG`) and
+picks colors that read on it. A terminal that does not answer gets colors that read on both.
+
 In a terminal, the selected row also shows its details: the names of the failing checks, the
 protection rule that blocks the merge, and the quota return times.
 

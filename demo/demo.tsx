@@ -145,7 +145,7 @@ const fakeGitHub: GitHub = {
 const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 const app = render(
   <App
-    options={{ org: "acme", author: "@me", watch: true, dryRun: false, interactive }}
+    options={{ org: "acme", author: "@me", watch: true, dryRun: false, interactive, background: "dark" }}
     gitHub={fakeGitHub}
     timing={{ replyPollMs: 1_500, replyTimeoutMs: 30_000, watchPollMs: 3_000, listRefreshMs: 4_000 }}
   />,
