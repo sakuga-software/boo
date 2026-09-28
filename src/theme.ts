@@ -43,8 +43,11 @@ export function backgroundFromColorFgBg(value: string | undefined): Background {
   return color === 7 || (color >= 9 && color <= 15) ? "light" : "dark";
 }
 
-/** Tells if a key press from Ink is a piece of the reply to BACKGROUND_QUERY that came late. */
-export const isBackgroundReply = (input: string) => /\]11;rgb:|^rgb:[0-9a-f/]*$/i.test(input);
+/**
+ * Tells if a key press from Ink is a piece of the reply to BACKGROUND_QUERY that came late.
+ * A piece has "]11;" or "rgb:", hexadecimal digits with a slash, or ends with BEL. A key has none of them.
+ */
+export const isBackgroundReply = (input: string) => /\]11;|rgb:|^[0-9a-f]*\/[0-9a-f/]*\u0007?$|\u0007$/i.test(input);
 
 interface TerminalInput {
   isTTY?: boolean;
@@ -55,8 +58,9 @@ interface TerminalInput {
   unshift(chunk: Buffer | string): unknown;
 }
 
-// The reply ends with BEL or with ESC and a backslash.
+// The reply ends with BEL or with ESC and a backslash. A slow reply can stop in the middle at the timeout.
 const REPLY = /\u001B\]11;[^\u0007\u001B]*(?:\u0007|\u001B\\)/;
+const PARTIAL_REPLY = /\u001B\]11;[^\u0007\u001B]*$/;
 
 /**
  * Asks the terminal for its background color, and falls back on COLORFGBG.
@@ -90,7 +94,7 @@ export async function detectBackground(
     stdout.write(BACKGROUND_QUERY);
   });
   stdin.setRawMode(false);
-  const keys = received.replace(REPLY, "");
+  const keys = received.replace(REPLY, "").replace(PARTIAL_REPLY, "");
   if (keys) stdin.unshift(keys);
   const detected = backgroundFromReply(received);
   return detected === "unknown" ? fallback : detected;

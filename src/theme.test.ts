@@ -34,7 +34,15 @@ test("COLORFGBG gives the background from its last number", () => {
 test("a late reply of the terminal is not a key press", () => {
   assert.ok(isBackgroundReply("\u001B]11;rgb:1e1e/1e1e/2e2e\u0007"));
   assert.ok(isBackgroundReply("]11;rgb:1e1e/1e1e/2e2e"));
-  assert.ok(!isBackgroundReply("r"));
+  assert.ok(isBackgroundReply("2e2e/2e2e\u0007"));
+  assert.ok(isBackgroundReply("2e\u0007"));
+  for (const key of ["r", "a", "f", "b", "q", "j"]) assert.ok(!isBackgroundReply(key), key);
+});
+
+test("a reply cut by the timeout does not go back to stdin as keys", async () => {
+  const { stdin, unshifted } = fakeStdin(["j", "\u001B]11;rgb:1e1e/1e"]);
+  assert.equal(await detectBackground(stdin, { write: () => {} }, {}, 20), "unknown");
+  assert.deepEqual(unshifted, ["j"]);
 });
 
 function fakeStdin(chunks: string[], delayMs = 1) {
