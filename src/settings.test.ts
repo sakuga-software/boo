@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -24,6 +24,23 @@ test("a missing or broken file gives the defaults, and a saved file reads back",
   await writeFile(join(dir, "broken.json"), "{");
   assert.deepEqual(await loadSettings(join(dir, "broken.json")), DEFAULT_SETTINGS);
   const path = join(dir, "nested", "settings.json");
+  await saveSettings({ ...DEFAULT_SETTINGS, compact: true }, path);
+  assert.equal((await loadSettings(path)).compact, true);
+});
+
+test("saves that start together end in call order and leave no temporary file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "boo-"));
+  const path = join(dir, "settings.json");
+  await Promise.all([true, false, true, false].map((compact) => saveSettings({ ...DEFAULT_SETTINGS, compact }, path)));
+  assert.equal((await loadSettings(path)).compact, false);
+  assert.deepEqual(await readdir(dir), ["settings.json"]);
+});
+
+test("a failed save does not stop the next save", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "boo-"));
+  await writeFile(join(dir, "file"), "");
+  await assert.rejects(saveSettings(DEFAULT_SETTINGS, join(dir, "file", "settings.json")));
+  const path = join(dir, "settings.json");
   await saveSettings({ ...DEFAULT_SETTINGS, compact: true }, path);
   assert.equal((await loadSettings(path)).compact, true);
 });

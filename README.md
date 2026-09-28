@@ -19,7 +19,8 @@ pnpm install          # the prepare script builds dist/
 ln -sf "$PWD/dist/cli.js" ~/.local/bin/boo
 ```
 
-Requires Node 22 or later and an authenticated `gh` (`gh auth status`).
+Requires Node 22 or later and an authenticated `gh` (`gh auth status`). The Copilot review request
+(`c`) needs `gh` 2.88 or later.
 
 ## Usage
 
@@ -171,7 +172,7 @@ goes back. The keys work in both sets; the bar only changes what it shows.
 | `a` | post `@coderabbitai approve`: resolve the CodeRabbit threads, then approve |
 | `s` | post `@coderabbitai resolve`: resolve the CodeRabbit threads |
 | `g` | post `@greptileai review` |
-| `c` | ask Copilot for a review (`gh pr edit --add-reviewer @copilot`) |
+| `c` | ask Copilot for a review (`gh pr edit --add-reviewer @copilot`, needs `gh` 2.88 or later) |
 | `q` | quit |
 
 A command to CodeRabbit or Greptile works only on a pull request that the bot reviews; the bar dims

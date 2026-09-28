@@ -81,7 +81,7 @@ const cli = meow(
     a               post "@coderabbitai approve": resolve the threads, then approve
     s               post "@coderabbitai resolve": resolve the threads
     g               post "@greptileai review"
-    c               request a review from Copilot
+    c               request a review from Copilot (needs gh 2.88 or later)
     q               quit
   The bot keys work in both bars. A narrow terminal hides some parts of a row.
   Each post and each merge asks for a confirmation: y or Enter confirms, n or
