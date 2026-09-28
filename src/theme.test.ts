@@ -40,14 +40,20 @@ test("a late reply split in several key events is not a key press, and the keys 
   assert.deepEqual(["11;rgb:1e1e/1e1e/2e2e", "\\", "a"].map(withSt), [true, true, false]);
 });
 
-test("a reply that never ends stops blocking the keys after one second", () => {
+test("a reply that never ends stops blocking the keys after 300 ms", () => {
   let clock = 0;
   const isReply = createReplyFilter(() => clock);
   assert.equal(isReply("11;rgb:ffff"), true);
-  clock = 500;
+  clock = 200;
   assert.equal(isReply("f"), true);
-  clock = 1_600;
+  clock = 600;
   assert.equal(isReply("f"), false);
+});
+
+test("a paste with rgb: or ]11; alone is not a reply", () => {
+  const isReply = createReplyFilter();
+  assert.deepEqual(["color rgb:12", "a ]11; b", "q"].map(isReply), [false, false, false]);
+  assert.equal(createReplyFilter()("\u001B]11;rgb:1e1e/1e1e/2e2e\u0007"), true);
 });
 
 function fakeStdin(chunks: string[], delayMs = 1) {

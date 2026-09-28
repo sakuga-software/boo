@@ -45,14 +45,16 @@ export function backgroundFromColorFgBg(value: string | undefined): Background {
 }
 
 // A late reply can come in several key events: Ink splits it at its escape bytes.
-const REPLY_START = /\]11;|rgb:/i;
+// Ink splits the reply after "ESC ]", so a piece starts with "11;rgb:" or holds "]11;rgb:".
+const REPLY_START = /(?:^|\])11;rgb:/i;
 const REPLY_END = /\u0007|\u001B\\|\\$/;
-// A reply that never ends must not block the keys for long.
-const REPLY_EXPIRY_MS = 1_000;
+// The pieces of a reply come within milliseconds. A reply that never ends must not block the keys for long.
+const REPLY_EXPIRY_MS = 300;
 
 /**
  * Returns a filter that tells if a key event from Ink is a piece of a late reply to BACKGROUND_QUERY.
  * After a piece that starts a reply, the filter takes every event until BEL or ST ends the reply.
+ * A paste that only holds "rgb:" or "]11;" is not a reply.
  */
 export function createReplyFilter(now: () => number = Date.now) {
   let since: number | undefined;
