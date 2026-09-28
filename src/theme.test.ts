@@ -37,12 +37,41 @@ test("a late reply of the terminal is not a key press", () => {
   assert.ok(!isBackgroundReply("r"));
 });
 
+function fakeStdin(chunks: string[], delayMs = 1) {
+  const pending = [...chunks];
+  const unshifted: string[] = [];
+  let listener: (() => void) | undefined;
+  const stdin = {
+    isTTY: true,
+    setRawMode: () => {},
+    on: (_: "readable", next: () => void) => {
+      listener = next;
+      if (pending.length > 0) setTimeout(() => listener?.(), delayMs);
+    },
+    off: () => {
+      listener = undefined;
+    },
+    read: () => pending.shift() ?? null,
+    unshift: (chunk: string) => unshifted.push(chunk),
+  };
+  return { stdin, unshifted };
+}
+
 test("a terminal with no reply falls back on COLORFGBG after the timeout", async () => {
-  const listeners = new Set<(data: string) => void>();
-  const stdin = { isTTY: true, setRawMode: () => {}, on: (_: "data", listener: (data: string) => void) => listeners.add(listener), off: (_: "data", listener: (data: string) => void) => listeners.delete(listener) };
+  const { stdin } = fakeStdin([]);
   assert.equal(await detectBackground(stdin, { write: () => {} }, { COLORFGBG: "0;15" }, 10), "light");
-  const replying = { ...stdin, on: (_: "data", listener: (data: string) => void) => setTimeout(() => listener("\u001B]11;rgb:0000/0000/0000\u0007"), 1) };
-  assert.equal(await detectBackground(replying, { write: () => {} }, { COLORFGBG: "0;15" }, 100), "dark");
+});
+
+test("the reply wins over COLORFGBG, and the keys typed during the wait go back to stdin", async () => {
+  const { stdin, unshifted } = fakeStdin(["j", "\u001B]11;rgb:0000/0000/0000\u0007", "k"]);
+  assert.equal(await detectBackground(stdin, { write: () => {} }, { COLORFGBG: "0;15" }, 100), "dark");
+  assert.deepEqual(unshifted, ["jk"]);
+});
+
+test("the keys typed during a wait with no reply go back to stdin", async () => {
+  const { stdin, unshifted } = fakeStdin(["q"]);
+  assert.equal(await detectBackground(stdin, { write: () => {} }, {}, 20), "unknown");
+  assert.deepEqual(unshifted, ["q"]);
 });
 
 test("each palette reads on its background, and the neutral one on both", () => {

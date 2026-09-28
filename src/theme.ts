@@ -49,14 +49,21 @@ export const isBackgroundReply = (input: string) => /\]11;rgb:|^rgb:[0-9a-f/]*$/
 interface TerminalInput {
   isTTY?: boolean;
   setRawMode?(mode: boolean): unknown;
-  on(event: "data", listener: (data: Buffer | string) => void): unknown;
-  off(event: "data", listener: (data: Buffer | string) => void): unknown;
+  on(event: "readable", listener: () => void): unknown;
+  off(event: "readable", listener: () => void): unknown;
+  read(): Buffer | string | null;
+  unshift(chunk: Buffer | string): unknown;
 }
+
+// The reply ends with BEL or with ESC and a backslash.
+const REPLY = /\u001B\]11;[^\u0007\u001B]*(?:\u0007|\u001B\\)/;
 
 /**
  * Asks the terminal for its background color, and falls back on COLORFGBG.
  * A terminal that does not know the query sends nothing, so the wait stops after timeoutMs.
  * Call it before Ink starts: Ink then takes over the raw mode of stdin.
+ * The function reads with "readable" and puts back the keys typed during the wait, so Ink gets them.
+ * A "data" listener or a pause() leaves stdin in a flowing state that stops the keys of the app.
  */
 export async function detectBackground(
   stdin: TerminalInput,
@@ -67,23 +74,24 @@ export async function detectBackground(
   const fallback = backgroundFromColorFgBg(env.COLORFGBG);
   if (!stdin.isTTY || !stdin.setRawMode) return fallback;
   stdin.setRawMode(true);
-  const reply = await new Promise<string>((resolve) => {
-    let received = "";
+  const received = await new Promise<string>((resolve) => {
+    let text = "";
     const done = () => {
       clearTimeout(timer);
-      stdin.off("data", onData);
-      resolve(received);
+      stdin.off("readable", onReadable);
+      resolve(text);
     };
-    const onData = (data: Buffer | string) => {
-      received += data.toString();
-      if (/\u0007|\u001B\\/.test(received)) done();
+    const onReadable = () => {
+      for (let chunk = stdin.read(); chunk !== null; chunk = stdin.read()) text += chunk.toString();
+      if (REPLY.test(text)) done();
     };
     const timer = setTimeout(done, timeoutMs);
-    stdin.on("data", onData);
+    stdin.on("readable", onReadable);
     stdout.write(BACKGROUND_QUERY);
   });
-  // Do not pause stdin. A paused stream ignores the data listener that the app adds later, and the keys stop.
   stdin.setRawMode(false);
-  const detected = backgroundFromReply(reply);
+  const keys = received.replace(REPLY, "");
+  if (keys) stdin.unshift(keys);
+  const detected = backgroundFromReply(received);
   return detected === "unknown" ? fallback : detected;
 }
