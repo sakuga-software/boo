@@ -86,10 +86,10 @@ function quotaUntil(refusal: Review, comments: Comment[]): Date | undefined {
   return undefined;
 }
 
-// Only the newest progress counts. A review with no progress after it ends the progress.
+// Only the newest progress counts. A review with no progress after it ends the progress. A thread reply does not.
 function progressOf(login: string, reviews: Review[], comments: Comment[]) {
   const bodies = [
-    ...reviews.filter((review) => review.user?.login === login).map((review) => ({ at: time(review.submitted_at), body: review.body ?? "", review: true })),
+    ...reviews.filter((review) => review.user?.login === login && !isThreadReply(review)).map((review) => ({ at: time(review.submitted_at), body: review.body ?? "", review: true })),
     ...comments.filter((comment) => comment.user?.login === login).map((comment) => ({ at: time(comment.updated_at), body: comment.body, review: false })),
   ].toSorted((a, b) => a.at - b.at);
   const last = bodies.findLast(({ body, review }) => review || PROGRESS.test(body));

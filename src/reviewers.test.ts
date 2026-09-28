@@ -99,6 +99,12 @@ test("a finished review after a partial progress ends the progress", () => {
   assert.deepEqual([reviewer!.status, reviewer!.progress], ["approved", undefined]);
 });
 
+test("a thread reply during a partial progress keeps the reviewer reviewing", () => {
+  const partial = review(VORTEX, "old", 20, "COMMENTED", "Review progress `███░░` 2/3 files");
+  const reply = review(VORTEX, "old", 5, "COMMENTED", "", true);
+  assert.equal(summarize(facts({ reviews: [partial, reply] })).reviewers[0]!.status, "reviewing");
+});
+
 test("a complete progress bar is a finished review", () => {
   const done = review(VORTEX, "head", 2, "COMMENTED", "Review progress `██████████` 3/3 files\n\n**Comment** — found 1 issue(s)");
   assert.equal(summarize(facts({ reviews: [done] })).reviewers[0]!.status, "commented");
