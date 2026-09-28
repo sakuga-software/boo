@@ -105,6 +105,12 @@ test("a thread reply during a partial progress keeps the reviewer reviewing", ()
   assert.equal(summarize(facts({ reviews: [partial, reply] })).reviewers[0]!.status, "reviewing");
 });
 
+test("a review that quotes a progress further down is not in progress", () => {
+  const body = "### ⛔ 3 blocking findings\n\n- A reviewer that posts `2/3 files` and then approves stays reviewing.";
+  const [reviewer] = summarize(facts({ reviews: [review(CLAUDE, "old", 5, "COMMENTED", body)] })).reviewers;
+  assert.deepEqual([reviewer!.status, reviewer!.progress], ["stale", undefined]);
+});
+
 test("a complete progress bar is a finished review", () => {
   const done = review(VORTEX, "head", 2, "COMMENTED", "Review progress `██████████` 3/3 files\n\n**Comment** — found 1 issue(s)");
   assert.equal(summarize(facts({ reviews: [done] })).reviewers[0]!.status, "commented");
