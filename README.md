@@ -13,7 +13,7 @@ and the checks. It is the page <https://github.com/pulls/authored>, with the rev
 ## Installation
 
 ```sh
-git clone https://github.com/sakuga-software/coderabbit-retry.git boo
+git clone https://github.com/sakuga-software/boo.git
 cd boo
 pnpm install          # the prepare script builds dist/
 ln -sf "$PWD/dist/cli.js" ~/.local/bin/boo
