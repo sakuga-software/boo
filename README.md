@@ -70,7 +70,7 @@ protection rule that blocks the merge, and the quota return times.
   reviewer further down, so the rest of the body does not count.
 - A reviewer reviews now if it has a running check with its name (`claude-review` for
   `sakuga-claude-review[bot]`), or if its last review or comment shows a progress below its total
-  (`2/3 files`) in its first paragraph. A progress further down is a quote or an example.
+  (`2/3 files`) on its first line. A progress further down is a quote, a list or an example.
 
 ### Approval and checks
 
