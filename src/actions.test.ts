@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect } from "./actions.js";
+import { ACTIONS, actionForKey, BOT_BAR_WIDTH, COPILOT, moveSelection, refusal, requestText, reselect } from "./actions.js";
 
 test("only merge uses m, the last byte of a mouse report, and it always asks for a confirmation", () => {
   const onM = ACTIONS.filter((action) => action.key.toLowerCase() === "m");
@@ -10,12 +10,24 @@ test("only merge uses m, the last byte of a mouse report, and it always asks for
 
 test("each key maps to one action", () => {
   assert.equal(new Set(ACTIONS.map((action) => action.key)).size, ACTIONS.length);
-  assert.equal(actionForKey("a")?.command, "approve");
+  assert.equal(actionForKey("a")?.request?.command, "approve");
   assert.equal(actionForKey("x"), undefined);
 });
 
-test("the command body is a bare CodeRabbit command", () => {
-  assert.equal(commandBody("full review"), "@coderabbitai full review");
+test("a bot with a mention gets a bare command, and Copilot gets a review request", () => {
+  assert.equal(requestText(actionForKey("f")!.request!), "@coderabbitai full review");
+  assert.equal(requestText(actionForKey("g")!.request!), "@greptileai review");
+  assert.equal(requestText(actionForKey("c")!.request!), "review request to Copilot");
+  assert.equal(COPILOT.mention, undefined);
+});
+
+test("a terminal of 90 columns shows the bot set without its labels", () => {
+  assert.ok(90 - 2 < BOT_BAR_WIDTH);
+});
+
+test("the keys that the list, the prompt and the panel use are free", () => {
+  const taken = ["j", "k", "q", "h", ",", " ", "y", "n"];
+  assert.deepEqual(ACTIONS.filter((action) => taken.includes(action.key)), []);
 });
 
 test("open stays available on a merged pull request, a command does not", () => {
@@ -27,11 +39,17 @@ test("open stays available on a merged pull request, a command does not", () => 
   assert.equal(refusal(approve, { left: false, dryRun: false }), null);
 });
 
-test("a CodeRabbit command needs CodeRabbit on the pull request, open and merge do not", () => {
-  const target = { left: false, dryRun: false, coderabbit: false };
+test("a bot command needs the bot on the pull request, open, merge and Copilot do not", () => {
+  const target = { left: false, dryRun: false, reviewers: ["greptile-apps[bot]"] };
   assert.match(refusal(actionForKey("r")!, target)!, /CodeRabbit does not review/);
+  assert.equal(refusal(actionForKey("g")!, target), null);
+  assert.equal(refusal(actionForKey("c")!, target), null);
   assert.equal(refusal(actionForKey("o")!, target), null);
   assert.equal(refusal(actionForKey("m")!, target), null);
+});
+
+test("a bot command waits for no reviewer list before the first fetch", () => {
+  assert.equal(refusal(actionForKey("g")!, { left: false, dryRun: false }), null);
 });
 
 test("the selection follows the key and stops at the ends", () => {

@@ -1,5 +1,6 @@
 import { render } from "ink";
 import { setTimeout as sleep } from "node:timers/promises";
+import { isCodeRabbit } from "../src/actions.js";
 import { App, type GitHub } from "../src/app.js";
 import { BOT_LOGIN, REQUEST_BODY, type Comment, type Review } from "../src/decide.js";
 import type { PullRequest, PullRequestSnapshot, PullRequestStatus } from "../src/github.js";
@@ -131,9 +132,9 @@ const fakeGitHub: GitHub = {
     await sleep(300 + Math.random() * 700);
     return { author: "octocat", mergeState: "clean", requested: [], status: status(target), ...state(target) };
   },
-  async postCommand(target, command) {
+  async requestReview(target, request) {
     await sleep(900);
-    if (command === "review") requestedAt = elapsed();
+    if (isCodeRabbit(request) && request.command === "review") requestedAt = elapsed();
     return `${target.url}#issuecomment-${1234567890 + target.number}`;
   },
   async openInBrowser() {},

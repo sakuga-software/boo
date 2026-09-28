@@ -42,7 +42,7 @@ boo --help              # options, states and marks
 - **The state** of the pull request, from the first that applies: `conflicts`,
   `changes requested`, `checks failing`, `ready to merge`, `approved`, `reviewing`, `reviewed`,
   `quota`, `awaiting review`. A pull request that leaves the list shows `merged`, `closed` or
-  `draft`.
+  `draft`. These three are hidden by default: `h` shows them.
 - **The checks** of the last commit: passed, running or failing.
 - **The reviewers** that reviewed the last commit, out of all the reviewers, and the count of reviews.
 - **The last reviewer** and the age of their review.
@@ -56,6 +56,26 @@ picks colors that read on it. A terminal that does not answer gets colors that r
 
 In a terminal, the selected row also shows its details: the names of the failing checks, the
 protection rule that blocks the merge, and the quota return times.
+
+A narrow terminal shows less of each row, from the least useful part:
+
+| Width | The row drops |
+| --- | --- |
+| below 120 columns | the reviewers on head and the review count |
+| below 100 columns | the name of the state (the icon stays) and the word "checks" |
+| below 80 columns | the last reviewer, and the labels of the action bar |
+| below 60 columns | the checks |
+
+## Settings
+
+Press `,` to open the settings. `↑` `↓` choose a line, `Space` or `Enter` changes it, `,` or `Esc`
+closes the panel. The tool saves them in `~/.config/boo/settings.json` (or under
+`$XDG_CONFIG_HOME`).
+
+- Hide the merged, the closed and the draft pull requests, each on its own. All three are on.
+- Show the checks, the reviewers on head and the review count, the last reviewer, the mark of each
+  reviewer, and the details of the selected pull request. A narrow terminal can still hide them.
+- Compact rows: no blank line between the pull requests.
 
 ## Rules
 
@@ -131,28 +151,41 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
 
 ## Keys and mouse
 
-With `--watch` in a terminal, the tool opens in full screen and takes keys and mouse clicks.
-Piped or scheduled runs stay as they are.
+With `--watch` in a terminal, the tool opens in full screen and takes keys and mouse clicks. The
+counts and the action bar stay at the bottom of the window. Piped or scheduled runs stay as they are.
+
+The action bar has two sets. The main set shows open, merge, the hidden pull requests and the
+settings. `→` or `Space` shows the bot set: the requests to each review bot. `←`, `Space` or `Esc`
+goes back. The keys work in both sets; the bar only changes what it shows.
 
 | Key | Action |
 | --- | --- |
 | `↑` `↓` or `k` `j` | select a pull request (the mouse wheel does it too) |
 | `o` or `Enter` | open the pull request in the browser |
 | `m` | merge the pull request: squash if the repository allows it, else merge, else rebase |
-| `h` | hide or show the merged, closed and draft pull requests |
+| `h` | show or hide the merged, closed and draft pull requests |
+| `,` | open the settings |
+| `→` `←` or `Space` | show the bot set or the main set of the action bar |
 | `r` | post `@coderabbitai review` |
 | `f` | post `@coderabbitai full review` |
 | `a` | post `@coderabbitai approve`: resolve the CodeRabbit threads, then approve |
 | `s` | post `@coderabbitai resolve`: resolve the CodeRabbit threads |
+| `g` | post `@greptileai review` |
+| `c` | ask Copilot for a review (`gh pr edit --add-reviewer @copilot`) |
 | `q` | quit |
 
-The CodeRabbit commands work only on a pull request that CodeRabbit comments on. Each post and
-each merge asks for a confirmation: `y` or `Enter` confirms, `n` or `Esc` cancels. Before a merge,
+A command to CodeRabbit or Greptile works only on a pull request that the bot reviews; the bar dims
+it on the other ones. Copilot gets a review request from GitHub and not a comment: a mention of
+`@copilot` starts its coding agent. The detection of the reviewers keeps no list of bots, but the
+bot set does: only these three bots have a known command. A CodeRabbit post goes through the queue
+of the automatic retries. A post to another bot goes at once, because it does not spend the
+CodeRabbit quota.
+
+Each post and each merge asks for a confirmation: `y` or `Enter` confirms, `n` or `Esc` cancels. Before a merge,
 the confirmation warns about a request for changes, a missing approval, a failing or running check,
 a conflict, a protection rule or a branch behind its base. You can still merge: GitHub enforces the
-protection rules anyway. The repository settings decide if GitHub deletes the branch. A post goes
-through the same queue as the automatic retries. A click selects a row or presses a button of the
-bar. The mouse mode takes over text selection: hold Shift or Option, depending on the terminal, to
+protection rules anyway. The repository settings decide if GitHub deletes the branch. A click
+selects a row, presses a button of the bar, or changes a line of the settings. The mouse mode takes over text selection: hold Shift or Option, depending on the terminal, to
 select text. A merged or closed pull request accepts only `o`, and `--dry-run` disables every post
 and every merge.
 
@@ -169,8 +202,8 @@ pnpm typecheck
 The GIF uses the real interface and the real decision logic with a fake GitHub
 (`demo/demo.tsx`). The fake GitHub plays a timeline: a CodeRabbit review in progress, a bot that
 shows its progress, a Copilot quota refusal, a CodeRabbit quota that comes back and a retry, a
-merged pull request, a new pull request, then the reviews. At the end, it hides the merged pull
-request with `h`, selects a pull request with the arrow keys, and posts `@coderabbitai approve`
+merged pull request, a new pull request, then the reviews. At the end, it shows the bot set of the
+action bar with `→`, selects a pull request with the arrow keys, and posts `@coderabbitai approve`
 with `a`, then `Enter`. To see it live, run `pnpm demo`. To record the GIF again (requires vhs, ttyd and ffmpeg):
 
 ```sh

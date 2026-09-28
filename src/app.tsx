@@ -2,12 +2,14 @@ import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize, type D
 import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect, type Action, type Command } from "./actions.js";
+import { ACTIONS, actionForKey, BOT_BAR_WIDTH, BOTS, CODERABBIT, isCodeRabbit, moveSelection, refusal, requestText, reselect, type Action, type Mode, type Request } from "./actions.js";
 import { BOT_LOGIN, botReplied, decide, quotaScope, quotaSignals, type Comment, type Decision, type QuotaSignal, type QuotaSource } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest, PullRequestSnapshot } from "./github.js";
+import { layoutFor, LABEL_WIDTH, rowHeight, type Layout } from "./layout.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
 import { summarize, type Overall, type Reviewer, type ReviewerStatus, type Summary } from "./reviewers.js";
+import { DEFAULT_SETTINGS, SETTINGS, type SettingKey, type Settings } from "./settings.js";
 import { planSync, type LeftStatus } from "./sync.js";
 import { createReplyFilter, GHOST_PALETTES, type Background } from "./theme.js";
 import { visibleRange } from "./viewport.js";
@@ -28,14 +30,14 @@ interface Row {
   /** The CodeRabbit decision, which drives the automatic retries. */
   decision?: Decision;
   summary?: Summary;
-  activity?: "loading" | { posting: Command };
-  posted?: { command: Command; url: string };
+  activity?: "loading" | { posting: Request };
+  posted?: { request: Request; url: string };
   error?: string;
   left?: LeftStatus;
   fetched?: Omit<PullRequestSnapshot, "status">;
 }
 
-export type GitHub = Pick<typeof github, "listPullRequests" | "fetchPullRequest" | "postCommand" | "openInBrowser" | "mergePullRequest">;
+export type GitHub = Pick<typeof github, "listPullRequests" | "fetchPullRequest" | "requestReview" | "openInBrowser" | "mergePullRequest">;
 
 export interface Timing {
   replyPollMs: number;
@@ -47,7 +49,8 @@ export interface Timing {
 const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, watchPollMs: 30_000, listRefreshMs: 60_000 };
 const REPOST_GUARD_MS = 15 * 60_000;
 const BRAND = "#8B5CF6";
-const REVIEW_COMMANDS: readonly Command[] = ["review", "full review"];
+const isReviewRequest = (request: Request) => request.command === "review" || request.command === "full review";
+const HIDING_SETTING: Record<LeftStatus, SettingKey> = { merged: "hideMerged", closed: "hideClosed", draft: "hideDrafts" };
 // GitHub mergeable_state values that deserve a warning before a merge.
 const MERGE_STATE_WARNINGS: Record<string, string> = {
   dirty: "conflicts with the base branch",
@@ -62,8 +65,7 @@ const CHROME_LINES = HEADER_LINES + 8;
 
 const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
-const rowHeight = (row: Row, view: View, expanded: boolean) =>
-  2 + (row.summary ? 1 : 0) + (expanded && view.detail ? 1 : 0) + (row.posted ? 1 : 0);
+const isHidden = (row: Row, settings: Settings, revealed: boolean) => Boolean(row.left) && !revealed && settings[HIDING_SETTING[row.left!]];
 
 // A review or a check in progress changes soon. The watch reads such a row at each poll, even during a CodeRabbit quota wait.
 const inProgress = (row: Row) =>
@@ -111,7 +113,7 @@ interface Confirmation {
 }
 
 interface PostControls {
-  post(pr: PullRequest, command: Command): Promise<void>;
+  post(pr: PullRequest, request: Request): Promise<void>;
   refresh(pr: PullRequest): Promise<unknown>;
 }
 
@@ -119,20 +121,24 @@ interface AppProps {
   options: Options;
   gitHub?: GitHub;
   timing?: Timing;
+  settings?: Settings;
+  /** Stores the settings after a change in the settings panel. */
+  saveSettings?: (settings: Settings) => Promise<void>;
 }
 
 export function App(props: AppProps) {
   // The workflow posts comments. If a new prop restarts it, it posts again and loses its repost guard.
   // Thus the component keeps the props of its first render.
-  const [{ options, gitHub, timing }] = useState(() => ({
+  const [{ options, gitHub, timing, saveSettings }] = useState(() => ({
     options: props.options,
     gitHub: props.gitHub ?? github,
     timing: props.timing ?? DEFAULT_TIMING,
+    saveSettings: props.saveSettings,
   }));
   const { exit } = useApp();
   const { stdin } = useStdin();
   const { stdout } = useStdout();
-  const { rows: screenRows } = useWindowSize();
+  const { rows: screenRows, columns } = useWindowSize();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [fatal, setFatal] = useState<string>();
   const [done, setDone] = useState(false);
@@ -143,8 +149,16 @@ export function App(props: AppProps) {
   const [selected, setSelected] = useState<string>();
   const [confirmation, setConfirmation] = useState<Confirmation>();
   const [flash, setFlash] = useState<{ text: string; color: string }>();
-  const [hideLeft, setHideLeft] = useState(false);
-  const hideLeftRef = useRef(false);
+  const [settings, setSettings] = useState<Settings>(() => props.settings ?? DEFAULT_SETTINGS);
+  const settingsRef = useRef(settings);
+  // h shows the rows that the settings hide, until the next h.
+  const [revealed, setRevealed] = useState(false);
+  const revealedRef = useRef(false);
+  const [mode, setMode] = useState<Mode>("main");
+  const modeRef = useRef<Mode>("main");
+  // The line of the settings panel under the cursor. Undefined: the panel is closed.
+  const [panel, setPanel] = useState<number>();
+  const panelRef = useRef<number>(undefined);
   const pendingEscape = useRef<NodeJS.Timeout>(undefined);
   const isLateReply = useRef(createReplyFilter());
   const merging = useRef(new Set<string>());
@@ -228,38 +242,47 @@ export function App(props: AppProps) {
       return decision;
     }
 
-    async function post(pr: PullRequest, command: Command): Promise<boolean> {
+    async function send(pr: PullRequest, request: Request): Promise<boolean> {
       const commentsBefore = rowOf(pr).fetched?.comments ?? [];
-      update(pr, { activity: { posting: command } });
+      update(pr, { activity: { posting: request } });
       try {
-        const url = await gitHub.postCommand(pr, command);
-        if (REVIEW_COMMANDS.includes(command)) lastPosts.set(keyOf(pr), { at: Date.now(), before: commentsBefore });
-        update(pr, { activity: undefined, posted: { command, url } });
+        const url = await gitHub.requestReview(pr, request);
+        if (isCodeRabbit(request) && isReviewRequest(request)) lastPosts.set(keyOf(pr), { at: Date.now(), before: commentsBefore });
+        update(pr, { activity: undefined, posted: { request, url } });
+        return true;
       } catch (error) {
         update(pr, { activity: undefined, error: message(error) });
         return false;
       }
+    }
+
+    async function post(pr: PullRequest, request: Request): Promise<boolean> {
+      if (!(await send(pr, request))) return false;
       // The reply of CodeRabbit lands in the comments. The next redecide() applies it to every row.
       await waitForReply(pr);
       return true;
     }
 
+    async function postOnce(pr: PullRequest, request: Request) {
+      // The post can wait in the queue for minutes. The pull request can close in that time.
+      if (rowOf(pr).left) {
+        setFlash({ text: `Cannot post on ${keyOf(pr)}: this pull request is no longer open.`, color: "yellow" });
+        return;
+      }
+      // Only CodeRabbit shares the quota clock of the queue. Another bot does not wait for a CodeRabbit retry.
+      const sent = isCodeRabbit(request) ? await post(pr, request) : await send(pr, request);
+      if (sent && !isCodeRabbit(request)) void refresh(pr);
+      setFlash(
+        sent
+          ? { text: `Sent "${requestText(request)}" on ${keyOf(pr)}.`, color: "green" }
+          : { text: `Could not send "${requestText(request)}" on ${keyOf(pr)}.`, color: "red" },
+      );
+    }
+
     controls.current = {
       refresh,
-      post: (pr, command) =>
-        exclusive(async () => {
-          // The post can wait in the queue for minutes. The pull request can close in that time.
-          if (rowOf(pr).left) {
-            setFlash({ text: `Cannot post on ${keyOf(pr)}: this pull request is no longer open.`, color: "yellow" });
-            return;
-          }
-          const posted = await post(pr, command);
-          setFlash(
-            posted
-              ? { text: `Posted "${commandBody(command)}" on ${keyOf(pr)}.`, color: "green" }
-              : { text: `Could not post on ${keyOf(pr)}.`, color: "red" },
-          );
-        }).catch((error) => {
+      post: (pr, request) =>
+        (isCodeRabbit(request) ? exclusive(() => postOnce(pr, request)) : postOnce(pr, request)).catch((error) => {
           if (!signal.aborted) setFlash({ text: `Could not post on ${keyOf(pr)}: ${message(error)}`, color: "red" });
         }),
     };
@@ -279,7 +302,7 @@ export function App(props: AppProps) {
           // A row whose last fetch failed shows old data: its head and its status are not checked.
           if (row.left || row.error || row.decision?.kind !== "trigger") return;
           if (unanswered(row, lastPosts.get(keyOf(pr)))) return;
-          if (await post(pr, "review")) setTriggered((count) => count + 1);
+          if (await post(pr, { bot: CODERABBIT, command: "review" })) setTriggered((count) => count + 1);
         });
       }
     }
@@ -369,7 +392,7 @@ export function App(props: AppProps) {
   }, [done]);
 
   const allKeys = rows?.map((row) => keyOf(row.pr)) ?? [];
-  const shownRows = hideLeft ? (rows ?? []).filter((row) => !row.left) : (rows ?? []);
+  const shownRows = (rows ?? []).filter((row) => !isHidden(row, settings, revealed));
   const keys = shownRows.map((row) => keyOf(row.pr));
   const selection = reselect(allKeys, keys, selected);
   const hiddenCount = allKeys.length - keys.length;
@@ -379,7 +402,7 @@ export function App(props: AppProps) {
   function live() {
     const all = [...rowsRef.current.values()];
     const everyKey = all.map((row) => keyOf(row.pr));
-    const shownKeys = all.filter((row) => !hideLeftRef.current || !row.left).map((row) => keyOf(row.pr));
+    const shownKeys = all.filter((row) => !isHidden(row, settingsRef.current, revealedRef.current)).map((row) => keyOf(row.pr));
     return { shownKeys, key: reselect(everyKey, shownKeys, selectedRef.current) };
   }
 
@@ -397,19 +420,45 @@ export function App(props: AppProps) {
   useEffect(() => {
     const { key } = live();
     if (key !== selectedRef.current) select(key);
-  }, [rows, hideLeft]);
+  }, [rows, settings, revealed]);
 
   function toggleHidden() {
-    const inactive = [...rowsRef.current.values()].filter((row) => row.left).length;
-    const hide = !hideLeftRef.current;
-    hideLeftRef.current = hide;
-    setHideLeft(hide);
+    const reveal = !revealedRef.current;
+    const hideable = [...rowsRef.current.values()].filter((row) => isHidden(row, settingsRef.current, false)).length;
+    revealedRef.current = reveal;
+    setRevealed(reveal);
     select(live().key);
     setFlash(
-      hide
-        ? { text: `Hiding ${inactive} merged, closed or draft pull request${inactive === 1 ? "" : "s"}.`, color: "gray" }
-        : { text: "Showing all the pull requests.", color: "gray" },
+      reveal
+        ? { text: "Showing all the pull requests.", color: "gray" }
+        : { text: `Hiding ${hideable} merged, closed or draft pull request${hideable === 1 ? "" : "s"}.`, color: "gray" },
     );
+  }
+
+  function switchMode(next: Mode) {
+    modeRef.current = next;
+    setMode(next);
+  }
+
+  function openPanel(line: number | undefined) {
+    panelRef.current = line;
+    setPanel(line);
+  }
+
+  function toggleSetting(key: SettingKey) {
+    const next = { ...settingsRef.current, [key]: !settingsRef.current[key] };
+    settingsRef.current = next;
+    setSettings(next);
+    select(live().key);
+    saveSettings?.(next).catch((error) => setFlash({ text: `Could not save the settings: ${message(error)}`, color: "red" }));
+  }
+
+  function typePanelKey(char: string) {
+    const line = panelRef.current ?? 0;
+    if (char === "k") openPanel(Math.max(0, line - 1));
+    else if (char === "j") openPanel(Math.min(SETTINGS.length - 1, line + 1));
+    else if (char === " " || char === "\r") toggleSetting(SETTINGS[line]!.key);
+    else if (char === "," || char === "q" || char === "\u001B") openPanel(undefined);
   }
 
   function mergeWarning(row: Row): string | undefined {
@@ -427,8 +476,21 @@ export function App(props: AppProps) {
   }
 
   function targetOf(row: Row) {
-    const coderabbit = row.decision === undefined ? undefined : row.decision.kind !== "unseen";
-    return { left: row.left !== undefined, dryRun: options.dryRun, ...(coderabbit !== undefined && { coderabbit }) };
+    const reviewers = row.summary?.reviewers.map((reviewer) => reviewer.login);
+    return { left: row.left !== undefined, dryRun: options.dryRun, ...(reviewers && { reviewers }) };
+  }
+
+  function quotaWarning(row: Row, request: Request): string | undefined {
+    if (!isReviewRequest(request)) return undefined;
+    if (isCodeRabbit(request)) {
+      return row.decision?.kind === "wait"
+        ? `The CodeRabbit quota comes back at ${formatTime(row.decision.availableAt)}: CodeRabbit will likely refuse.`
+        : undefined;
+    }
+    const reviewer = row.summary?.reviewers.find((candidate) => request.bot.logins.includes(candidate.login));
+    if (reviewer?.status !== "quota") return undefined;
+    const back = reviewer.until ? `comes back at ${formatTime(reviewer.until)}` : "has no known return time";
+    return `The ${request.bot.name} quota ${back}: ${request.bot.name} will likely refuse.`;
   }
 
   function request(action: Action, key = live().key) {
@@ -453,25 +515,21 @@ export function App(props: AppProps) {
       confirm({ key, action, warning: mergeWarning(row), head });
       return;
     }
-    if (!action.command) {
+    if (!action.request) {
       gitHub.openInBrowser(row.pr.url).then(
         () => setFlash({ text: `Opened ${key} in the browser.`, color: "green" }),
         (error) => setFlash({ text: `Could not open ${key}: ${message(error)}`, color: "red" }),
       );
       return;
     }
-    const quota =
-      REVIEW_COMMANDS.includes(action.command) && row.decision?.kind === "wait"
-        ? `The CodeRabbit quota comes back at ${formatTime(row.decision.availableAt)}: CodeRabbit will likely refuse.`
-        : undefined;
     setFlash(undefined);
-    confirm({ key, action, warning: quota });
+    confirm({ key, action, warning: quotaWarning(row, action.request) });
   }
 
   function answer(yes: boolean) {
     const pending = confirmationRef.current;
     confirm(undefined);
-    if (!pending?.action.command && !pending?.action.merge) return;
+    if (!pending?.action.request && !pending?.action.merge) return;
     const row = rowsRef.current.get(pending.key);
     if (!yes || !row) {
       setFlash({ text: "Cancelled.", color: "gray" });
@@ -503,14 +561,22 @@ export function App(props: AppProps) {
       ).finally(() => merging.current.delete(pending.key));
       return;
     }
-    setFlash({ text: `Posting "${commandBody(pending.action.command!)}" on ${pending.key}…`, color: "blue" });
-    void controls.current?.post(row.pr, pending.action.command!);
+    setFlash({ text: `Sending "${requestText(pending.action.request!)}" on ${pending.key}…`, color: "blue" });
+    void controls.current?.post(row.pr, pending.action.request!);
   }
 
   function press(id: string) {
     if (id === "yes" || id === "no") return answer(id === "yes");
     if (confirmationRef.current) return;
+    if (id.startsWith("setting:")) {
+      const key = id.slice("setting:".length) as SettingKey;
+      openPanel(SETTINGS.findIndex((setting) => setting.key === key));
+      return toggleSetting(key);
+    }
+    if (panelRef.current !== undefined) return;
     if (id === "h") return toggleHidden();
+    if (id === ",") return openPanel(0);
+    if (id === "bots" || id === "main") return switchMode(id);
     const action = actionForKey(id);
     if (action) request(action);
   }
@@ -526,10 +592,13 @@ export function App(props: AppProps) {
       else if (char === "n" || char === "\u001B") answer(false);
       return;
     }
+    if (panelRef.current !== undefined) return typePanelKey(char);
     if (char === "k") move(-1);
     else if (char === "j") move(1);
     else if (char === "\r") press("o");
     else if (char === "q") exit();
+    else if (char === " ") switchMode(modeRef.current === "main" ? "bots" : "main");
+    else if (char === "\u001B") switchMode("main");
     else press(char);
   }
 
@@ -538,8 +607,10 @@ export function App(props: AppProps) {
       if (isMouseFragment(input) || isLateReply.current(input)) return;
       // The raw stdin listener handles a lone "m": only the mouse parser knows if it ends a split report.
       if (input === "m") return;
-      if (key.upArrow) return confirmationRef.current ? undefined : move(-1);
-      if (key.downArrow) return confirmationRef.current ? undefined : move(1);
+      if (key.upArrow) return confirmationRef.current ? undefined : typeKey("k");
+      if (key.downArrow) return confirmationRef.current ? undefined : typeKey("j");
+      if (key.rightArrow) return confirmationRef.current || panelRef.current !== undefined ? undefined : switchMode("bots");
+      if (key.leftArrow) return confirmationRef.current || panelRef.current !== undefined ? undefined : switchMode("main");
       if (key.return) return typeKey("\r");
       // A terminal can split a mouse report after its Escape byte, and Ink then reports a lone Escape.
       // Wait a moment: if the rest of a mouse report follows, the Escape was part of it.
@@ -547,7 +618,7 @@ export function App(props: AppProps) {
         clearTimeout(pendingEscape.current);
         const prompt = confirmationRef.current;
         pendingEscape.current = setTimeout(() => {
-          if (prompt && confirmationRef.current === prompt) typeKey("\u001B");
+          if (!prompt || confirmationRef.current === prompt) typeKey("\u001B");
         }, 60);
         return;
       }
@@ -577,7 +648,7 @@ export function App(props: AppProps) {
     stdout.write(ENABLE_MOUSE);
     process.once("exit", disable);
     const feed = createMouseParser((event) => {
-      if (event.kind === "wheel") return handlers.current.move(event.direction === "up" ? -1 : 1);
+      if (event.kind === "wheel") return handlers.current.typeKey(event.direction === "up" ? "k" : "j");
       const button = hitTest(buttonNodes.current, event.x, event.y);
       if (button) return handlers.current.press(button);
       const row = hitTest(rowNodes.current, event.x, event.y);
@@ -603,9 +674,13 @@ export function App(props: AppProps) {
   const views = new Map(shownRows.map((row) => [row, describe(row, clock, options)]));
   // In a terminal, only the selected row shows its details. A piped run shows them all.
   const expanded = (row: Row) => !options.interactive || keyOf(row.pr) === selection;
+  const layout = layoutFor(columns, settings, options.interactive);
+  const heightOf = (row: Row) =>
+    rowHeight({ summary: Boolean(row.summary), detail: expanded(row) && Boolean(views.get(row)!.detail), posted: Boolean(row.posted) }, layout);
   const range = options.interactive
-    ? visibleRange(shownRows.map((row) => rowHeight(row, views.get(row)!, expanded(row))), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
+    ? visibleRange(shownRows.map(heightOf), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
     : { start: 0, end: shownRows.length };
+  const selectedRow = selection ? rowsRef.current.get(selection) : undefined;
   scrollStart.current = range.start;
 
   const registerRow = (key: string) => (node: DOMElement | null) => {
@@ -618,7 +693,7 @@ export function App(props: AppProps) {
   };
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} {...(options.interactive && { height: screenRows })}>
       <Header options={options} mood={fatal ? "failed" : done ? "done" : nextCheckAt ? "sleeping" : "checking"} now={clock} nextCheckAt={nextCheckAt} />
       {rows === null && !fatal && (
         <Text>
@@ -633,14 +708,15 @@ export function App(props: AppProps) {
           No open pull request by {options.author}{options.org ? ` in ${options.org}` : ""}{options.since ? ` since ${formatDay(options.since)}` : ""}.
         </Text>
       )}
-      {rows && rows.length > 0 && (
+      {panel !== undefined && <SettingsPanel settings={settings} cursor={panel} registerButton={registerButton} />}
+      {rows && rows.length > 0 && panel === undefined && (
         <Box flexDirection="column" marginTop={1}>
           {options.interactive && (
             <Text dimColor>{range.start > 0 ? `  ↑ ${range.start} more` : " "}</Text>
           )}
           {shownRows.length === 0 && (
             <Text dimColor>
-              All {rows.length} pull requests are hidden. Press h to show them.
+              All {rows.length} pull requests are hidden. Press h to show them, or , to change the settings.
             </Text>
           )}
           {shownRows.slice(range.start, range.end).map((row) => (
@@ -650,6 +726,7 @@ export function App(props: AppProps) {
               row={row}
               view={views.get(row)!}
               options={options}
+              layout={layout}
               now={clock}
               expanded={expanded(row)}
               selected={options.interactive && keyOf(row.pr) === selection}
@@ -661,6 +738,7 @@ export function App(props: AppProps) {
         </Box>
       )}
       {fatal && <Text color="red">✖ {fatal}</Text>}
+      {options.interactive && <Box flexGrow={1} />}
       {rows && rows.length > 0 && (
         <Footer
           rows={rows}
@@ -676,8 +754,13 @@ export function App(props: AppProps) {
           flash={flash}
           registerButton={registerButton}
           disabledCommands={options.dryRun}
-          hideLeft={hideLeft}
+          revealed={revealed}
           hiddenCount={hiddenCount}
+          mode={mode}
+          panelOpen={panel !== undefined}
+          short={layout.shortBar}
+          shortBots={layout.shortBar || columns - 2 < BOT_BAR_WIDTH}
+          reviewers={selectedRow?.summary?.reviewers.map((reviewer) => reviewer.login)}
         />
       )}
     </Box>
@@ -821,12 +904,12 @@ function details(row: Row, now: Date, options: Options): string | undefined {
 
 function describe(row: Row, now: Date, options: Options): View {
   if (typeof row.activity === "object") {
-    const command = row.activity.posting;
+    const request = row.activity.posting;
     return {
       icon: spinner("blue"),
-      label: command === "review" ? "retrying" : "posting",
+      label: isCodeRabbit(request) && request.command === "review" ? "retrying" : "posting",
       color: "blue",
-      detail: `"${commandBody(command)}"…`,
+      detail: `"${requestText(request)}"…`,
     };
   }
   if (row.left) return LEFT_VIEWS[row.left];
@@ -870,16 +953,18 @@ function ReviewerChip({ reviewer }: { reviewer: Reviewer }) {
   );
 }
 
-function ChecksBadge({ summary }: { summary: Summary }) {
+function ChecksBadge({ summary, short }: { summary: Summary; short: boolean }) {
   const { checks } = summary;
   const counted = checks.passed + checks.failed.length + checks.pending;
-  if (checks.failed.length > 0) return <Text color="red">✖ {checks.failed.length}/{counted} failing</Text>;
-  if (checks.pending > 0) return <Text color="yellow">◌ {checks.pending}/{counted} running</Text>;
+  const word = (text: string) => (short ? "" : ` ${text}`);
+  if (checks.failed.length > 0) return <Text color="red">✖ {checks.failed.length}/{counted}{word("failing")}</Text>;
+  if (checks.pending > 0) return <Text color="yellow">◌ {checks.pending}/{counted}{word("running")}</Text>;
   if (counted === 0) {
-    if (checks.skipped > 0) return <Text dimColor>⊘ {checks.skipped} skipped</Text>;
-    return <Text dimColor>{checks.quota > 0 ? `◷ ${checks.quota} quota only` : "no checks"}</Text>;
+    if (checks.skipped > 0) return <Text dimColor>⊘ {checks.skipped}{word("skipped")}</Text>;
+    if (checks.quota > 0) return <Text dimColor>◷ {checks.quota}{word("quota only")}</Text>;
+    return <Text dimColor>{short ? "–" : "no checks"}</Text>;
   }
-  return <Text color="green">✔ {checks.passed}/{counted} checks</Text>;
+  return <Text color="green">✔ {checks.passed}/{counted}{word("checks")}</Text>;
 }
 
 interface RowViewProps {
@@ -887,17 +972,18 @@ interface RowViewProps {
   row: Row;
   view: View;
   options: Options;
+  layout: Layout;
   now: Date;
   expanded: boolean;
   selected: boolean;
 }
 
-function RowView({ ref, row, view, options, now, expanded, selected }: RowViewProps) {
+function RowView({ ref, row, view, options, layout, now, expanded, selected }: RowViewProps) {
   const name = options.org && row.pr.repo.startsWith(`${options.org}/`) ? row.pr.repo.slice(options.org.length + 1) : row.pr.repo;
-  const indent = options.interactive ? 24 : 22;
+  const { indent } = layout;
   const summary = row.summary;
   return (
-    <Box ref={ref} flexDirection="column" marginBottom={1}>
+    <Box ref={ref} flexDirection="column" marginBottom={layout.gap}>
       <Box>
         {options.interactive && (
           <Box width={2} flexShrink={0}>
@@ -909,11 +995,13 @@ function RowView({ ref, row, view, options, now, expanded, selected }: RowViewPr
         <Box width={3} flexShrink={0}>
           {view.icon}
         </Box>
-        <Box width={19} flexShrink={0}>
-          <Text color={view.color} bold>
-            {view.label}
-          </Text>
-        </Box>
+        {layout.label && (
+          <Box width={LABEL_WIDTH} flexShrink={0}>
+            <Text color={view.color} bold>
+              {view.label}
+            </Text>
+          </Box>
+        )}
         <Box flexShrink={0} marginRight={2}>
           <Text bold inverse={selected}>
             {name}#{row.pr.number}
@@ -922,38 +1010,40 @@ function RowView({ ref, row, view, options, now, expanded, selected }: RowViewPr
         <Box flexGrow={1} flexShrink={1}>
           <Text wrap="truncate-end">{row.pr.title}</Text>
         </Box>
-        {summary && !row.left && (
+        {summary && !row.left && (layout.checks || layout.counts) && (
           <Box flexShrink={0} marginLeft={2}>
-            <ChecksBadge summary={summary} />
-            <Text dimColor>
-              {"  "}
-              {summary.reviewers.length > 0 && `${summary.onHead}/${summary.reviewers.length} on head · `}
-              {summary.reviews} review{summary.reviews === 1 ? "" : "s"}
-            </Text>
+            {layout.checks && <ChecksBadge summary={summary} short={layout.shortChecks} />}
+            {layout.counts && (
+              <Text dimColor>
+                {layout.checks && "  "}
+                {summary.reviewers.length > 0 && `${summary.onHead}/${summary.reviewers.length} on head · `}
+                {summary.reviews} review{summary.reviews === 1 ? "" : "s"}
+              </Text>
+            )}
           </Box>
         )}
       </Box>
-      {summary && (
+      {summary && (layout.lastReview || layout.marks) && (
         <Box paddingLeft={indent}>
-          {summary.lastReview ? (
+          {layout.lastReview && (
             <Box flexShrink={0} marginRight={2}>
               <Text dimColor>
-                last {summary.lastReview.name} {formatAgo(now, summary.lastReview.at)}
+                {summary.lastReview
+                  ? `last ${summary.lastReview.name} ${formatAgo(now, summary.lastReview.at)}`
+                  : summary.reviewers.length === 0 ? "no reviewer yet" : "no review yet"}
               </Text>
             </Box>
-          ) : (
-            <Box flexShrink={0} marginRight={2}>
-              <Text dimColor>{summary.reviewers.length === 0 ? "no reviewer yet" : "no review yet"}</Text>
+          )}
+          {layout.marks && (
+            <Box flexShrink={1} overflow="hidden">
+              {summary.reviewers.map((reviewer) => (
+                <ReviewerChip key={reviewer.login} reviewer={reviewer} />
+              ))}
             </Box>
           )}
-          <Box flexShrink={1} overflow="hidden">
-            {summary.reviewers.map((reviewer) => (
-              <ReviewerChip key={reviewer.login} reviewer={reviewer} />
-            ))}
-          </Box>
         </Box>
       )}
-      {expanded && view.detail && (
+      {expanded && layout.details && view.detail && (
         <Box paddingLeft={indent}>
           <Text dimColor wrap="truncate-end">
             {view.detail}
@@ -963,7 +1053,7 @@ function RowView({ ref, row, view, options, now, expanded, selected }: RowViewPr
       {row.posted && (
         <Box paddingLeft={indent}>
           <Text color="green" wrap="truncate-end">
-            ↻ {commandBody(row.posted.command)} → {row.posted.url}
+            ↻ {requestText(row.posted.request)} → {row.posted.url}
           </Text>
         </Box>
       )}
@@ -1032,24 +1122,82 @@ interface ControlsProps {
   flash?: { text: string; color: string };
   registerButton: (id: string) => (node: DOMElement | null) => void;
   disabledCommands: boolean;
-  hideLeft: boolean;
+  revealed: boolean;
   hiddenCount: number;
+  mode: Mode;
+  panelOpen: boolean;
+  /** Show the keys only, for a narrow terminal. */
+  short: boolean;
+  shortBots: boolean;
+  /** The logins of the reviewers of the selected pull request. */
+  reviewers?: readonly string[] | undefined;
 }
 
-function Button({ id, hotkey, label, dim, register }: { id: string; hotkey: string; label: string; dim?: boolean; register: ControlsProps["registerButton"] }) {
+interface ButtonProps {
+  id: string;
+  hotkey: string;
+  label: string;
+  dim?: boolean | undefined;
+  short?: boolean | undefined;
+  register: ControlsProps["registerButton"];
+}
+
+function Button({ id, hotkey, label, dim, short, register }: ButtonProps) {
   return (
-    <Box ref={register(id)} marginRight={2} flexShrink={0}>
-      <Text dimColor={dim}>
-        <Text color={dim ? undefined : BRAND} bold>
+    <Box ref={register(id)} marginRight={short ? 1 : 2} flexShrink={0}>
+      {/* The end of bold also ends dim, so the label sets dim on its own. */}
+      <Text>
+        <Text color={dim ? undefined : BRAND} dimColor={dim} bold>
           {hotkey}
-        </Text>{" "}
-        {label}
+        </Text>
+        <Text dimColor={dim}>{short ? "" : ` ${label}`}</Text>
       </Text>
     </Box>
   );
 }
 
-function Controls({ confirmation, flash, registerButton, disabledCommands, hideLeft, hiddenCount }: ControlsProps) {
+function Group({ name }: { name: string }) {
+  return (
+    <Box marginRight={1} flexShrink={0}>
+      <Text dimColor>{name}</Text>
+    </Box>
+  );
+}
+
+function ActionBar({ registerButton, disabledCommands, revealed, hiddenCount, mode, short: shortMain, shortBots, reviewers }: ControlsProps) {
+  const short = mode === "bots" ? shortBots : shortMain;
+  const button = (action: Action, dim?: boolean) => (
+    <Button key={action.key} id={action.key} hotkey={action.key} label={action.label} dim={dim} short={short} register={registerButton} />
+  );
+  if (mode === "bots") {
+    return (
+      <Box height={1} overflow="hidden">
+        {BOTS.map((bot) => {
+          const absent = Boolean(bot.mention && reviewers && !bot.logins.some((login) => reviewers.includes(login)));
+          return (
+            <Box key={bot.name} flexShrink={0} marginRight={1}>
+              <Group name={bot.name} />
+              {ACTIONS.filter((action) => action.request?.bot === bot).map((action) => button(action, disabledCommands || absent))}
+            </Box>
+          );
+        })}
+        <Button id="main" hotkey="←" label="back" short={short} register={registerButton} />
+      </Box>
+    );
+  }
+  return (
+    <Box height={1} overflow="hidden">
+      {ACTIONS.filter((action) => action.mode === "main").map((action) => button(action, disabledCommands && action.merge))}
+      <Button id="h" hotkey="h" label={revealed ? "hide inactive" : hiddenCount > 0 ? `show ${hiddenCount} hidden` : "nothing hidden"} short={short} register={registerButton} />
+      <Button id="bots" hotkey="→" label="bots" short={short} register={registerButton} />
+      <Button id="," hotkey="," label="settings" short={short} register={registerButton} />
+      <Text dimColor wrap="truncate-end">↑↓ q</Text>
+    </Box>
+  );
+}
+
+function Controls(props: ControlsProps) {
+  const { confirmation, flash, registerButton, panelOpen } = props;
   return (
     <Box flexDirection="column" marginTop={1}>
       {confirmation ? (
@@ -1062,7 +1210,7 @@ function Controls({ confirmation, flash, registerButton, disabledCommands, hideL
                 </>
               ) : (
                 <>
-                  Post <Text bold>"{commandBody(confirmation.action.command!)}"</Text> on{" "}
+                  Send <Text bold>"{requestText(confirmation.action.request!)}"</Text> on{" "}
                   <Text bold>{confirmation.key}</Text>?{"  "}
                 </>
               )}
@@ -1076,29 +1224,46 @@ function Controls({ confirmation, flash, registerButton, disabledCommands, hideL
         </>
       ) : (
         <>
-          <Box>
-            {ACTIONS.filter((action) => !action.command).map((action) => (
-              <Button key={action.key} id={action.key} hotkey={action.key} label={action.label} dim={disabledCommands && action.merge} register={registerButton} />
-            ))}
-            <Button
-              id="h"
-              hotkey="h"
-              label={hideLeft ? `show ${hiddenCount} hidden` : "hide inactive"}
-              register={registerButton}
-            />
-            <Box marginRight={1} flexShrink={0}>
-              <Text dimColor>CodeRabbit</Text>
-            </Box>
-            {ACTIONS.filter((action) => action.command).map((action) => (
-              <Button key={action.key} id={action.key} hotkey={action.key} label={action.label} dim={disabledCommands} register={registerButton} />
-            ))}
-            <Text dimColor wrap="truncate-end">↑↓ q</Text>
-          </Box>
+          {panelOpen ? (
+            <Text dimColor wrap="truncate-end">
+              ↑↓ choose · space or ⏎ change · , or esc close
+            </Text>
+          ) : (
+            <ActionBar {...props} />
+          )}
           <Text color={flash?.color} wrap="truncate-end">
             {flash?.text ?? " "}
           </Text>
         </>
       )}
+    </Box>
+  );
+}
+
+interface SettingsPanelProps {
+  settings: Settings;
+  cursor: number;
+  registerButton: ControlsProps["registerButton"];
+}
+
+function SettingsPanel({ settings, cursor, registerButton }: SettingsPanelProps) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold>Settings</Text>
+      <Text dimColor>A narrow terminal hides more parts of a row.</Text>
+      {SETTINGS.map(({ key, label }, index) => (
+        <Box key={key} ref={registerButton(`setting:${key}`)}>
+          <Box width={2} flexShrink={0}>
+            <Text color={BRAND} bold>
+              {index === cursor ? "❯" : " "}
+            </Text>
+          </Box>
+          <Text color={settings[key] ? "green" : undefined} dimColor={!settings[key]}>
+            {settings[key] ? "[x]" : "[ ]"}
+          </Text>
+          <Text wrap="truncate-end"> {label}</Text>
+        </Box>
+      ))}
     </Box>
   );
 }

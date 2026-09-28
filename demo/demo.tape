@@ -3,7 +3,7 @@ Output demo/frames/
 
 Set Shell zsh
 Set FontSize 16
-Set Width 1180
+Set Width 1260
 Set Height 760
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 45ms
@@ -18,7 +18,7 @@ Type "boo --watch"
 Sleep 600ms
 Enter
 Sleep 19s
-Type "h"
+Right
 Sleep 1.2s
 Down@400ms 4
 Sleep 0.8s
