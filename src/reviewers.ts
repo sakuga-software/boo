@@ -59,7 +59,12 @@ const firstParagraph = (body = "") => body.trimStart().split(/\n\s*\n/)[0]!;
 const isRefusal = (body = "") => QUOTA.test(firstParagraph(body));
 // A progress bar counts in the first paragraph, or on a line that starts with "progress" or "review progress".
 const PROGRESS_LINE = /^[^\S\n]*(?:review\s+)?progress\b[^\n]*?(\d+)\s*\/\s*(\d+)\s+files/im;
-const progressIn = (body: string) => PROGRESS.exec(firstParagraph(body)) ?? PROGRESS_LINE.exec(body);
+// A code block or a quote only shows an example. The progress of a review is in the prose of its body.
+const prose = (body: string) => body.replace(/^[^\S\n]*(```|~~~)[^\n]*\n[\s\S]*?(?:^[^\S\n]*\1[^\n]*$|(?![\s\S]))/gm, "").replace(/^[^\S\n]*>.*$/gm, "");
+const progressIn = (body: string) => {
+  const text = prose(body);
+  return PROGRESS.exec(firstParagraph(text)) ?? PROGRESS_LINE.exec(text);
+};
 const slug = (text: string) => text.toLowerCase().replace(/\[bot\]$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 /**
