@@ -13,7 +13,7 @@ and the checks. It is the page <https://github.com/pulls/authored>, with the rev
 ## Installation
 
 ```sh
-git clone https://github.com/sakuga-software/coderabbit-retry.git boo
+git clone https://github.com/sakuga-software/boo.git
 cd boo
 pnpm install          # the prepare script builds dist/
 ln -sf "$PWD/dist/cli.js" ~/.local/bin/boo
@@ -73,7 +73,7 @@ protection rule that blocks the merge, and the quota return times.
   reviewer further down, so the rest of the body does not count.
 - A reviewer reviews now if it has a running check with its name (`claude-review` for
   `sakuga-claude-review[bot]`), or if its last review or comment shows a progress below its total
-  (`2/3 files`).
+  (`2/3 files`) on its first line. A progress further down is a quote, a list or an example.
 
 ### Approval and checks
 

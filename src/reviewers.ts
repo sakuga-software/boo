@@ -57,6 +57,11 @@ const time = (iso: string) => Date.parse(iso);
 // A refusal and a progress bar sit in the first paragraph of a body. A review can quote both words further down.
 const firstParagraph = (body = "") => body.trimStart().split(/\n\s*\n/)[0]!;
 const isRefusal = (body = "") => QUOTA.test(firstParagraph(body));
+// A progress bar counts only on the first line of a body, where a bot shows it. A later one is a quote, a list or an example.
+const progressIn = (body: string) => {
+  const first = body.trimStart().split("\n")[0]!;
+  return /^(```|~~~|>|[-*+]\s)/.test(first) ? null : PROGRESS.exec(first);
+};
 const slug = (text: string) => text.toLowerCase().replace(/\[bot\]$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 /**
@@ -93,8 +98,8 @@ function progressOf(login: string, reviews: Review[], comments: Comment[]) {
     ...reviews.filter((review) => review.user?.login === login && !isThreadReply(review)).map((review) => ({ at: time(review.submitted_at), body: review.body ?? "", review: true })),
     ...comments.filter((comment) => comment.user?.login === login).map((comment) => ({ at: time(comment.updated_at), body: comment.body, review: false })),
   ].toSorted((a, b) => a.at - b.at);
-  const last = bodies.findLast(({ body, review }) => review || PROGRESS.test(firstParagraph(body)));
-  const match = last && PROGRESS.exec(firstParagraph(last.body));
+  const last = bodies.findLast(({ body, review }) => review || progressIn(body) !== null);
+  const match = last && progressIn(last.body);
   return match ? { done: Number(match[1]), total: Number(match[2]) } : undefined;
 }
 

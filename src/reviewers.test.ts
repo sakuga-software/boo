@@ -111,6 +111,24 @@ test("a review that quotes a progress further down is not in progress", () => {
   assert.deepEqual([reviewer!.status, reviewer!.progress], ["stale", undefined]);
 });
 
+test("a progress after the first line, or on a first line that is code, a quote or a list item, is not live", () => {
+  const bodies = [
+    "All good.\n\nReview progress `██░` 2/3 files",
+    "All good.\n\n```\nReview progress 2/3 files\n```",
+    "~~~text\nProgress: 2/3 files\n~~~\n\nAll good.",
+    "> Review progress 2/3 files\n\nAll good.",
+    "All good.\n\n> The reviewer said:\nReview progress 2/3 files",
+    "All good.\n```\nReview progress 2/3 files\n```",
+    "All good.\n> Review progress 2/3 files",
+    "Findings:\n- \"2/3 files\" is what the bar showed.",
+    "- 2/3 files reviewed so far\n\nAll good.",
+  ];
+  for (const body of bodies) {
+    const [reviewer] = summarize(facts({ reviews: [review(VORTEX, "head", 5, "APPROVED", body)] })).reviewers;
+    assert.deepEqual([reviewer!.status, reviewer!.progress], ["approved", undefined], body);
+  }
+});
+
 test("a complete progress bar is a finished review", () => {
   const done = review(VORTEX, "head", 2, "COMMENTED", "Review progress `██████████` 3/3 files\n\n**Comment** — found 1 issue(s)");
   assert.equal(summarize(facts({ reviews: [done] })).reviewers[0]!.status, "commented");
