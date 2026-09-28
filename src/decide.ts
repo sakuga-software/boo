@@ -20,6 +20,8 @@ export interface Review {
   submitted_at: string;
   state?: string;
   body?: string;
+  /** The review only holds replies in review threads. GitHub adds one such review for each reply. */
+  threadReply?: boolean;
 }
 
 export type Verdict = "approved" | "changes requested" | "commented";
@@ -110,7 +112,8 @@ export function reviewVerdict(botReviews: Review[]): Verdict {
 
 const isBot = (item: { user: { login: string } | null }) => item.user?.login === BOT_LOGIN;
 // CodeRabbit answers in a review thread with a COMMENTED review that has an empty body. It is not a review.
-const isThreadReply = (review: Review) => review.state === "COMMENTED" && review.body === "";
+// If the fetch tells the thread replies apart, its flag wins: an empty review can hold new line comments.
+export const isThreadReply = (review: Review) => review.threadReply ?? (review.state === "COMMENTED" && review.body === "");
 const botReviewsOf = (reviews: Review[]) => reviews.filter((review) => isBot(review) && !isThreadReply(review));
 const isRateLimit = (comment: Comment) =>
   /rate limited by coderabbit\.ai|Review rate limited/.test(comment.body);

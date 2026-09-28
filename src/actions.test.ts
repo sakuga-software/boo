@@ -27,6 +27,13 @@ test("open stays available on a merged pull request, a command does not", () => 
   assert.equal(refusal(approve, { left: false, dryRun: false }), null);
 });
 
+test("a CodeRabbit command needs CodeRabbit on the pull request, open and merge do not", () => {
+  const target = { left: false, dryRun: false, coderabbit: false };
+  assert.match(refusal(actionForKey("r")!, target)!, /CodeRabbit does not review/);
+  assert.equal(refusal(actionForKey("o")!, target), null);
+  assert.equal(refusal(actionForKey("m")!, target), null);
+});
+
 test("the selection follows the key and stops at the ends", () => {
   const keys = ["a#1", "a#2", "a#3"];
   assert.equal(moveSelection(keys, undefined, 1), "a#1");

@@ -10,11 +10,11 @@ export interface Action {
 
 export const ACTIONS: readonly Action[] = [
   { key: "o", label: "open" },
-  { key: "r", label: "retry", command: "review" },
+  { key: "m", label: "merge", merge: true },
+  { key: "r", label: "review", command: "review" },
   { key: "f", label: "full review", command: "full review" },
   { key: "a", label: "approve", command: "approve" },
   { key: "s", label: "resolve", command: "resolve" },
-  { key: "m", label: "merge", merge: true },
 ];
 
 export const commandBody = (command: Command) => `@coderabbitai ${command}`;
@@ -24,6 +24,8 @@ export const actionForKey = (input: string) => ACTIONS.find((action) => action.k
 export interface Target {
   left: boolean;
   dryRun: boolean;
+  /** CodeRabbit comments on the pull request. A CodeRabbit command elsewhere gets no reply. */
+  coderabbit?: boolean;
 }
 
 /** Returns why the action is not available on the target, or null if it is available. */
@@ -31,6 +33,7 @@ export function refusal(action: Action, target: Target): string | null {
   if (!action.command && !action.merge) return null;
   if (target.left) return "this pull request is no longer open";
   if (target.dryRun) return action.merge ? "dry run: the tool merges nothing" : "dry run: the tool posts nothing";
+  if (action.command && target.coderabbit === false) return "CodeRabbit does not review this pull request";
   return null;
 }
 

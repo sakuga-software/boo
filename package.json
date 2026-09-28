@@ -1,11 +1,11 @@
 {
-  "name": "coderabbit-retry",
+  "name": "boo",
   "version": "1.0.0",
   "private": true,
-  "description": "Posts @coderabbitai review on your pull requests after their CodeRabbit quota comes back",
+  "description": "Watches your open pull requests: the approval, the reviewers of every provider, the checks, and the review quotas",
   "type": "module",
   "bin": {
-    "coderabbit-retry": "dist/cli.js"
+    "boo": "dist/cli.js"
   },
   "files": [
     "dist"
