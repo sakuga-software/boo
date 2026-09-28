@@ -87,6 +87,12 @@ test("the keys typed during a wait with no reply go back to stdin", async () => 
   assert.deepEqual(unshifted, ["q"]);
 });
 
+test("a reply cut by the timeout does not go back to stdin as keys, and falls back on COLORFGBG", async () => {
+  const { stdin, unshifted } = fakeStdin(["j", "\u001B]11;rgb:ffff/ffff/ffff"]);
+  assert.equal(await detectBackground(stdin, { write: () => {} }, { COLORFGBG: "15;0" }, 20), "dark");
+  assert.deepEqual(unshifted, ["j"]);
+});
+
 test("each palette reads on its background, and the neutral one on both", () => {
   for (const color of Object.values(GHOST_PALETTES.dark)) assert.ok(contrast(color, DARK) >= 4.4, `${color} on dark`);
   for (const color of Object.values(GHOST_PALETTES.light)) assert.ok(contrast(color, LIGHT) >= 4.4, `${color} on light`);
