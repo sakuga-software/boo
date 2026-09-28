@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { renderToString } from "ink";
 import { createElement } from "react";
 import { Ghost, Header, HEADER_LINES, type Mood } from "./app.js";
-import { backgroundFromColorFgBg, backgroundFromReply, detectBackground, GHOST_PALETTES, isBackgroundReply } from "./theme.js";
+import { backgroundFromColorFgBg, backgroundFromReply, createReplyFilter, detectBackground, GHOST_PALETTES } from "./theme.js";
 
 const hex = (color: string) => [1, 3, 5].map((index) => parseInt(color.slice(index, index + 2), 16) / 255);
 const luminance = (color: string) => {
@@ -22,6 +22,7 @@ test("the reply of the terminal gives the background", () => {
   assert.equal(backgroundFromReply("\u001B]11;rgb:ffff/ffff/ffff\u001B\\"), "light");
   assert.equal(backgroundFromReply("\u001B]11;rgb:f4/f4/f5\u0007"), "light");
   assert.equal(backgroundFromReply(""), "unknown");
+  assert.equal(backgroundFromReply("\u001B]11;rgb:ffff/ffff/ffff"), "unknown");
 });
 
 test("COLORFGBG gives the background from its last number", () => {
@@ -29,20 +30,24 @@ test("COLORFGBG gives the background from its last number", () => {
   assert.equal(backgroundFromColorFgBg("0;15"), "light");
   assert.equal(backgroundFromColorFgBg("0;default;7"), "light");
   assert.equal(backgroundFromColorFgBg(undefined), "unknown");
+  assert.equal(backgroundFromColorFgBg("0;231"), "unknown");
 });
 
-test("a late reply of the terminal is not a key press", () => {
-  assert.ok(isBackgroundReply("\u001B]11;rgb:1e1e/1e1e/2e2e\u0007"));
-  assert.ok(isBackgroundReply("]11;rgb:1e1e/1e1e/2e2e"));
-  assert.ok(isBackgroundReply("2e2e/2e2e\u0007"));
-  assert.ok(isBackgroundReply("2e\u0007"));
-  for (const key of ["r", "a", "f", "b", "q", "j"]) assert.ok(!isBackgroundReply(key), key);
+test("a late reply split in several key events is not a key press, and the keys after it are", () => {
+  const isReply = createReplyFilter();
+  assert.deepEqual(["]", "11;rgb:", "ffff", "/ffff/ff", "ff\u0007", "f", "q"].map(isReply), [false, true, true, true, true, false, false]);
+  const withSt = createReplyFilter();
+  assert.deepEqual(["11;rgb:1e1e/1e1e/2e2e", "\\", "a"].map(withSt), [true, true, false]);
 });
 
-test("a reply cut by the timeout does not go back to stdin as keys", async () => {
-  const { stdin, unshifted } = fakeStdin(["j", "\u001B]11;rgb:1e1e/1e"]);
-  assert.equal(await detectBackground(stdin, { write: () => {} }, {}, 20), "unknown");
-  assert.deepEqual(unshifted, ["j"]);
+test("a reply that never ends stops blocking the keys after one second", () => {
+  let clock = 0;
+  const isReply = createReplyFilter(() => clock);
+  assert.equal(isReply("11;rgb:ffff"), true);
+  clock = 500;
+  assert.equal(isReply("f"), true);
+  clock = 1_600;
+  assert.equal(isReply("f"), false);
 });
 
 function fakeStdin(chunks: string[], delayMs = 1) {

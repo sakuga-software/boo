@@ -9,7 +9,7 @@ import type { PullRequest, PullRequestSnapshot } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
 import { summarize, type Overall, type Reviewer, type ReviewerStatus, type Summary } from "./reviewers.js";
 import { planSync, type LeftStatus } from "./sync.js";
-import { GHOST_PALETTES, isBackgroundReply, type Background } from "./theme.js";
+import { createReplyFilter, GHOST_PALETTES, type Background } from "./theme.js";
 import { visibleRange } from "./viewport.js";
 
 export interface Options {
@@ -146,6 +146,7 @@ export function App(props: AppProps) {
   const [hideLeft, setHideLeft] = useState(false);
   const hideLeftRef = useRef(false);
   const pendingEscape = useRef<NodeJS.Timeout>(undefined);
+  const isLateReply = useRef(createReplyFilter());
   const merging = useRef(new Set<string>());
   const selectedRef = useRef<string>(undefined);
   const confirmationRef = useRef<Confirmation>(undefined);
@@ -534,7 +535,7 @@ export function App(props: AppProps) {
 
   useInput(
     (input, key) => {
-      if (isMouseFragment(input) || isBackgroundReply(input)) return;
+      if (isMouseFragment(input) || isLateReply.current(input)) return;
       // The raw stdin listener handles a lone "m": only the mouse parser knows if it ends a split report.
       if (input === "m") return;
       if (key.upArrow) return confirmationRef.current ? undefined : move(-1);

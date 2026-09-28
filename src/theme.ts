@@ -23,10 +23,10 @@ const luminance = (red: number, green: number, blue: number) => {
 
 /**
  * Reads the reply to BACKGROUND_QUERY, for example "\x1b]11;rgb:1e1e/1e1e/2e2e\x07".
- * Each channel has 1 to 4 hexadecimal digits.
+ * Each channel has 1 to 4 hexadecimal digits. A reply with no BEL or ST at its end is incomplete: "unknown".
  */
 export function backgroundFromReply(reply: string): Background {
-  const match = /\]11;rgb:([0-9a-f]{1,4})\/([0-9a-f]{1,4})\/([0-9a-f]{1,4})/i.exec(reply);
+  const match = /\]11;rgb:([0-9a-f]{1,4})\/([0-9a-f]{1,4})\/([0-9a-f]{1,4})(?:\u0007|\u001B\\)/i.exec(reply);
   if (!match) return "unknown";
   const [red, green, blue] = match.slice(1).map((hex) => parseInt(hex, 16) / (16 ** hex.length - 1)) as [number, number, number];
   return luminance(red, green, blue) > 0.18 ? "light" : "dark";
@@ -34,20 +34,38 @@ export function backgroundFromReply(reply: string): Background {
 
 /**
  * Reads COLORFGBG, which some terminals set to "<foreground>;<background>" with ANSI color numbers.
- * The colors 7 and 9 to 15 are light, the others are dark.
+ * The colors 7 and 9 to 15 are light, and 0 to 6 and 8 are dark. A color above 15 gives "unknown".
  */
 export function backgroundFromColorFgBg(value: string | undefined): Background {
   const last = value?.split(";").at(-1);
   if (!last || !/^\d+$/.test(last)) return "unknown";
   const color = Number(last);
+  if (color > 15) return "unknown";
   return color === 7 || (color >= 9 && color <= 15) ? "light" : "dark";
 }
 
+// A late reply can come in several key events: Ink splits it at its escape bytes.
+const REPLY_START = /\]11;|rgb:/i;
+const REPLY_END = /\u0007|\u001B\\|\\$/;
+// A reply that never ends must not block the keys for long.
+const REPLY_EXPIRY_MS = 1_000;
+
 /**
- * Tells if a key press from Ink is a piece of the reply to BACKGROUND_QUERY that came late.
- * A piece has "]11;" or "rgb:", hexadecimal digits with a slash, or ends with BEL. A key has none of them.
+ * Returns a filter that tells if a key event from Ink is a piece of a late reply to BACKGROUND_QUERY.
+ * After a piece that starts a reply, the filter takes every event until BEL or ST ends the reply.
  */
-export const isBackgroundReply = (input: string) => /\]11;|rgb:|^[0-9a-f]*\/[0-9a-f/]*\u0007?$|\u0007$/i.test(input);
+export function createReplyFilter(now: () => number = Date.now) {
+  let since: number | undefined;
+  return (input: string): boolean => {
+    if (since !== undefined && now() - since > REPLY_EXPIRY_MS) since = undefined;
+    if (since === undefined) {
+      if (!REPLY_START.test(input)) return false;
+      since = now();
+    }
+    if (REPLY_END.test(input)) since = undefined;
+    return true;
+  };
+}
 
 interface TerminalInput {
   isTTY?: boolean;
