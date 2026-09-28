@@ -43,7 +43,7 @@ export interface Timing {
 
 const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, watchPollMs: 30_000, listRefreshMs: 60_000 };
 const REPOST_GUARD_MS = 15 * 60_000;
-const BRAND = "#A78BFA";
+const BRAND = "#8B5CF6";
 const REVIEW_COMMANDS: readonly Command[] = ["review", "full review"];
 // GitHub mergeable_state values that deserve a warning before a merge.
 const MERGE_STATE_WARNINGS: Record<string, string> = {
@@ -53,7 +53,7 @@ const MERGE_STATE_WARNINGS: Record<string, string> = {
   unknown: "GitHub has not computed the merge state yet",
 };
 // Lines outside the list in interactive mode: the header, the margin, the scroll hints and the footer.
-const CHROME_LINES = 11;
+const CHROME_LINES = 12;
 
 const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -680,7 +680,14 @@ export function App(props: AppProps) {
 
 type Mood = "checking" | "sleeping" | "done" | "failed";
 
-const EYES: Record<Mood, string> = { checking: "o o", sleeping: "- -", done: "^ ^", failed: "x x" };
+const FACES: Record<Mood, { eyes: [string, string]; mouth: string }> = {
+  checking: { eyes: ["ò", "ó"], mouth: "v" },
+  sleeping: { eyes: ["-", "-"], mouth: "ᴗ" },
+  done: { eyes: ["^", "^"], mouth: "v" },
+  failed: { eyes: ["x", "x"], mouth: "~" },
+};
+// Mid tones: the ghost must read on a dark and on a light terminal background.
+const GHOST = { line: BRAND, crown: "#EAB308", face: "#6D28D9" };
 
 interface HeaderProps {
   options: Options;
@@ -690,17 +697,21 @@ interface HeaderProps {
 }
 
 function Ghost({ mood }: { mood: Mood }) {
+  const { eyes: [left, right], mouth } = FACES[mood];
   return (
-    <Box flexDirection="column" width={9} flexShrink={0}>
-      <Text color={BRAND}> ▄███▄</Text>
-      <Text color={BRAND}>
-        {" █"}
-        <Text backgroundColor={BRAND} color="#1E1B2E" bold>
-          {EYES[mood]}
-        </Text>
-        {"█"}
+    <Box flexDirection="column" width={10} flexShrink={0}>
+      <Text color={GHOST.crown} bold>
+        {"   wWw"}
       </Text>
-      <Text color={BRAND}> ▀▄▀▄▀</Text>
+      <Text color={GHOST.line}> ╭─────╮</Text>
+      <Text color={GHOST.line}>
+        (
+        <Text color={GHOST.face} bold>
+          {` ${left} ${mouth} ${right} `}
+        </Text>
+        )
+      </Text>
+      <Text color={GHOST.line}> ╰─────╯</Text>
     </Box>
   );
 }
@@ -713,7 +724,7 @@ function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
   return (
     <Box>
       <Ghost mood={mood} />
-      <Box flexDirection="column">
+      <Box flexDirection="column" marginTop={1}>
         <Text wrap="truncate-end">
           <Text color={BRAND} bold>
             boo
