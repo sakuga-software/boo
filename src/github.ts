@@ -248,11 +248,14 @@ async function allNodes<T>(
 ): Promise<T[]> {
   let nodes = first.nodes;
   let info = first.pageInfo;
+  const seen = new Set<string>();
   while (true) {
     const cursor = direction === "older" ? info?.hasPreviousPage && info.startCursor : info?.hasNextPage && info.endCursor;
     if (!cursor) return nodes;
+    if (seen.has(cursor)) throw new Error(`GitHub GraphQL gave the same page cursor twice for ${variables.owner}/${variables.name}#${variables.number}`);
+    seen.add(cursor);
     const page = pageOf(await graphql(query, { ...variables, cursor }));
-    if (!page) return nodes;
+    if (!page || page.nodes.length === 0) return nodes;
     nodes = direction === "older" ? [...page.nodes, ...nodes] : [...nodes, ...page.nodes];
     info = page.pageInfo;
   }
