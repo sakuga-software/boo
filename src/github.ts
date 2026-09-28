@@ -37,7 +37,8 @@ export async function listPullRequests({ org, author, since }: SearchOptions): P
     "--state", "open",
     ...(since ? ["--created", `>=${since}`] : []),
     "--sort", "updated",
-    "--limit", "200",
+    // 1000 is the most results that the GitHub search gives.
+    "--limit", "1000",
     "--json", "repository,number,title,url,isDraft",
   ]);
   const results = JSON.parse(output) as {
@@ -72,28 +73,34 @@ export interface PullRequestSnapshot {
   requested: string[];
 }
 
-// The first comments hold the CodeRabbit summary. The last ones hold the recent replies.
-// A long pull request can have more than 100 comments, so the query reads both ends.
+const REVIEW_FIELDS = "author { login __typename } state submittedAt body commit { oid } comments(first: 10) { totalCount nodes { replyTo { id } } }";
+const COMMENT_FIELDS = "databaseId author { login __typename } body createdAt updatedAt";
+const CONTEXT_FIELDS = "__typename ... on CheckRun { name status conclusion } ... on StatusContext { context state description }";
+const OLDER = "pageInfo { hasPreviousPage startCursor }";
+const NEWER = "pageInfo { hasNextPage endCursor }";
+const PULL = "repository(owner: $owner, name: $name) { pullRequest(number: $number)";
+const VARIABLES = "$owner: String!, $name: String!, $number: Int!";
+
+// The first query reads the newest reviews and comments, and the first checks. A long pull request
+// needs more pages: the decisions depend on old verdicts and on the first CodeRabbit comment.
 const QUERY = `
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      state isDraft merged mergeStateStatus headRefOid
-      author { login __typename }
-      reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
-      reviews(last: 100) { nodes { author { login __typename } state submittedAt body commit { oid } comments(first: 10) { nodes { replyTo { id } } } } }
-      first: comments(first: 10) { nodes { ...comment } }
-      last: comments(last: 100) { nodes { ...comment } }
-      commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
-        __typename
-        ... on CheckRun { name status conclusion }
-        ... on StatusContext { context state description }
-      } } } } } }
-    }
-  }
-}
-fragment comment on IssueComment { databaseId author { login __typename } body createdAt updatedAt }
-`;
+query(${VARIABLES}) {
+  ${PULL} {
+    state isDraft merged mergeStateStatus headRefOid
+    author { login __typename }
+    reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
+    reviews(last: 100) { ${OLDER} nodes { ${REVIEW_FIELDS} } }
+    comments(last: 100) { ${OLDER} nodes { ${COMMENT_FIELDS} } }
+    commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
+  } }
+}`;
+
+const PAGE_QUERIES = {
+  reviews: `query(${VARIABLES}, $cursor: String!) { ${PULL} { page: reviews(last: 100, before: $cursor) { ${OLDER} nodes { ${REVIEW_FIELDS} } } } } }`,
+  comments: `query(${VARIABLES}, $cursor: String!) { ${PULL} { page: comments(last: 100, before: $cursor) { ${OLDER} nodes { ${COMMENT_FIELDS} } } } } }`,
+  contexts: `query(${VARIABLES}, $cursor: String!) { ${PULL} { commits(last: 1) { nodes { commit { statusCheckRollup {
+    page: contexts(first: 100, after: $cursor) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } } } } }`,
+};
 
 interface Actor {
   login: string;
@@ -114,7 +121,19 @@ interface ReviewNode {
   submittedAt: string | null;
   body: string;
   commit: { oid: string } | null;
-  comments: { nodes: { replyTo: { id: string } | null }[] };
+  comments: { totalCount: number; nodes: { replyTo: { id: string } | null }[] };
+}
+
+interface PageInfo {
+  hasPreviousPage?: boolean;
+  startCursor?: string | null;
+  hasNextPage?: boolean;
+  endCursor?: string | null;
+}
+
+interface Page<T> {
+  pageInfo?: PageInfo;
+  nodes: T[];
 }
 
 type ContextNode =
@@ -129,10 +148,9 @@ interface PullRequestNode {
   headRefOid: string;
   author: Actor | null;
   reviewRequests: { nodes: { requestedReviewer: ({ __typename: string; login?: string; slug?: string }) | null }[] };
-  reviews: { nodes: ReviewNode[] };
-  first: { nodes: CommentNode[] };
-  last: { nodes: CommentNode[] };
-  commits: { nodes: { commit: { statusCheckRollup: { contexts: { nodes: ContextNode[] } } | null } }[] };
+  reviews: Page<ReviewNode>;
+  comments: Page<CommentNode>;
+  commits: { nodes: { commit: { statusCheckRollup: { contexts: Page<ContextNode> } | null } }[] };
 }
 
 /** GraphQL drops the "[bot]" suffix of a bot login. The REST API and the decision rules keep it. */
@@ -152,8 +170,10 @@ function toComment(node: CommentNode): Comment {
 // A review with an empty body can be a real review: Greptile puts all its findings on the lines.
 function toReview(node: ReviewNode): Review | null {
   if (!node.submittedAt || !node.commit) return null;
+  // The query reads 10 line comments of each review. A review with more is not a reply, so a real review is never lost.
   const comments = node.comments.nodes;
-  const threadReply = node.body === "" && comments.length > 0 && comments.every((comment) => comment.replyTo !== null);
+  const threadReply =
+    node.body === "" && comments.length > 0 && node.comments.totalCount <= comments.length && comments.every((comment) => comment.replyTo !== null);
   return {
     user: userOf(node.author),
     commit_id: node.commit.oid,
@@ -188,14 +208,13 @@ function statusOf(pull: PullRequestNode): PullRequestStatus {
 }
 
 export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
-  const comments = new Map([...pull.first.nodes, ...pull.last.nodes].map((node) => [node.databaseId, toComment(node)]));
   return {
     status: statusOf(pull),
     head: pull.headRefOid,
     author: loginOf(pull.author) ?? "",
     mergeState: pull.mergeStateStatus.toLowerCase(),
     reviews: pull.reviews.nodes.map(toReview).filter((review) => review !== null),
-    comments: [...comments.values()].toSorted((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
+    comments: pull.comments.nodes.map(toComment),
     checks: (pull.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []).map(toCheck),
     requested: pull.reviewRequests.nodes
       .map(({ requestedReviewer: reviewer }) =>
@@ -205,11 +224,60 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
   };
 }
 
+type Variables = Record<string, string | number>;
+
+async function graphql(query: string, variables: Variables): Promise<PullRequestNode> {
+  const args = Object.entries(variables).flatMap(([key, value]) => [typeof value === "number" ? "-F" : "-f", `${key}=${value}`]);
+  const response = JSON.parse(await gh(["api", "graphql", ...args, "-f", `query=${query}`])) as {
+    data?: { repository: { pullRequest: PullRequestNode | null } | null };
+    errors?: { message: string }[];
+  };
+  if (response.errors?.length) throw new Error(`GitHub GraphQL: ${response.errors.map((error) => error.message).join("; ")}`);
+  const pull = response.data?.repository?.pullRequest;
+  if (!pull) throw new Error(`${variables.owner}/${variables.name}#${variables.number} is not readable: no such pull request, or no access`);
+  return pull;
+}
+
+/** Reads the other pages of a connection, older pages first or newer pages last, and returns all its nodes. */
+async function allNodes<T>(
+  first: Page<T>,
+  direction: "older" | "newer",
+  query: string,
+  variables: Variables,
+  pageOf: (pull: PullRequestNode) => Page<T> | undefined,
+): Promise<T[]> {
+  let nodes = first.nodes;
+  let info = first.pageInfo;
+  while (true) {
+    const cursor = direction === "older" ? info?.hasPreviousPage && info.startCursor : info?.hasNextPage && info.endCursor;
+    if (!cursor) return nodes;
+    const page = pageOf(await graphql(query, { ...variables, cursor }));
+    if (!page) return nodes;
+    nodes = direction === "older" ? [...page.nodes, ...nodes] : [...nodes, ...page.nodes];
+    info = page.pageInfo;
+  }
+}
+
 export async function fetchPullRequest(pr: PullRequest): Promise<PullRequestSnapshot> {
-  const [owner, name] = pr.repo.split("/");
-  const output = await gh(["api", "graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${pr.number}`, "-f", `query=${QUERY}`]);
-  const pull = (JSON.parse(output) as { data: { repository: { pullRequest: PullRequestNode } } }).data.repository.pullRequest;
-  return toSnapshot(pull);
+  const [owner = "", name = ""] = pr.repo.split("/");
+  const variables = { owner, name, number: pr.number };
+  const pull = await graphql(QUERY, variables);
+  type Pages = { page?: Page<never> };
+  const page = (value: unknown) => (value as Pages).page;
+  const rollup = pull.commits.nodes[0]?.commit.statusCheckRollup;
+  const [reviews, comments, contexts] = await Promise.all([
+    allNodes(pull.reviews, "older", PAGE_QUERIES.reviews, variables, page),
+    allNodes(pull.comments, "older", PAGE_QUERIES.comments, variables, page),
+    rollup
+      ? allNodes(rollup.contexts, "newer", PAGE_QUERIES.contexts, variables, (next) => page(next.commits.nodes[0]?.commit.statusCheckRollup))
+      : Promise.resolve([]),
+  ]);
+  return toSnapshot({
+    ...pull,
+    reviews: { nodes: reviews },
+    comments: { nodes: comments },
+    commits: { nodes: [{ commit: { statusCheckRollup: rollup ? { contexts: { nodes: contexts } } : null } }] },
+  });
 }
 
 export async function postCommand(pr: PullRequest, command: Command): Promise<string> {

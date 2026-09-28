@@ -60,15 +60,16 @@ const slug = (text: string) => text.toLowerCase().replace(/\[bot\]$/, "").replac
 
 /**
  * Tells if a check belongs to a reviewer. No API links a check to a login, so the rule compares names:
- * "claude-review" belongs to "sakuga-claude-review[bot]", "Greptile Review" to "greptile-apps[bot]",
- * and "CodeRabbit" to "coderabbitai[bot]".
+ * - "claude-review" belongs to "sakuga-claude-review[bot]": the login ends with the check name;
+ * - "Greptile Review" belongs to "greptile-apps[bot]": the same name without "review" and "apps";
+ * - "CodeRabbit" belongs to "coderabbitai[bot]".
+ * A check with one word matches only the whole name, so "test" does not belong to "test-review[bot]".
  */
 export function checkBelongsTo(check: string, login: string): boolean {
   const name = slug(check);
-  const owner = slug(login);
-  if (name.length < 4) return false;
-  const first = owner.split("-")[0]!;
-  return `-${owner}-`.includes(`-${name}-`) || owner.startsWith(name) || (first.length >= 4 && name.split("-").includes(first));
+  const owner = slug(login).replace(/(-(apps?|bot))+$/, "");
+  const core = name.replace(/-reviews?$|-reviewer$/, "");
+  return name === owner || (name.includes("-") && owner.endsWith(`-${name}`)) || (core !== name && core === owner) || owner === `${name}ai`;
 }
 
 function quotaUntil(refusal: Review, comments: Comment[]): Date | undefined {
@@ -85,12 +86,14 @@ function quotaUntil(refusal: Review, comments: Comment[]): Date | undefined {
   return undefined;
 }
 
+// Only the newest progress counts. A review with no progress after it ends the progress.
 function progressOf(login: string, reviews: Review[], comments: Comment[]) {
   const bodies = [
-    ...reviews.filter((review) => review.user?.login === login).map((review) => ({ at: time(review.submitted_at), body: review.body ?? "" })),
-    ...comments.filter((comment) => comment.user?.login === login).map((comment) => ({ at: time(comment.updated_at), body: comment.body })),
+    ...reviews.filter((review) => review.user?.login === login).map((review) => ({ at: time(review.submitted_at), body: review.body ?? "", review: true })),
+    ...comments.filter((comment) => comment.user?.login === login).map((comment) => ({ at: time(comment.updated_at), body: comment.body, review: false })),
   ].toSorted((a, b) => a.at - b.at);
-  const match = bodies.map(({ body }) => PROGRESS.exec(body)).findLast(Boolean);
+  const last = bodies.findLast(({ body, review }) => review || PROGRESS.test(body));
+  const match = last && PROGRESS.exec(last.body);
   return match ? { done: Number(match[1]), total: Number(match[2]) } : undefined;
 }
 

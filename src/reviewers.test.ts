@@ -93,6 +93,12 @@ test("a progress bar below its total and a running check of the reviewer both me
   assert.equal(byCheck.overall, "reviewing");
 });
 
+test("a finished review after a partial progress ends the progress", () => {
+  const partial = review(VORTEX, "old", 20, "COMMENTED", "Review progress `███░░` 2/3 files");
+  const [reviewer] = summarize(facts({ reviews: [partial, review(VORTEX, "head", 5, "APPROVED", "All good.")] })).reviewers;
+  assert.deepEqual([reviewer!.status, reviewer!.progress], ["approved", undefined]);
+});
+
 test("a complete progress bar is a finished review", () => {
   const done = review(VORTEX, "head", 2, "COMMENTED", "Review progress `██████████` 3/3 files\n\n**Comment** — found 1 issue(s)");
   assert.equal(summarize(facts({ reviews: [done] })).reviewers[0]!.status, "commented");
@@ -136,6 +142,20 @@ test("a check belongs to a reviewer by its name", () => {
   assert.ok(checkBelongsTo("CodeRabbit", BOT_LOGIN));
   assert.ok(!checkBelongsTo("lint", CLAUDE));
   assert.ok(!checkBelongsTo("[code]smith", GREPTILE));
+  assert.ok(checkBelongsTo("copilot-pull-request-reviewer", COPILOT));
+});
+
+test("a check does not belong to a reviewer because they share one word", () => {
+  assert.ok(!checkBelongsTo("test", "test-review[bot]"));
+  assert.ok(!checkBelongsTo("sakuga-build", CLAUDE));
+  assert.ok(!checkBelongsTo("review", CLAUDE));
+});
+
+test("a failing check with the first word of a refused reviewer still fails", () => {
+  const refusal = review("test-review[bot]", "head", 5, "COMMENTED", "Unable to review: usage limit reached.");
+  const summary = summarize(facts({ reviews: [refusal, review(CLAUDE, "head", 5, "APPROVED")], checks: [{ name: "test", state: "failure" }] }));
+  assert.deepEqual(summary.checks.failed, ["test"]);
+  assert.equal(summary.overall, "checks failing");
 });
 
 test("the display name drops the bot suffixes", () => {
@@ -154,7 +174,7 @@ test("the count of reviews and the last reviewer skip the refusals", () => {
   assert.deepEqual(summary.lastReview, { name: "sakuga-claude-review", at: new Date(ago(20)) });
 });
 
-test("the snapshot restores the bot suffix, merges both ends of the comments and marks the thread replies", () => {
+test("the snapshot restores the bot suffix and marks the thread replies", () => {
   const bot = (login: string) => ({ login, __typename: "Bot" });
   const node = (id: number, minutesAgo: number) => ({ databaseId: id, author: bot("coderabbitai"), body: `c${id}`, createdAt: ago(minutesAgo), updatedAt: ago(minutesAgo) });
   const snapshot = toSnapshot({
@@ -167,12 +187,12 @@ test("the snapshot restores the bot suffix, merges both ends of the comments and
     reviewRequests: { nodes: [{ requestedReviewer: { __typename: "Bot", login: "greptile-apps" } }] },
     reviews: {
       nodes: [
-        { author: bot("greptile-apps"), state: "COMMENTED", submittedAt: ago(10), body: "", commit: { oid: "head" }, comments: { nodes: [{ replyTo: null }] } },
-        { author: { login: "Mheaus", __typename: "User" }, state: "COMMENTED", submittedAt: ago(5), body: "", commit: { oid: "head" }, comments: { nodes: [{ replyTo: { id: "x" } }] } },
+        { author: bot("greptile-apps"), state: "COMMENTED", submittedAt: ago(10), body: "", commit: { oid: "head" }, comments: { totalCount: 1, nodes: [{ replyTo: null }] } },
+        { author: { login: "Mheaus", __typename: "User" }, state: "COMMENTED", submittedAt: ago(5), body: "", commit: { oid: "head" }, comments: { totalCount: 1, nodes: [{ replyTo: { id: "x" } }] } },
+        { author: bot("greptile-apps"), state: "COMMENTED", submittedAt: ago(4), body: "", commit: { oid: "head" }, comments: { totalCount: 11, nodes: [{ replyTo: { id: "y" } }] } },
       ],
     },
-    first: { nodes: [node(1, 50), node(2, 40)] },
-    last: { nodes: [node(2, 40), node(3, 30)] },
+    comments: { nodes: [node(1, 50), node(2, 40), node(3, 30)] },
     commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [
       { __typename: "CheckRun", name: "lint", status: "IN_PROGRESS", conclusion: null },
       { __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "TIMED_OUT" },
@@ -189,6 +209,7 @@ test("the snapshot restores the bot suffix, merges both ends of the comments and
   assert.deepEqual(snapshot.reviews.map((item) => [item.user?.login, item.threadReply]), [
     [GREPTILE, false],
     ["Mheaus", true],
+    [GREPTILE, false],
   ]);
   assert.deepEqual(snapshot.checks, [
     { name: "lint", state: "pending" },

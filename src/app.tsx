@@ -860,7 +860,10 @@ function ChecksBadge({ summary }: { summary: Summary }) {
   const counted = checks.passed + checks.failed.length + checks.pending;
   if (checks.failed.length > 0) return <Text color="red">✖ {checks.failed.length}/{counted} failing</Text>;
   if (checks.pending > 0) return <Text color="yellow">◌ {checks.pending}/{counted} running</Text>;
-  if (counted === 0) return <Text dimColor>no checks</Text>;
+  if (counted === 0) {
+    if (checks.skipped > 0) return <Text dimColor>⊘ {checks.skipped} skipped</Text>;
+    return <Text dimColor>{checks.quota > 0 ? `◷ ${checks.quota} quota only` : "no checks"}</Text>;
+  }
   return <Text color="green">✔ {checks.passed}/{counted} checks</Text>;
 }
 
