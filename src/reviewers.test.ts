@@ -111,6 +111,12 @@ test("a review that quotes a progress further down is not in progress", () => {
   assert.deepEqual([reviewer!.status, reviewer!.progress], ["stale", undefined]);
 });
 
+test("a progress line after an introduction still counts", () => {
+  const body = "Vortex reviews this pull request.\n\nReview progress `███░░` 2/3 files";
+  const [reviewer] = summarize(facts({ reviews: [review(VORTEX, "old", 5, "COMMENTED", body)] })).reviewers;
+  assert.deepEqual([reviewer!.status, reviewer!.progress], ["reviewing", { done: 2, total: 3 }]);
+});
+
 test("a complete progress bar is a finished review", () => {
   const done = review(VORTEX, "head", 2, "COMMENTED", "Review progress `██████████` 3/3 files\n\n**Comment** — found 1 issue(s)");
   assert.equal(summarize(facts({ reviews: [done] })).reviewers[0]!.status, "commented");
