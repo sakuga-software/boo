@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { commandBody, type Command } from "./actions.js";
+import { requestText, type Request } from "./actions.js";
 import type { Comment, Review } from "./decide.js";
 import type { Check, CheckState } from "./reviewers.js";
 
@@ -283,8 +283,17 @@ export async function fetchPullRequest(pr: PullRequest): Promise<PullRequestSnap
   });
 }
 
-export async function postCommand(pr: PullRequest, command: Command): Promise<string> {
-  const url = await gh(["pr", "comment", String(pr.number), "--repo", pr.repo, "--body", commandBody(command)]);
+/**
+ * Sends a request to a bot. A bot with a reviewer gets a review request from GitHub, and the function
+ * returns the URL of the pull request. Another bot gets a comment, and the function returns its URL.
+ */
+export async function requestReview(pr: PullRequest, request: Request): Promise<string> {
+  const { reviewer } = request.bot;
+  if (reviewer) {
+    await gh(["pr", "edit", String(pr.number), "--repo", pr.repo, "--add-reviewer", reviewer]);
+    return pr.url;
+  }
+  const url = await gh(["pr", "comment", String(pr.number), "--repo", pr.repo, "--body", requestText(request)]);
   return url.trim();
 }
 

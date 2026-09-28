@@ -1,6 +1,8 @@
 import { render } from "ink";
 import meow from "meow";
+import { homedir } from "node:os";
 import { App } from "./app.js";
+import { loadSettings, saveSettings, settingsPath } from "./settings.js";
 import { detectBackground } from "./theme.js";
 
 const DEFAULT_ORG = "sakuga-software";
@@ -69,12 +71,19 @@ const cli = meow(
     ↑ ↓  or  k j    select a pull request; the mouse wheel does it too
     o  or  Enter    open the pull request in the browser
     m               merge the pull request (squash, else merge, else rebase)
-    h               hide or show the merged, closed and draft pull requests
+    h               show or hide the merged, closed and draft pull requests;
+                    they are hidden by default
+    ,               open the settings: the hidden pull requests and the parts
+                    of a row; saved in ${settingsPath().replace(homedir(), "~")}
+    →  or  space    show the bot actions in the bar; ← or space goes back
     r               post "@coderabbitai review"
     f               post "@coderabbitai full review"
     a               post "@coderabbitai approve": resolve the threads, then approve
     s               post "@coderabbitai resolve": resolve the threads
+    g               post "@greptileai review"
+    c               request a review from Copilot (needs gh 2.88 or later)
     q               quit
+  The bot keys work in both bars. A narrow terminal hides some parts of a row.
   Each post and each merge asks for a confirmation: y or Enter confirms, n or
   Esc cancels. Before a merge, the confirmation warns about a request for
   changes, a missing approval, a failing or running check, a conflict or a
@@ -113,7 +122,11 @@ const org = cli.flags.org === "all" ? "" : cli.flags.org;
 
 const interactive = cli.flags.watch && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
 const background = process.stdout.isTTY ? await detectBackground(process.stdin, process.stdout, process.env) : "unknown";
-const app = render(<App options={{ ...cli.flags, org, ...(since && { since }), interactive, background }} />, { alternateScreen: interactive });
+const settings = await loadSettings();
+const app = render(
+  <App options={{ ...cli.flags, org, ...(since && { since }), interactive, background }} settings={settings} saveSettings={saveSettings} />,
+  { alternateScreen: interactive },
+);
 process.once("SIGTERM", () => app.unmount());
 try {
   await app.waitUntilExit();
