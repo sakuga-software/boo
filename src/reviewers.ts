@@ -58,10 +58,11 @@ const time = (iso: string) => Date.parse(iso);
 const firstParagraph = (body = "") => body.trimStart().split(/\n\s*\n/)[0]!;
 const isRefusal = (body = "") => QUOTA.test(firstParagraph(body));
 // A progress bar counts only in the first paragraph, where a bot shows it. A later one is a quote or an example.
-// A first paragraph that opens a code block or a quote is an example too.
+// The paragraph also stops at a line that opens a code block or a quote: that line starts an example.
 const progressIn = (body: string) => {
-  const first = firstParagraph(body);
-  return /^(```|~~~|>)/.test(first) ? null : PROGRESS.exec(first);
+  const prose = firstParagraph(body).split("\n");
+  const end = prose.findIndex((line) => /^\s*(```|~~~|>)/.test(line));
+  return PROGRESS.exec((end === -1 ? prose : prose.slice(0, end)).join("\n"));
 };
 const slug = (text: string) => text.toLowerCase().replace(/\[bot\]$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 

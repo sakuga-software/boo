@@ -118,6 +118,8 @@ test("a progress after the first paragraph, or in a first paragraph that is code
     "~~~text\nProgress: 2/3 files\n~~~\n\nAll good.",
     "> Review progress 2/3 files\n\nAll good.",
     "All good.\n\n> The reviewer said:\nReview progress 2/3 files",
+    "All good.\n```\nReview progress 2/3 files\n```",
+    "All good.\n> Review progress 2/3 files",
   ];
   for (const body of bodies) {
     const [reviewer] = summarize(facts({ reviews: [review(VORTEX, "head", 5, "APPROVED", body)] })).reviewers;
