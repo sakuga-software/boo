@@ -2,7 +2,7 @@ import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize, type D
 import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ACTIONS, actionForKey, BOT_BAR_WIDTH, BOTS, CODERABBIT, isCodeRabbit, moveSelection, refusal, requestText, reselect, type Action, type Mode, type Request } from "./actions.js";
+import { ACTIONS, actionForKey, BOT_BAR_WIDTH, BOTS, CODERABBIT, isAbsent, isCodeRabbit, moveSelection, refusal, requestText, reselect, type Action, type Mode, type Request, type ReviewerRef } from "./actions.js";
 import { BOT_LOGIN, botReplied, decide, quotaScope, quotaSignals, type Comment, type Decision, type QuotaSignal, type QuotaSource } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest, PullRequestSnapshot } from "./github.js";
@@ -476,7 +476,7 @@ export function App(props: AppProps) {
   }
 
   function targetOf(row: Row) {
-    const reviewers = row.summary?.reviewers.map((reviewer) => reviewer.login);
+    const reviewers = row.summary?.reviewers;
     return { left: row.left !== undefined, dryRun: options.dryRun, ...(reviewers && { reviewers }) };
   }
 
@@ -760,7 +760,7 @@ export function App(props: AppProps) {
           panelOpen={panel !== undefined}
           short={layout.shortBar}
           shortBots={layout.shortBar || columns - 2 < BOT_BAR_WIDTH}
-          reviewers={selectedRow?.summary?.reviewers.map((reviewer) => reviewer.login)}
+          reviewers={selectedRow?.summary?.reviewers}
         />
       )}
     </Box>
@@ -1129,8 +1129,8 @@ interface ControlsProps {
   /** Show the keys only, for a narrow terminal. */
   short: boolean;
   shortBots: boolean;
-  /** The logins of the reviewers of the selected pull request. */
-  reviewers?: readonly string[] | undefined;
+  /** The reviewers of the selected pull request. */
+  reviewers?: readonly ReviewerRef[] | undefined;
 }
 
 interface ButtonProps {
@@ -1173,7 +1173,7 @@ function ActionBar({ registerButton, disabledCommands, revealed, hiddenCount, mo
     return (
       <Box height={1} overflow="hidden">
         {BOTS.map((bot) => {
-          const absent = Boolean(bot.mention && reviewers && !bot.logins.some((login) => reviewers.includes(login)));
+          const absent = isAbsent(bot, reviewers);
           return (
             <Box key={bot.name} flexShrink={0} marginRight={1}>
               <Group name={bot.name} />

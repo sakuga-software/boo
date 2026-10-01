@@ -1,12 +1,12 @@
 import { BOT_LOGIN } from "./decide.js";
 
-export type Command = "review" | "full review" | "approve" | "resolve";
+export type Command = "review" | "full review" | "approve" | "resolve" | "improve";
 
 export interface Bot {
   name: string;
   /** The logins of the bot on GitHub. The first one is the main login. */
   logins: readonly string[];
-  /** The mention that starts a command in a comment, for example "@coderabbitai". */
+  /** The mention that starts a command in a comment, for example "@coderabbitai". A bot with no mention and no reviewer takes "/command". */
   mention?: string;
   /** The reviewer that `gh pr edit --add-reviewer` takes. A bot with a mention gets a comment instead. */
   reviewer?: string;
@@ -16,6 +16,8 @@ export const CODERABBIT: Bot = { name: "CodeRabbit", logins: [BOT_LOGIN], mentio
 export const GREPTILE: Bot = { name: "Greptile", logins: ["greptile-apps[bot]"], mention: "@greptileai" };
 // A mention of @copilot in a comment starts the Copilot coding agent, which pushes commits. Only a review request is safe.
 export const COPILOT: Bot = { name: "Copilot", logins: ["copilot-pull-request-reviewer[bot]", "Copilot"], reviewer: "@copilot" };
+// Each PR-Agent install posts with its own login, so the reviewer carries a flag and the bot has no login.
+export const PR_AGENT: Bot = { name: "PR-Agent", logins: [] };
 
 export interface Request {
   bot: Bot;
@@ -43,9 +45,11 @@ export const ACTIONS: readonly Action[] = [
   { key: "s", label: "resolve", mode: "bots", request: { bot: CODERABBIT, command: "resolve" } },
   { key: "g", label: "review", mode: "bots", request: { bot: GREPTILE, command: "review" } },
   { key: "c", label: "review", mode: "bots", request: { bot: COPILOT, command: "review" } },
+  { key: "p", label: "review", mode: "bots", request: { bot: PR_AGENT, command: "review" } },
+  { key: "i", label: "improve", mode: "bots", request: { bot: PR_AGENT, command: "improve" } },
 ];
 
-export const BOTS: readonly Bot[] = [CODERABBIT, GREPTILE, COPILOT];
+export const BOTS: readonly Bot[] = [CODERABBIT, GREPTILE, COPILOT, PR_AGENT];
 
 /** The width of the bot set of the action bar with its labels: each bot name, its buttons, and "← back". */
 export const BOT_BAR_WIDTH =
@@ -60,15 +64,25 @@ export const BOT_BAR_WIDTH =
 export const isCodeRabbit = (request: Request) => request.bot === CODERABBIT;
 
 /** The comment that the request posts, or a description of the review request. */
-export const requestText = ({ bot, command }: Request) => (bot.mention ? `${bot.mention} ${command}` : `review request to ${bot.name}`);
+export const requestText = ({ bot, command }: Request) =>
+  bot.reviewer ? `review request to ${bot.name}` : bot.mention ? `${bot.mention} ${command}` : `/${command}`;
 
 export const actionForKey = (input: string) => ACTIONS.find((action) => action.key === input);
+
+export interface ReviewerRef {
+  login: string;
+  prAgent?: boolean;
+}
+
+/** Tells if a bot that takes its commands in a comment is absent from the reviewers of a pull request. */
+export const isAbsent = (bot: Bot, reviewers: readonly ReviewerRef[] | undefined) =>
+  Boolean(!bot.reviewer && reviewers && !reviewers.some((reviewer) => (bot === PR_AGENT ? reviewer.prAgent : bot.logins.includes(reviewer.login))));
 
 export interface Target {
   left: boolean;
   dryRun: boolean;
-  /** The logins of the reviewers of the pull request, if the tool read them. */
-  reviewers?: readonly string[];
+  /** The reviewers of the pull request, if the tool read them. */
+  reviewers?: readonly ReviewerRef[];
 }
 
 /** Returns why the action is not available on the target, or null if it is available. */
@@ -76,12 +90,10 @@ export function refusal(action: Action, target: Target): string | null {
   if (!action.request && !action.merge) return null;
   if (target.left) return "this pull request is no longer open";
   if (target.dryRun) return action.merge ? "dry run: the tool merges nothing" : "dry run: the tool posts nothing";
-  // A bot that reviews through a mention answers only on a repository where it is installed.
+  // A bot that reviews through a comment answers only on a repository where it is installed.
   // GitHub adds a requested reviewer to any pull request, so a review request needs no earlier review.
   const bot = action.request?.bot;
-  if (bot?.mention && target.reviewers && !bot.logins.some((login) => target.reviewers!.includes(login))) {
-    return `${bot.name} does not review this pull request`;
-  }
+  if (bot && isAbsent(bot, target.reviewers)) return `${bot.name} does not review this pull request`;
   return null;
 }
 

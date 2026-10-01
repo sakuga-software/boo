@@ -82,9 +82,10 @@ closes the panel. The tool saves them in `~/.config/boo/settings.json` (or under
 
 ### Reviewers
 
-- A reviewer is a person or a bot that submitted a review, that GitHub asks for a review, or
-  CodeRabbit if it commented. The tool knows no list of bots, so a new reviewer needs no change.
-  A bot that only comments, such as Linear or a preview deployment, is not a reviewer.
+- A reviewer is a person or a bot that submitted a review, that GitHub asks for a review,
+  CodeRabbit if it commented, or PR-Agent if it posted its review comment. The tool knows no list
+  of bots, so a new reviewer needs no change. A bot that only comments, such as Linear or a preview
+  deployment, is not a reviewer.
 - The author of the pull request is not a reviewer: their reviews are replies in the threads.
 - A review whose line comments all answer an earlier comment is a reply in a thread, not a
   review. A review with an empty body and its own line comments is a review: Greptile puts all its
@@ -95,6 +96,24 @@ closes the panel. The tool saves them in `~/.config/boo/settings.json` (or under
 - A reviewer reviews now if it has a running check with its name (`claude-review` for
   `sakuga-claude-review[bot]`), or if its last review or comment shows a progress below its total
   (`2/3 files`) on its first line. A progress further down is a quote, a list or an example.
+
+### PR-Agent
+
+[PR-Agent](https://github.com/The-PR-Agent/pr-agent) submits no GitHub review: its review is one
+comment ("PR Reviewer Guide"), which it edits at each new review. The login of that comment is the
+reviewer, so each install works under its own name (`sakuga-review[bot]` at Sakuga).
+
+- The mark comes from the "Merge recommendation" line: `Safe to merge` gives `✔`, `Changes
+  required` gives `✎`, and all the rest, or no such line, gives `●`. It is the opinion of a model,
+  not a GitHub verdict: it gives no `approved`, no `ready to merge` and no `changes requested`
+  state to the pull request.
+- An edited comment names the commit that it covers ("Review updated until commit …"). If that
+  commit is not the head commit, the review is stale (`◌`).
+- A comment with no edit covers the head commit, unless the head commit has checks with `pr-agent`
+  in their name and none of them passed: then the review is stale.
+- A running check with `pr-agent` in its name on the head commit means that PR-Agent reviews now
+  (`⟳`).
+- The line suggestions of `/improve` count as reviews, but do not change the mark.
 
 ### Approval and checks
 
@@ -173,12 +192,14 @@ goes back. The keys work in both sets; the bar only changes what it shows.
 | `s` | post `@coderabbitai resolve`: resolve the CodeRabbit threads |
 | `g` | post `@greptileai review` |
 | `c` | ask Copilot for a review (`gh pr edit --add-reviewer @copilot`, needs `gh` 2.88 or later) |
+| `p` | post `/review`: PR-Agent reviews the pull request again |
+| `i` | post `/improve`: PR-Agent suggests code changes on the lines |
 | `q` | quit |
 
-A command to CodeRabbit or Greptile works only on a pull request that the bot reviews; the bar dims
-it on the other ones. Copilot gets a review request from GitHub and not a comment: a mention of
+A command to CodeRabbit, Greptile or PR-Agent works only on a pull request that the bot reviews; the
+bar dims it on the other ones. Copilot gets a review request from GitHub and not a comment: a mention of
 `@copilot` starts its coding agent. The detection of the reviewers keeps no list of bots, but the
-bot set does: only these three bots have a known command. A CodeRabbit post goes through the queue
+bot set does: only these four bots have a known command. A CodeRabbit post goes through the queue
 of the automatic retries. A post to another bot goes at once, because it does not spend the
 CodeRabbit quota.
 
