@@ -209,6 +209,17 @@ test("the line suggestions of PR-Agent on an older commit do not replace its rev
   assert.deepEqual(reviewers.map(({ status, reviews, lastReviewAt }) => [status, reviews, lastReviewAt]), [["approved", 2, new Date(ago(5))]]);
 });
 
+test("a later comment of PR-Agent that quotes the review marker does not replace its review", () => {
+  const quote: Comment = {
+    user: { login: SAKUGA },
+    body: "## PR Code Suggestions ✨\n\n<!-- pr-agent:improve:full -->\n\nSee the guide (`<!-- pr-agent:review:full -->`).\n\n\n<!-- pr-agent:review:full -->",
+    created_at: ago(1),
+    updated_at: ago(1),
+  };
+  const [reviewer] = summarize(facts({ head: HEAD, comments: [guide("Changes required", HEAD), quote] })).reviewers;
+  assert.deepEqual([reviewer!.status, reviewer!.reviews], ["changes requested", 1]);
+});
+
 test("the other PR-Agent comments and a quote of its review by a person make no reviewer", () => {
   const other = (login: string, body: string): Comment => ({ user: { login }, body, created_at: ago(5), updated_at: ago(5) });
   const comments = [other(SAKUGA, "## PR Code Suggestions ✨\n\n<!-- pr-agent:improve:no-suggestions -->"), other("alice", "> ## PR Reviewer Guide 🔍\n\nI agree.")];

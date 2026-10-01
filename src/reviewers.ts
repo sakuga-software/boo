@@ -136,13 +136,18 @@ function genericReviewer(login: string, facts: PullRequestFacts): Reviewer {
 }
 
 // PR-Agent posts its review as one comment, and edits it at each new review. Only an edit adds the commit line.
-const PR_AGENT_REVIEW = /<!-- pr-agent:review|^## PR Reviewer Guide/;
+// Another comment of the same bot can quote the marker, so the marker counts only as a full line at the top of the body.
+const PR_AGENT_MARKER = /^<!-- pr-agent:review[\w:-]* -->$/;
+const isPrAgentReview = (body: string) => {
+  const top = body.trimStart().split("\n", 6).map((line) => line.trim());
+  return top[0]!.startsWith("## PR Reviewer Guide") || top.some((line) => PR_AGENT_MARKER.test(line));
+};
 const PR_AGENT_COMMIT = /Review updated until commit \S*\/commit\/([0-9a-f]{40})/;
 const PR_AGENT_ADVICE = /Merge recommendation<\/strong>:\s*([^<]+)/;
 const isPrAgentCheck = (check: Check) => slug(check.name).includes("pr-agent");
 
 const prAgentReviews = (facts: PullRequestFacts) =>
-  facts.comments.filter((comment) => comment.user && PR_AGENT_REVIEW.test(comment.body.trimStart()));
+  facts.comments.filter((comment) => comment.user && isPrAgentReview(comment.body));
 
 function prAgentVerdict(body: string): Verdict {
   const advice = PR_AGENT_ADVICE.exec(body)?.[1]?.trim().toLowerCase();
