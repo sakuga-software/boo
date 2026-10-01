@@ -77,17 +77,17 @@ const cli = meow(
                     they are hidden by default
     ,               open the settings: the hidden pull requests and the parts
                     of a row; saved in ${settingsPath().replace(homedir(), "~")}
-    →  or  space    show the bot actions in the bar; ← or space goes back
-    r               post "@coderabbitai review"
-    f               post "@coderabbitai full review"
-    a               post "@coderabbitai approve": resolve the threads, then approve
-    s               post "@coderabbitai resolve": resolve the threads
-    g               post "@greptileai review"
-    c               request a review from Copilot (needs gh 2.88 or later)
-    p               post "/review" for PR-Agent
-    i               post "/improve" for PR-Agent
+    →  or  space    show the list of the review bots
+    ←  or  space    go back one level; Esc goes back to the main set
+    In the list of the review bots, a key opens the menu of a bot:
+    r  CodeRabbit   r "@coderabbitai review", f "@coderabbitai full review",
+                    a "@coderabbitai approve": resolve the threads, then approve,
+                    s "@coderabbitai resolve": resolve the threads
+    g  Greptile     r "@greptileai review"
+    c  Copilot      r request a review (needs gh 2.88 or later)
+    p  PR-Agent     r "/review", i "/improve"
     q               quit
-  The bot keys work in both bars. A narrow terminal hides some parts of a row.
+  A key of a bot or of a command works only at its level. A narrow terminal hides some parts of a row.
   Each post and each merge asks for a confirmation: y or Enter confirms, n or
   Esc cancels. Before a merge, the confirmation warns about a request for
   changes, a missing approval, a failing or running check, a conflict or a

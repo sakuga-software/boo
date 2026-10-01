@@ -2,7 +2,7 @@ import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize, type D
 import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ACTIONS, actionForKey, BOT_BAR_WIDTH, BOTS, CODERABBIT, isAbsent, isCodeRabbit, moveSelection, refusal, requestText, reselect, type Action, type Mode, type Request, type ReviewerRef } from "./actions.js";
+import { actionForKey, actionsOf, BOT_BAR_WIDTH, BOTS, CODERABBIT, isAbsent, isCodeRabbit, moveSelection, parentOf, refusal, requestText, reselect, type Action, type Mode, type Request, type ReviewerRef } from "./actions.js";
 import { BOT_LOGIN, botReplied, decide, quotaScope, quotaSignals, type Comment, type Decision, type QuotaSignal, type QuotaSource } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest, PullRequestSnapshot } from "./github.js";
@@ -576,8 +576,11 @@ export function App(props: AppProps) {
     if (panelRef.current !== undefined) return;
     if (id === "h") return toggleHidden();
     if (id === ",") return openPanel(0);
-    if (id === "bots" || id === "main") return switchMode(id);
-    const action = actionForKey(id);
+    if (id === "bots") return switchMode("bots");
+    if (id === "back") return switchMode(parentOf(modeRef.current));
+    const bot = modeRef.current === "bots" ? BOTS.find((candidate) => candidate.key === id) : undefined;
+    if (bot) return switchMode(bot);
+    const action = actionForKey(id, modeRef.current);
     if (action) request(action);
   }
 
@@ -597,7 +600,7 @@ export function App(props: AppProps) {
     else if (char === "j") move(1);
     else if (char === "\r") press("o");
     else if (char === "q") exit();
-    else if (char === " ") switchMode(modeRef.current === "main" ? "bots" : "main");
+    else if (char === " ") switchMode(modeRef.current === "main" ? "bots" : parentOf(modeRef.current));
     else if (char === "\u001B") switchMode("main");
     else press(char);
   }
@@ -609,8 +612,8 @@ export function App(props: AppProps) {
       if (input === "m") return;
       if (key.upArrow) return confirmationRef.current ? undefined : typeKey("k");
       if (key.downArrow) return confirmationRef.current ? undefined : typeKey("j");
-      if (key.rightArrow) return confirmationRef.current || panelRef.current !== undefined ? undefined : switchMode("bots");
-      if (key.leftArrow) return confirmationRef.current || panelRef.current !== undefined ? undefined : switchMode("main");
+      if (key.rightArrow) return confirmationRef.current || panelRef.current !== undefined ? undefined : modeRef.current === "main" ? switchMode("bots") : undefined;
+      if (key.leftArrow) return confirmationRef.current || panelRef.current !== undefined ? undefined : switchMode(parentOf(modeRef.current));
       if (key.return) return typeKey("\r");
       // A terminal can split a mouse report after its Escape byte, and Ink then reports a lone Escape.
       // Wait a moment: if the rest of a mouse report follows, the Escape was part of it.
@@ -1165,29 +1168,33 @@ function Group({ name }: { name: string }) {
 }
 
 function ActionBar({ registerButton, disabledCommands, revealed, hiddenCount, mode, short: shortMain, shortBots, reviewers }: ControlsProps) {
-  const short = mode === "bots" ? shortBots : shortMain;
+  const short = mode === "main" ? shortMain : shortBots;
   const button = (action: Action, dim?: boolean) => (
     <Button key={action.key} id={action.key} hotkey={action.key} label={action.label} dim={dim} short={short} register={registerButton} />
   );
   if (mode === "bots") {
     return (
       <Box height={1} overflow="hidden">
-        {BOTS.map((bot) => {
-          const absent = isAbsent(bot, reviewers);
-          return (
-            <Box key={bot.name} flexShrink={0} marginRight={1}>
-              <Group name={bot.name} />
-              {ACTIONS.filter((action) => action.request?.bot === bot).map((action) => button(action, disabledCommands || absent))}
-            </Box>
-          );
-        })}
-        <Button id="main" hotkey="←" label="back" short={short} register={registerButton} />
+        {BOTS.map((bot) => (
+          <Button key={bot.name} id={bot.key} hotkey={bot.key} label={bot.name} dim={isAbsent(bot, reviewers)} short={short} register={registerButton} />
+        ))}
+        <Button id="back" hotkey="←" label="back" short={short} register={registerButton} />
+      </Box>
+    );
+  }
+  if (mode !== "main") {
+    const dim = disabledCommands || isAbsent(mode, reviewers);
+    return (
+      <Box height={1} overflow="hidden">
+        <Group name={mode.name} />
+        {actionsOf(mode).map((action) => button(action, dim))}
+        <Button id="back" hotkey="←" label="back" short={short} register={registerButton} />
       </Box>
     );
   }
   return (
     <Box height={1} overflow="hidden">
-      {ACTIONS.filter((action) => action.mode === "main").map((action) => button(action, disabledCommands && action.merge))}
+      {actionsOf("main").map((action) => button(action, disabledCommands && action.merge))}
       <Button id="h" hotkey="h" label={revealed ? "hide inactive" : hiddenCount > 0 ? `show ${hiddenCount} hidden` : "nothing hidden"} short={short} register={registerButton} />
       <Button id="bots" hotkey="→" label="bots" short={short} register={registerButton} />
       <Button id="," hotkey="," label="settings" short={short} register={registerButton} />

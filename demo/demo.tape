@@ -22,6 +22,8 @@ Right
 Sleep 1.2s
 Down@400ms 4
 Sleep 0.8s
+Type "r"
+Sleep 1.2s
 Type "a"
 Sleep 1.2s
 Enter

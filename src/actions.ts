@@ -4,6 +4,8 @@ export type Command = "review" | "full review" | "approve" | "resolve" | "improv
 
 export interface Bot {
   name: string;
+  /** The key that opens the menu of the bot in the list of bots. */
+  key: string;
   /** The logins of the bot on GitHub. The first one is the main login. */
   logins: readonly string[];
   /** The mention that starts a command in a comment, for example "@coderabbitai". A bot with no mention and no reviewer takes "/command". */
@@ -12,54 +14,65 @@ export interface Bot {
   reviewer?: string;
 }
 
-export const CODERABBIT: Bot = { name: "CodeRabbit", logins: [BOT_LOGIN], mention: "@coderabbitai" };
-export const GREPTILE: Bot = { name: "Greptile", logins: ["greptile-apps[bot]"], mention: "@greptileai" };
+export const CODERABBIT: Bot = { name: "CodeRabbit", key: "r", logins: [BOT_LOGIN], mention: "@coderabbitai" };
+export const GREPTILE: Bot = { name: "Greptile", key: "g", logins: ["greptile-apps[bot]"], mention: "@greptileai" };
 // A mention of @copilot in a comment starts the Copilot coding agent, which pushes commits. Only a review request is safe.
-export const COPILOT: Bot = { name: "Copilot", logins: ["copilot-pull-request-reviewer[bot]", "Copilot"], reviewer: "@copilot" };
+export const COPILOT: Bot = { name: "Copilot", key: "c", logins: ["copilot-pull-request-reviewer[bot]", "Copilot"], reviewer: "@copilot" };
 // Each PR-Agent install posts with its own login, so the reviewer carries a flag and the bot has no login.
-export const PR_AGENT: Bot = { name: "PR-Agent", logins: [] };
+export const PR_AGENT: Bot = { name: "PR-Agent", key: "p", logins: [] };
 
 export interface Request {
   bot: Bot;
   command: Command;
 }
 
-export type Mode = "main" | "bots";
+/** The level of the action bar: the main set, the list of bots, or the menu of one bot. */
+export type Mode = "main" | "bots" | Bot;
 
 export interface Action {
   key: string;
   label: string;
-  /** The bar that shows the action. Every key works in both bars. */
-  mode: Mode;
   request?: Request;
   /** The action merges the pull request. It always asks for a confirmation. */
   merge?: true;
 }
 
-export const ACTIONS: readonly Action[] = [
-  { key: "o", label: "open", mode: "main" },
-  { key: "m", label: "merge", mode: "main", merge: true },
-  { key: "r", label: "review", mode: "bots", request: { bot: CODERABBIT, command: "review" } },
-  { key: "f", label: "full review", mode: "bots", request: { bot: CODERABBIT, command: "full review" } },
-  { key: "a", label: "approve", mode: "bots", request: { bot: CODERABBIT, command: "approve" } },
-  { key: "s", label: "resolve", mode: "bots", request: { bot: CODERABBIT, command: "resolve" } },
-  { key: "g", label: "review", mode: "bots", request: { bot: GREPTILE, command: "review" } },
-  { key: "c", label: "review", mode: "bots", request: { bot: COPILOT, command: "review" } },
-  { key: "p", label: "review", mode: "bots", request: { bot: PR_AGENT, command: "review" } },
-  { key: "i", label: "improve", mode: "bots", request: { bot: PR_AGENT, command: "improve" } },
+const MAIN_ACTIONS: readonly Action[] = [
+  { key: "o", label: "open" },
+  { key: "m", label: "merge", merge: true },
+];
+
+// A key belongs to the menu of one bot, so two bots can use the same key.
+const BOT_ACTIONS: readonly Action[] = [
+  { key: "r", label: "review", request: { bot: CODERABBIT, command: "review" } },
+  { key: "f", label: "full review", request: { bot: CODERABBIT, command: "full review" } },
+  { key: "a", label: "approve", request: { bot: CODERABBIT, command: "approve" } },
+  { key: "s", label: "resolve", request: { bot: CODERABBIT, command: "resolve" } },
+  { key: "r", label: "review", request: { bot: GREPTILE, command: "review" } },
+  { key: "r", label: "review", request: { bot: COPILOT, command: "review" } },
+  { key: "r", label: "review", request: { bot: PR_AGENT, command: "review" } },
+  { key: "i", label: "improve", request: { bot: PR_AGENT, command: "improve" } },
 ];
 
 export const BOTS: readonly Bot[] = [CODERABBIT, GREPTILE, COPILOT, PR_AGENT];
 
-/** The width of the bot set of the action bar with its labels: each bot name, its buttons, and "← back". */
+/** Returns the actions that the bar shows at a level. The list of bots shows bots, not actions. */
+export const actionsOf = (mode: Mode): readonly Action[] =>
+  mode === "main" ? MAIN_ACTIONS : mode === "bots" ? [] : BOT_ACTIONS.filter((action) => action.request!.bot === mode);
+
+/** Returns the level above a level. The main set is the top. */
+export const parentOf = (mode: Mode): Mode => (mode === "main" || mode === "bots" ? "main" : "bots");
+
+const BACK_WIDTH = "← back".length + 2;
+const buttonWidth = (key: string, label: string) => key.length + label.length + 3;
+
+/** The width of the widest bot level of the action bar with its labels: the list of bots, or the menu of one bot. */
 export const BOT_BAR_WIDTH =
-  BOTS.reduce(
-    (width, bot) =>
-      width +
-      bot.name.length + 2 +
-      ACTIONS.filter((action) => action.request?.bot === bot).reduce((sum, action) => sum + action.key.length + action.label.length + 3, 0),
-    0,
-  ) + "← back".length + 2;
+  BACK_WIDTH +
+  Math.max(
+    BOTS.reduce((width, bot) => width + buttonWidth(bot.key, bot.name), 0),
+    ...BOTS.map((bot) => bot.name.length + 1 + actionsOf(bot).reduce((width, action) => width + buttonWidth(action.key, action.label), 0)),
+  );
 
 export const isCodeRabbit = (request: Request) => request.bot === CODERABBIT;
 
@@ -67,7 +80,9 @@ export const isCodeRabbit = (request: Request) => request.bot === CODERABBIT;
 export const requestText = ({ bot, command }: Request) =>
   bot.reviewer ? `review request to ${bot.name}` : bot.mention ? `${bot.mention} ${command}` : `/${command}`;
 
-export const actionForKey = (input: string) => ACTIONS.find((action) => action.key === input);
+/** Returns the action of a key at a level. The keys of the main set work at every level. */
+export const actionForKey = (input: string, mode: Mode = "main") =>
+  [...actionsOf(mode), ...MAIN_ACTIONS].find((action) => action.key === input);
 
 export interface ReviewerRef {
   login: string;
