@@ -40,12 +40,20 @@ test("open stays available on a merged pull request, a command does not", () => 
 });
 
 test("a bot command needs the bot on the pull request, open, merge and Copilot do not", () => {
-  const target = { left: false, dryRun: false, reviewers: ["greptile-apps[bot]"] };
+  const target = { left: false, dryRun: false, reviewers: [{ login: "greptile-apps[bot]" }] };
   assert.match(refusal(actionForKey("r")!, target)!, /CodeRabbit does not review/);
   assert.equal(refusal(actionForKey("g")!, target), null);
   assert.equal(refusal(actionForKey("c")!, target), null);
   assert.equal(refusal(actionForKey("o")!, target), null);
   assert.equal(refusal(actionForKey("m")!, target), null);
+});
+
+test("PR-Agent takes a slash command, on a pull request where an install of it posted a review", () => {
+  assert.equal(requestText(actionForKey("p")!.request!), "/review");
+  assert.equal(requestText(actionForKey("i")!.request!), "/improve");
+  const target = { left: false, dryRun: false, reviewers: [{ login: "sakuga-review[bot]", prAgent: true }] };
+  assert.equal(refusal(actionForKey("p")!, target), null);
+  assert.match(refusal(actionForKey("i")!, { ...target, reviewers: [{ login: "sakuga-review[bot]" }] })!, /PR-Agent does not review/);
 });
 
 test("a bot command waits for no reviewer list before the first fetch", () => {

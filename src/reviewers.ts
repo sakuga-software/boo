@@ -31,6 +31,8 @@ export interface Reviewer {
   /** The time when the quota of the reviewer comes back, if a notice gives it. */
   until?: Date;
   progress?: { done: number; total: number };
+  /** The reviewer is a PR-Agent install. Its review is a comment, so its status never counts as a GitHub verdict. */
+  prAgent?: true;
 }
 
 export interface PullRequestFacts {
@@ -133,6 +135,48 @@ function genericReviewer(login: string, facts: PullRequestFacts): Reviewer {
   return { ...base, status: "stale" };
 }
 
+// PR-Agent posts its review as one comment, and edits it at each new review. Only an edit adds the commit line.
+// Another comment of the same bot can quote the marker, so the marker counts only as a full line at the top of the body.
+const PR_AGENT_MARKER = /^<!-- pr-agent:review[\w:-]* -->$/;
+const isPrAgentReview = (body: string) => {
+  const top = body.trimStart().split("\n", 6).map((line) => line.trim());
+  return top[0]!.startsWith("## PR Reviewer Guide") || top.some((line) => PR_AGENT_MARKER.test(line));
+};
+const PR_AGENT_COMMIT = /Review updated until commit \S*\/commit\/([0-9a-f]{40})/;
+const PR_AGENT_ADVICE = /Merge recommendation<\/strong>:\s*([^<]+)/;
+const isPrAgentCheck = (check: Check) => slug(check.name).includes("pr-agent");
+
+const prAgentReviews = (facts: PullRequestFacts) =>
+  facts.comments.filter((comment) => comment.user && isPrAgentReview(comment.body));
+
+function prAgentVerdict(body: string): Verdict {
+  const advice = PR_AGENT_ADVICE.exec(body)?.[1]?.trim().toLowerCase();
+  if (advice === "safe to merge") return "approved";
+  return advice === "changes required" ? "changes requested" : "commented";
+}
+
+/**
+ * Returns the status of a PR-Agent install from its review comment:
+ * - a running PR-Agent check on the head commit means that it reviews now;
+ * - an edited comment names the commit that it covers;
+ * - a comment with no edit covers the head commit, unless the head commit has PR-Agent checks and none of them passed.
+ * A draft that becomes ready has a skipped check and a passed check on the same commit.
+ */
+function prAgentReviewer(reviewer: Reviewer, comment: Comment, facts: PullRequestFacts): Reviewer {
+  const { until, progress, ...rest } = reviewer;
+  const checks = facts.checks.filter(isPrAgentCheck);
+  const commit = PR_AGENT_COMMIT.exec(comment.body)?.[1];
+  const onHead = commit ? commit === facts.head : checks.length === 0 || checks.some((check) => check.state === "success");
+  const at = new Date(comment.updated_at);
+  return {
+    ...rest,
+    prAgent: true,
+    status: checks.some((check) => check.state === "pending") ? "reviewing" : onHead ? prAgentVerdict(comment.body) : "stale",
+    reviews: reviewer.reviews + 1,
+    lastReviewAt: reviewer.lastReviewAt && reviewer.lastReviewAt > at ? reviewer.lastReviewAt : at,
+  };
+}
+
 function coderabbitStatus(decision: Decision, reviewer: Reviewer): Pick<Reviewer, "status" | "until"> {
   switch (decision.kind) {
     case "reviewed":
@@ -156,7 +200,8 @@ function coderabbitStatus(decision: Decision, reviewer: Reviewer): Pick<Reviewer
 
 /**
  * Returns one entry for each reviewer of the pull request, in the order of their names. A reviewer is
- * a person or a bot that submitted a review or that GitHub asks for one, and CodeRabbit if it commented.
+ * a person or a bot that submitted a review or that GitHub asks for one, CodeRabbit if it commented,
+ * and PR-Agent if it posted its review comment.
  * The author of the pull request is not a reviewer: their reviews are replies in the threads.
  */
 export function reviewersOf(facts: PullRequestFacts): Reviewer[] {
@@ -165,11 +210,15 @@ export function reviewersOf(facts: PullRequestFacts): Reviewer[] {
     ...facts.requested,
   ]);
   if (facts.coderabbit && facts.coderabbit.kind !== "unseen") logins.add(BOT_LOGIN);
+  const prAgent = new Map(prAgentReviews(facts).map((comment) => [comment.user!.login, comment]));
+  for (const login of prAgent.keys()) logins.add(login);
   logins.delete(facts.author);
 
   return [...logins]
     .map((login) => {
       const reviewer = genericReviewer(login, facts);
+      const review = prAgent.get(login);
+      if (review) return prAgentReviewer(reviewer, review, facts);
       if (login !== BOT_LOGIN || !facts.coderabbit) return reviewer;
       const { until, ...rest } = reviewer;
       return { ...rest, ...coderabbitStatus(facts.coderabbit, reviewer) };

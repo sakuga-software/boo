@@ -42,7 +42,9 @@ const cli = meow(
 
   Reviewers
     A reviewer is a person or a bot that submitted a review, that GitHub asks
-    for a review, or CodeRabbit if it commented. The tool knows no list of bots.
+    for a review, CodeRabbit if it commented, or PR-Agent if it posted its
+    review comment. The tool knows no list of bots. The mark of PR-Agent is its
+    merge recommendation; it never counts as a GitHub approval.
     The author is not a reviewer. Each reviewer shows one mark:
     ✔ approved  ✎ changes requested  ● commented   on the last commit
     ⟳ reviewing (with "2/3" if the bot shows its progress)
@@ -82,6 +84,8 @@ const cli = meow(
     s               post "@coderabbitai resolve": resolve the threads
     g               post "@greptileai review"
     c               request a review from Copilot (needs gh 2.88 or later)
+    p               post "/review" for PR-Agent
+    i               post "/improve" for PR-Agent
     q               quit
   The bot keys work in both bars. A narrow terminal hides some parts of a row.
   Each post and each merge asks for a confirmation: y or Enter confirms, n or

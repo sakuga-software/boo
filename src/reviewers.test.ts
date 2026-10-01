@@ -166,6 +166,66 @@ test("a red check of a refused reviewer and a status that names a quota are quot
   assert.deepEqual(summary, { total: 4, passed: 1, skipped: 0, pending: 0, failed: ["lint"], quota: 2 });
 });
 
+const SAKUGA = "sakuga-review[bot]";
+const HEAD = "b6aafaac00b762232d1aa1e5b973cc9eea4d3939";
+const guide = (advice: string, commit?: string, minutesAgo = 5): Comment => ({
+  user: { login: SAKUGA },
+  body: [
+    "## PR Reviewer Guide 🔍\n\n<!-- pr-agent:review:full -->\n",
+    commit ? `#### (Review updated until commit https://github.com/sakuga-software/suricarte/commit/${commit})\n` : "",
+    `<table>\n<tr><td>✅&nbsp;<strong>Merge recommendation</strong>: ${advice}</td></tr>\n</table>`,
+  ].join("\n"),
+  created_at: ago(60),
+  updated_at: ago(minutesAgo),
+});
+const prAgentCheck = (state: Check["state"]): Check => ({ name: "pr_agent / PR Agent", state });
+
+test("a PR-Agent review comment makes a reviewer, and its recommendation is not a GitHub verdict", () => {
+  const { reviewers, overall, reviews, onHead } = summarize(facts({ head: HEAD, comments: [guide("Safe to merge", HEAD)] }));
+  assert.deepEqual(
+    reviewers.map(({ name, status, verdict, prAgent }) => ({ name, status, verdict, prAgent })),
+    [{ name: "sakuga-review", status: "approved", verdict: undefined, prAgent: true }],
+  );
+  assert.deepEqual([overall, reviews, onHead], ["reviewed", 1, 1]);
+  const status = (advice: string) => summarize(facts({ head: HEAD, comments: [guide(advice, HEAD)] })).reviewers[0]!.status;
+  assert.deepEqual([status("Merge with caution"), status("Changes required")], ["commented", "changes requested"]);
+});
+
+test("a PR-Agent review that names an older commit is stale", () => {
+  const [reviewer] = summarize(facts({ head: HEAD, comments: [guide("Safe to merge", "a".repeat(40))] })).reviewers;
+  assert.equal(reviewer!.status, "stale");
+});
+
+test("a PR-Agent review with no edit covers the head commit, unless none of its checks on that commit passed", () => {
+  const status = (checks: Check[]) => summarize(facts({ comments: [guide("Merge with caution")], checks })).reviewers[0]!.status;
+  assert.deepEqual(
+    [status([]), status([prAgentCheck("skipped"), prAgentCheck("success")]), status([prAgentCheck("failure")]), status([prAgentCheck("pending")])],
+    ["commented", "commented", "stale", "reviewing"],
+  );
+});
+
+test("the line suggestions of PR-Agent on an older commit do not replace its review comment", () => {
+  const { reviewers } = summarize(facts({ head: HEAD, reviews: [review(SAKUGA, "old", 30, "COMMENTED", "")], comments: [guide("Safe to merge", HEAD)] }));
+  assert.deepEqual(reviewers.map(({ status, reviews, lastReviewAt }) => [status, reviews, lastReviewAt]), [["approved", 2, new Date(ago(5))]]);
+});
+
+test("a later comment of PR-Agent that quotes the review marker does not replace its review", () => {
+  const quote: Comment = {
+    user: { login: SAKUGA },
+    body: "## PR Code Suggestions ✨\n\n<!-- pr-agent:improve:full -->\n\nSee the guide (`<!-- pr-agent:review:full -->`).\n\n\n<!-- pr-agent:review:full -->",
+    created_at: ago(1),
+    updated_at: ago(1),
+  };
+  const [reviewer] = summarize(facts({ head: HEAD, comments: [guide("Changes required", HEAD), quote] })).reviewers;
+  assert.deepEqual([reviewer!.status, reviewer!.reviews], ["changes requested", 1]);
+});
+
+test("the other PR-Agent comments and a quote of its review by a person make no reviewer", () => {
+  const other = (login: string, body: string): Comment => ({ user: { login }, body, created_at: ago(5), updated_at: ago(5) });
+  const comments = [other(SAKUGA, "## PR Code Suggestions ✨\n\n<!-- pr-agent:improve:no-suggestions -->"), other("alice", "> ## PR Reviewer Guide 🔍\n\nI agree.")];
+  assert.equal(summarize(facts({ comments })).reviewers.length, 0);
+});
+
 test("a check belongs to a reviewer by its name", () => {
   assert.ok(checkBelongsTo("claude-review", CLAUDE));
   assert.ok(checkBelongsTo("Greptile Review", GREPTILE));
