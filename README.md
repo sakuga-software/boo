@@ -174,9 +174,12 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
 With `--watch` in a terminal, the tool opens in full screen and takes keys and mouse clicks. The
 counts and the action bar stay at the bottom of the window. Piped or scheduled runs stay as they are.
 
-The action bar has two sets. The main set shows open, merge, the hidden pull requests and the
-settings. `→` or `Space` shows the bot set: the requests to each review bot. `←`, `Space` or `Esc`
-goes back. The keys work in both sets; the bar only changes what it shows.
+The action bar has three levels. The main set shows open, merge, the hidden pull requests and the
+settings. `→` or `Space` shows the list of the review bots. The key of a bot opens the menu of that
+bot, with its commands. `←` or `Space` goes back one level, and `Esc` goes back to the main set.
+
+A key of a bot or of a command works only at the level that shows it, so two bots can use the same
+key. The keys of the main set work at every level.
 
 | Key | Action |
 | --- | --- |
@@ -185,21 +188,24 @@ goes back. The keys work in both sets; the bar only changes what it shows.
 | `m` | merge the pull request: squash if the repository allows it, else merge, else rebase |
 | `h` | show or hide the merged, closed and draft pull requests |
 | `,` | open the settings |
-| `→` `←` or `Space` | show the bot set or the main set of the action bar |
-| `r` | post `@coderabbitai review` |
-| `f` | post `@coderabbitai full review` |
-| `a` | post `@coderabbitai approve`: resolve the CodeRabbit threads, then approve |
-| `s` | post `@coderabbitai resolve`: resolve the CodeRabbit threads |
-| `g` | post `@greptileai review` |
-| `c` | ask Copilot for a review (`gh pr edit --add-reviewer @copilot`, needs `gh` 2.88 or later) |
-| `p` | post `/review`: PR-Agent reviews the pull request again |
-| `i` | post `/improve`: PR-Agent suggests code changes on the lines |
+| `→` or `Space` | show the list of the review bots |
+| `←` or `Space` | go back one level |
+| `Esc` | go back to the main set |
 | `q` | quit |
 
+In the list of the review bots:
+
+| Key | Menu | Commands |
+| --- | --- | --- |
+| `r` | CodeRabbit | `r` posts `@coderabbitai review`, `f` posts `@coderabbitai full review`, `a` posts `@coderabbitai approve` (resolve the CodeRabbit threads, then approve), `s` posts `@coderabbitai resolve` (resolve the CodeRabbit threads) |
+| `g` | Greptile | `r` posts `@greptileai review` |
+| `c` | Copilot | `r` asks Copilot for a review (`gh pr edit --add-reviewer @copilot`, needs `gh` 2.88 or later) |
+| `p` | PR-Agent | `r` posts `/review` (PR-Agent reviews the pull request again), `i` posts `/improve` (PR-Agent suggests code changes on the lines) |
+
 A command to CodeRabbit, Greptile or PR-Agent works only on a pull request that the bot reviews; the
-bar dims it on the other ones. Copilot gets a review request from GitHub and not a comment: a mention of
+bar dims the bot and its commands on the other ones. Copilot gets a review request from GitHub and not a comment: a mention of
 `@copilot` starts its coding agent. The detection of the reviewers keeps no list of bots, but the
-bot set does: only these four bots have a known command. A CodeRabbit post goes through the queue
+list of the review bots does: only these four bots have a known command. A CodeRabbit post goes through the queue
 of the automatic retries. A post to another bot goes at once, because it does not spend the
 CodeRabbit quota.
 
@@ -224,9 +230,9 @@ pnpm typecheck
 The GIF uses the real interface and the real decision logic with a fake GitHub
 (`demo/demo.tsx`). The fake GitHub plays a timeline: a CodeRabbit review in progress, a bot that
 shows its progress, a Copilot quota refusal, a CodeRabbit quota that comes back and a retry, a
-merged pull request, a new pull request, then the reviews. At the end, it shows the bot set of the
-action bar with `→`, selects a pull request with the arrow keys, and posts `@coderabbitai approve`
-with `a`, then `Enter`. To see it live, run `pnpm demo`. To record the GIF again (requires vhs, ttyd and ffmpeg):
+merged pull request, a new pull request, then the reviews. At the end, it shows the list of the review bots
+with `→`, selects a pull request with the arrow keys, opens the CodeRabbit menu with `r`, and posts
+`@coderabbitai approve` with `a`, then `Enter`. To see it live, run `pnpm demo`. To record the GIF again (requires vhs, ttyd and ffmpeg):
 
 ```sh
 demo/record.sh
