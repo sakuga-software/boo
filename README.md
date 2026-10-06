@@ -80,15 +80,16 @@ closes the panel. The tool saves them in `~/.config/boo/settings.json` (or under
   reviewer, and the details of the selected pull request. A narrow terminal can still hide them.
 - Compact rows: no blank line between the pull requests.
 
-The authors of the listed pull requests are also in this file, but the panel only shows them. Add
-an `authors` key to list the pull requests of more than one author by default:
+- The authors of the listed pull requests. `Space` or `Enter` on this line starts the change: type
+  the authors with a comma between two, then `Enter` saves and `Esc` cancels. The list follows the
+  new authors at once.
+
+An author is a login, `@me` (the account of `gh`), or `app/<slug>` for a GitHub App. The default is
+`@me`. `--author` replaces the list at the start of one run. The file holds the authors as a list:
 
 ```json
 { "authors": ["@me", "app/my-agent"] }
 ```
-
-An author is a login, `@me` (the account of `gh`), or `app/<slug>` for a GitHub App. The default is
-`["@me"]`. `--author` replaces the list for one run.
 
 ## Rules
 
