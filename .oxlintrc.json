@@ -1,0 +1,7 @@
+{
+  "plugins": ["oxc", "eslint", "import", "typescript", "react"],
+  "rules": {
+    "no-nested-ternary": "error",
+    "react/react-in-jsx-scope": "off"
+  }
+}
