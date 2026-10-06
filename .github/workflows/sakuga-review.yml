@@ -1,0 +1,195 @@
+# Automatic review of pull requests by Sakuga Review (GLM-5.3 through OpenRouter), and its commands
+# in a comment: `@sakuga-review review [lite|balanced|heavy]`, `@sakuga-review resolve`.
+# See https://github.com/sakuga-software/sakuga-review.
+#
+# A copy of the jobs of review.yml in sakuga-review, not a call to it: this repository is public, and
+# a public repository cannot call a workflow of a private one. Keep it in step with review.yml, and
+# take the script at the SHA of the same version (the step that checks out the script).
+#
+# `sakuga-agent[bot]` is the App that the Claude Code agents push with: it counts as a person, as the
+# `trusted_bots` input of review.yml does by default. A copy has no input, so its name is written here.
+name: Sakuga Review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+
+# The review posts with a token of the GitHub App, asked for below. The token of this workflow is not
+# used, so it gets no permission.
+permissions: {}
+
+jobs:
+  review:
+    name: Sakuga Review
+    # Drafts, pull requests of bots and pushes of bots are skipped. A pull request from a fork is
+    # skipped too: it gets no secret.
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.sender.type != 'Bot' || github.event.sender.login == 'sakuga-agent[bot]') &&
+      !github.event.pull_request.draft &&
+      (github.event.pull_request.user.type != 'Bot' || github.event.pull_request.user.login == 'sakuga-agent[bot]') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    # A runner of GitHub, free for a public repository. The self-hosted runners serve the private
+    # repositories only, and a self-hosted runner on a public repository runs the code of forks.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A new push replaces the review of the previous one.
+    concurrency:
+      group: sakuga-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Sakuga Review token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          # The Client ID of the App: not a secret.
+          client-id: Iv23liesB1xzywavcnv2
+          private-key: ${{ secrets.PR_AGENT_APP_PRIVATE_KEY }}
+          repositories: |
+            ${{ github.event.repository.name }}
+            sakuga-review
+          permission-contents: read
+          permission-pull-requests: write
+          # The score label of the pull request.
+          permission-issues: write
+      # The whole history: the script diffs from the merge base, and a thread closes only when its
+      # file changed since the commit that the thread names.
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: repo
+          persist-credentials: false
+      # The script and its prompt at v5. The private repository opens with the token of the App.
+      - name: Check out the review script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: sakuga-software/sakuga-review
+          ref: f421015719b5e137fefb82113931c91253747239 # v5
+          path: settings
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+      # Node runs the TypeScript of the script as is: no package and no build.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26'
+      # The script reads the code and never runs it.
+      - name: Review
+        run: >-
+          node settings/review/sakuga-review.ts --repo-dir repo --repository "$REPOSITORY"
+          --pr "$PR_NUMBER" --base "$BASE_SHA" --head "$HEAD_SHA"
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+  # A command in a comment of the pull request: `@sakuga-review review [lite|balanced|heavy]` or
+  # `@sakuga-review resolve [level]`. This repository is public: a comment of a person with no link
+  # to it stops here, and the script checks that the author can write to the repository.
+  command:
+    name: Sakuga Review command
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      github.event.issue.state == 'open' &&
+      (github.event.sender.login == 'sakuga-agent[bot]' ||
+        (github.event.sender.type != 'Bot' &&
+          contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association))) &&
+      startsWith(github.event.comment.body, '@sakuga-review')
+    runs-on: ubuntu-latest
+    # A heavy review can think for 12 minutes.
+    timeout-minutes: 20
+    concurrency:
+      group: sakuga-review-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Sakuga Review token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liesB1xzywavcnv2
+          private-key: ${{ secrets.PR_AGENT_APP_PRIVATE_KEY }}
+          repositories: |
+            ${{ github.event.repository.name }}
+            sakuga-review
+          permission-contents: read
+          permission-pull-requests: write
+          permission-issues: write
+      # GitHub resolves a review thread only for a token that can write the contents. Until an owner
+      # of the organization accepts that permission for the App, this step fails, and resolve replies
+      # to the threads that a person can resolve.
+      - name: Sakuga Review token to resolve threads
+        id: resolve-token
+        if: contains(github.event.comment.body, 'resolve')
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liesB1xzywavcnv2
+          private-key: ${{ secrets.PR_AGENT_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26'
+      # A comment event carries no commit: read the head and the base of the pull request, and
+      # whether it comes from a fork. A fork gets no command, as it gets no review.
+      - name: Read the pull request
+        id: pr
+        run: |
+          node --input-type=module -e '
+            import { appendFileSync } from "node:fs";
+            const response = await fetch(`https://api.github.com/repos/${process.env.REPOSITORY}/pulls/${process.env.PR_NUMBER}`, {
+              headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" },
+            });
+            if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
+            const pr = await response.json();
+            const fork = pr.head.repo?.full_name !== process.env.REPOSITORY;
+            appendFileSync(process.env.GITHUB_OUTPUT, `head=${pr.head.sha}\nbase=${pr.base.sha}\nfork=${fork}\n`);
+          '
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+      - name: Check out the pull request
+        if: steps.pr.outputs.fork == 'false'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          fetch-depth: 0
+          path: repo
+          persist-credentials: false
+      - name: Check out the review script
+        if: steps.pr.outputs.fork == 'false'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: sakuga-software/sakuga-review
+          ref: f421015719b5e137fefb82113931c91253747239 # v5
+          path: settings
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+      # The comment goes through the environment, never into the command line of the shell.
+      - name: Command
+        if: steps.pr.outputs.fork == 'false'
+        run: >-
+          node settings/review/sakuga-review.ts --repo-dir repo --repository "$REPOSITORY"
+          --pr "$PR_NUMBER" --base "$BASE_SHA" --head "$HEAD_SHA"
+          --command "$COMMAND" --comment-id "$COMMENT_ID" --commenter "$COMMENTER"
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN_RESOLVE: ${{ steps.resolve-token.outputs.token }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          BASE_SHA: ${{ steps.pr.outputs.base }}
+          HEAD_SHA: ${{ steps.pr.outputs.head }}
+          COMMAND: ${{ github.event.comment.body }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          TRUSTED_BOTS: sakuga-agent[bot]
