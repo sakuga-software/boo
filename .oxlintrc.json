@@ -2,6 +2,16 @@
   "plugins": ["oxc", "eslint", "import", "typescript", "react"],
   "rules": {
     "no-nested-ternary": "error",
-    "react/react-in-jsx-scope": "off"
+
+    // The automatic JSX runtime (`jsx: react-jsx`) is in use, so React does not
+    // need to be in scope.
+    "react/react-in-jsx-scope": "off",
+
+    // The tool reads the escape sequences of the terminal: the mouse reports and
+    // the answer to the background color query.
+    "no-control-regex": "off",
+
+    // `const { until, ...rest } = reviewer` removes a key from a copy.
+    "no-unused-vars": ["warn", { "ignoreRestSiblings": true }]
   }
 }

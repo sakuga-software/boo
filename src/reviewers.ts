@@ -197,14 +197,11 @@ function prAgentReviewer(reviewer: Reviewer, comment: Comment, facts: PullReques
     ? commit === facts.head
     : checks.length === 0 || checks.some((check) => check.state === 'success');
   const at = new Date(comment.updated_at);
+  const reviewed = onHead ? prAgentVerdict(comment.body) : 'stale';
   return {
     ...rest,
     prAgent: true,
-    status: checks.some((check) => check.state === 'pending')
-      ? 'reviewing'
-      : onHead
-        ? prAgentVerdict(comment.body)
-        : 'stale',
+    status: checks.some((check) => check.state === 'pending') ? 'reviewing' : reviewed,
     reviews: reviewer.reviews + 1,
     lastReviewAt: reviewer.lastReviewAt && reviewer.lastReviewAt > at ? reviewer.lastReviewAt : at,
   };
@@ -328,24 +325,18 @@ export function summarize(facts: PullRequestFacts): Summary {
   const approved = !changes && reviewers.some((reviewer) => reviewer.verdict === 'approved');
   const any = (...statuses: ReviewerStatus[]) => reviewers.some((reviewer) => statuses.includes(reviewer.status));
 
-  const overall: Overall =
-    facts.mergeState === 'dirty'
-      ? 'conflicts'
-      : changes
-        ? 'changes requested'
-        : checks.failed.length > 0
-          ? 'checks failing'
-          : approved && checks.pending === 0 && MERGEABLE.has(facts.mergeState)
-            ? 'ready'
-            : approved
-              ? 'approved'
-              : any('reviewing')
-                ? 'reviewing'
-                : any(...ON_HEAD)
-                  ? 'reviewed'
-                  : any('quota', 'to retry')
-                    ? 'quota'
-                    : 'awaiting review';
+  const overallOf = (): Overall => {
+    if (facts.mergeState === 'dirty') return 'conflicts';
+    if (changes) return 'changes requested';
+    if (checks.failed.length > 0) return 'checks failing';
+    if (approved && checks.pending === 0 && MERGEABLE.has(facts.mergeState)) return 'ready';
+    if (approved) return 'approved';
+    if (any('reviewing')) return 'reviewing';
+    if (any(...ON_HEAD)) return 'reviewed';
+    if (any('quota', 'to retry')) return 'quota';
+    return 'awaiting review';
+  };
+  const overall = overallOf();
 
   const last = reviewers
     .filter((reviewer) => reviewer.lastReviewAt)

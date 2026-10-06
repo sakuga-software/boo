@@ -62,8 +62,11 @@ const BOT_ACTIONS: readonly Action[] = [
 export const BOTS: readonly Bot[] = [CODERABBIT, GREPTILE, COPILOT, PR_AGENT];
 
 /** Returns the actions that the bar shows at a level. The list of bots shows bots, not actions. */
-export const actionsOf = (mode: Mode): readonly Action[] =>
-  mode === 'main' ? MAIN_ACTIONS : mode === 'bots' ? [] : BOT_ACTIONS.filter((action) => action.request!.bot === mode);
+export function actionsOf(mode: Mode): readonly Action[] {
+  if (mode === 'main') return MAIN_ACTIONS;
+  if (mode === 'bots') return [];
+  return BOT_ACTIONS.filter((action) => action.request!.bot === mode);
+}
 
 /** Returns the level above a level. The main set is the top. */
 export const parentOf = (mode: Mode): Mode => (mode === 'main' || mode === 'bots' ? 'main' : 'bots');
@@ -87,8 +90,10 @@ export const BOT_BAR_WIDTH =
 export const isCodeRabbit = (request: Request) => request.bot === CODERABBIT;
 
 /** The comment that the request posts, or a description of the review request. */
-export const requestText = ({ bot, command }: Request) =>
-  bot.reviewer ? `review request to ${bot.name}` : bot.mention ? `${bot.mention} ${command}` : `/${command}`;
+export function requestText({ bot, command }: Request): string {
+  if (bot.reviewer) return `review request to ${bot.name}`;
+  return bot.mention ? `${bot.mention} ${command}` : `/${command}`;
+}
 
 /** Returns the action of a key at a level. The keys of the main set work at every level. */
 export const actionForKey = (input: string, mode: Mode = 'main') =>

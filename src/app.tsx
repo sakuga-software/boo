@@ -682,12 +682,10 @@ export function App(props: AppProps) {
       if (input === 'm') return;
       if (key.upArrow) return confirmationRef.current ? undefined : typeKey('k');
       if (key.downArrow) return confirmationRef.current ? undefined : typeKey('j');
-      if (key.rightArrow)
-        return confirmationRef.current || panelRef.current !== undefined
-          ? undefined
-          : modeRef.current === 'main'
-            ? switchMode('bots')
-            : undefined;
+      if (key.rightArrow) {
+        const free = !confirmationRef.current && panelRef.current === undefined;
+        return free && modeRef.current === 'main' ? switchMode('bots') : undefined;
+      }
       if (key.leftArrow)
         return confirmationRef.current || panelRef.current !== undefined
           ? undefined
@@ -784,7 +782,7 @@ export function App(props: AppProps) {
     <Box flexDirection="column" paddingX={1} {...(options.interactive && { height: screenRows })}>
       <Header
         options={options}
-        mood={fatal ? 'failed' : done ? 'done' : nextCheckAt ? 'sleeping' : 'checking'}
+        mood={moodOf({ fatal: Boolean(fatal), done, sleeping: Boolean(nextCheckAt) })}
         now={clock}
         nextCheckAt={nextCheckAt}
       />
@@ -855,6 +853,12 @@ export function App(props: AppProps) {
 }
 
 export type Mood = 'checking' | 'sleeping' | 'done' | 'failed';
+
+function moodOf({ fatal, done, sleeping }: { fatal: boolean; done: boolean; sleeping: boolean }): Mood {
+  if (fatal) return 'failed';
+  if (done) return 'done';
+  return sleeping ? 'sleeping' : 'checking';
+}
 
 const FACES: Record<Mood, { eyes: [string, string]; mouth: string }> = {
   checking: { eyes: ['ò', 'ó'], mouth: 'v' },
@@ -1111,6 +1115,11 @@ interface RowViewProps {
   selected: boolean;
 }
 
+function lastReviewText(summary: Summary, now: Date): string {
+  if (summary.lastReview) return `last ${summary.lastReview.name} ${formatAgo(now, summary.lastReview.at)}`;
+  return summary.reviewers.length === 0 ? 'no reviewer yet' : 'no review yet';
+}
+
 function RowView({ ref, row, view, options, layout, now, expanded, selected }: RowViewProps) {
   const name =
     options.org && row.pr.repo.startsWith(`${options.org}/`) ? row.pr.repo.slice(options.org.length + 1) : row.pr.repo;
@@ -1161,13 +1170,7 @@ function RowView({ ref, row, view, options, layout, now, expanded, selected }: R
         <Box paddingLeft={indent}>
           {layout.lastReview && (
             <Box flexShrink={0} marginRight={2}>
-              <Text dimColor>
-                {summary.lastReview
-                  ? `last ${summary.lastReview.name} ${formatAgo(now, summary.lastReview.at)}`
-                  : summary.reviewers.length === 0
-                    ? 'no reviewer yet'
-                    : 'no review yet'}
-              </Text>
+              <Text dimColor>{lastReviewText(summary, now)}</Text>
             </Box>
           )}
           {layout.marks && (
@@ -1310,6 +1313,11 @@ function Group({ name }: { name: string }) {
   );
 }
 
+function hiddenLabel(revealed: boolean, hiddenCount: number): string {
+  if (revealed) return 'hide inactive';
+  return hiddenCount > 0 ? `show ${hiddenCount} hidden` : 'nothing hidden';
+}
+
 function ActionBar({
   registerButton,
   disabledCommands,
@@ -1363,13 +1371,7 @@ function ActionBar({
   return (
     <Box height={1} overflow="hidden">
       {actionsOf('main').map((action) => button(action, disabledCommands && action.merge))}
-      <Button
-        id="h"
-        hotkey="h"
-        label={revealed ? 'hide inactive' : hiddenCount > 0 ? `show ${hiddenCount} hidden` : 'nothing hidden'}
-        short={short}
-        register={registerButton}
-      />
+      <Button id="h" hotkey="h" label={hiddenLabel(revealed, hiddenCount)} short={short} register={registerButton} />
       <Button id="bots" hotkey="→" label="bots" short={short} register={registerButton} />
       <Button id="," hotkey="," label="settings" short={short} register={registerButton} />
       <Text dimColor wrap="truncate-end">

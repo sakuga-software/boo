@@ -183,8 +183,10 @@ interface PullRequestNode {
 }
 
 /** GraphQL drops the "[bot]" suffix of a bot login. The REST API and the decision rules keep it. */
-export const loginOf = (actor: Actor | null) =>
-  actor ? (actor.__typename === 'Bot' ? `${actor.login}[bot]` : actor.login) : null;
+export function loginOf(actor: Actor | null): string | null {
+  if (!actor) return null;
+  return actor.__typename === 'Bot' ? `${actor.login}[bot]` : actor.login;
+}
 
 const userOf = (actor: Actor | null) => {
   const login = loginOf(actor);
@@ -369,8 +371,10 @@ export async function mergePullRequest(pr: PullRequest, head: string): Promise<v
   await gh(['pr', 'merge', String(pr.number), '--repo', pr.repo, `--${method}`, '--match-head-commit', head]);
 }
 
+const OPENERS: Partial<Record<NodeJS.Platform, string>> = { darwin: 'open', win32: 'explorer' };
+
 export function openInBrowser(url: string): Promise<void> {
-  const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+  const opener = OPENERS[process.platform] ?? 'xdg-open';
   return new Promise((resolve, reject) => {
     const child = spawn(opener, [url], { stdio: 'ignore', detached: true });
     child.once('error', reject);

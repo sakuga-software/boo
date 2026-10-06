@@ -235,6 +235,8 @@ and every merge.
 pnpm dev -- --dry-run   # run the sources with tsx
 pnpm test               # tests of the decision logic
 pnpm typecheck
+pnpm lint               # oxlint
+pnpm format             # oxfmt --check; pnpm format:fix writes the files
 ```
 
 ## Demo
