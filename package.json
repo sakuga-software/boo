@@ -3,21 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "description": "Watches your open pull requests: the approval, the reviewers of every provider, the checks, and the review quotas",
-  "type": "module",
   "bin": {
     "boo": "dist/cli.js"
   },
   "files": [
     "dist"
   ],
-  "engines": {
-    "node": ">=22"
-  },
+  "type": "module",
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js",
     "prepare": "pnpm build",
     "dev": "tsx src/cli.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p demo/tsconfig.json",
+    "lint": "oxlint .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
     "test": "tsx --test src/*.test.ts",
     "demo": "tsx --tsconfig demo/tsconfig.json demo/demo.tsx"
   },
@@ -30,7 +30,13 @@
   "devDependencies": {
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
-  }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.17.0"
 }

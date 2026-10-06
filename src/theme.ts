@@ -1,4 +1,4 @@
-export type Background = "dark" | "light" | "unknown";
+export type Background = 'dark' | 'light' | 'unknown';
 
 export interface GhostPalette {
   line: string;
@@ -8,13 +8,13 @@ export interface GhostPalette {
 
 // Each palette gives at least 4.4:1 on its background. The neutral one gives about 3.8:1 on both.
 export const GHOST_PALETTES: Record<Background, GhostPalette> = {
-  dark: { line: "#A78BFA", face: "#EDE9FE", crown: "#FACC15" },
-  light: { line: "#7C3AED", face: "#4C1D95", crown: "#A16207" },
-  unknown: { line: "#8B5CF6", face: "#8B5CF6", crown: "#A56F03" },
+  dark: { line: '#A78BFA', face: '#EDE9FE', crown: '#FACC15' },
+  light: { line: '#7C3AED', face: '#4C1D95', crown: '#A16207' },
+  unknown: { line: '#8B5CF6', face: '#8B5CF6', crown: '#A56F03' },
 };
 
 /** The query that asks the terminal for its background color (OSC 11). */
-export const BACKGROUND_QUERY = "\u001B]11;?\u0007";
+export const BACKGROUND_QUERY = '\u001B]11;?\u0007';
 
 const luminance = (red: number, green: number, blue: number) => {
   const linear = (channel: number) => (channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
@@ -27,9 +27,13 @@ const luminance = (red: number, green: number, blue: number) => {
  */
 export function backgroundFromReply(reply: string): Background {
   const match = /\]11;rgb:([0-9a-f]{1,4})\/([0-9a-f]{1,4})\/([0-9a-f]{1,4})(?:\u0007|\u001B\\)/i.exec(reply);
-  if (!match) return "unknown";
-  const [red, green, blue] = match.slice(1).map((hex) => parseInt(hex, 16) / (16 ** hex.length - 1)) as [number, number, number];
-  return luminance(red, green, blue) > 0.18 ? "light" : "dark";
+  if (!match) return 'unknown';
+  const [red, green, blue] = match.slice(1).map((hex) => parseInt(hex, 16) / (16 ** hex.length - 1)) as [
+    number,
+    number,
+    number,
+  ];
+  return luminance(red, green, blue) > 0.18 ? 'light' : 'dark';
 }
 
 /**
@@ -37,11 +41,11 @@ export function backgroundFromReply(reply: string): Background {
  * The colors 7 and 9 to 15 are light, and 0 to 6 and 8 are dark. A color above 15 gives "unknown".
  */
 export function backgroundFromColorFgBg(value: string | undefined): Background {
-  const last = value?.split(";").at(-1);
-  if (!last || !/^\d+$/.test(last)) return "unknown";
+  const last = value?.split(';').at(-1);
+  if (!last || !/^\d+$/.test(last)) return 'unknown';
   const color = Number(last);
-  if (color > 15) return "unknown";
-  return color === 7 || (color >= 9 && color <= 15) ? "light" : "dark";
+  if (color > 15) return 'unknown';
+  return color === 7 || (color >= 9 && color <= 15) ? 'light' : 'dark';
 }
 
 // A late reply can come in several key events: Ink splits it at its escape bytes.
@@ -72,8 +76,8 @@ export function createReplyFilter(now: () => number = Date.now) {
 interface TerminalInput {
   isTTY?: boolean;
   setRawMode?(mode: boolean): unknown;
-  on(event: "readable", listener: () => void): unknown;
-  off(event: "readable", listener: () => void): unknown;
+  on(event: 'readable', listener: () => void): unknown;
+  off(event: 'readable', listener: () => void): unknown;
   read(): Buffer | string | null;
   unshift(chunk: Buffer | string): unknown;
 }
@@ -99,10 +103,10 @@ export async function detectBackground(
   if (!stdin.isTTY || !stdin.setRawMode) return fallback;
   stdin.setRawMode(true);
   const received = await new Promise<string>((resolve) => {
-    let text = "";
+    let text = '';
     const done = () => {
       clearTimeout(timer);
-      stdin.off("readable", onReadable);
+      stdin.off('readable', onReadable);
       resolve(text);
     };
     const onReadable = () => {
@@ -110,12 +114,12 @@ export async function detectBackground(
       if (REPLY.test(text)) done();
     };
     const timer = setTimeout(done, timeoutMs);
-    stdin.on("readable", onReadable);
+    stdin.on('readable', onReadable);
     stdout.write(BACKGROUND_QUERY);
   });
   stdin.setRawMode(false);
-  const keys = received.replace(REPLY, "").replace(PARTIAL_REPLY, "");
+  const keys = received.replace(REPLY, '').replace(PARTIAL_REPLY, '');
   if (keys) stdin.unshift(keys);
   const detected = backgroundFromReply(received);
-  return detected === "unknown" ? fallback : detected;
+  return detected === 'unknown' ? fallback : detected;
 }
