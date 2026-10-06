@@ -3,7 +3,7 @@ import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_SETTINGS, loadSettings, parseSettings, saveSettings, settingsPath } from "./settings.js";
+import { DEFAULT_SETTINGS, loadSettings, parseAuthors, parseSettings, saveSettings, settingsPath } from "./settings.js";
 
 test("the merged, closed and draft pull requests are hidden by default", () => {
   assert.deepEqual([DEFAULT_SETTINGS.hideMerged, DEFAULT_SETTINGS.hideClosed, DEFAULT_SETTINGS.hideDrafts], [true, true, true]);
@@ -47,4 +47,18 @@ test("a failed save does not stop the next save", async () => {
 
 test("the settings file follows XDG_CONFIG_HOME", () => {
   assert.equal(settingsPath({ XDG_CONFIG_HOME: "/cfg" }), "/cfg/boo/settings.json");
+});
+
+test("the stored authors replace the default, and an invalid list keeps it", () => {
+  assert.deepEqual(DEFAULT_SETTINGS.authors, ["@me"]);
+  assert.deepEqual(parseSettings({ authors: ["@me", " app/my-agent ", "@me", "", 3] }).authors, ["@me", "app/my-agent"]);
+  assert.deepEqual(parseSettings({ authors: [] }).authors, ["@me"]);
+  assert.deepEqual(parseSettings({ authors: "octocat" }).authors, ["@me"]);
+  assert.equal(parseAuthors(undefined), undefined);
+});
+
+test("a change of a setting keeps the stored authors", async () => {
+  const path = join(await mkdtemp(join(tmpdir(), "boo-")), "settings.json");
+  await saveSettings({ ...parseSettings({ authors: ["octocat", "app/my-agent"] }), compact: true }, path);
+  assert.deepEqual((await loadSettings(path)).authors, ["octocat", "app/my-agent"]);
 });

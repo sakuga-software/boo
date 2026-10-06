@@ -118,7 +118,7 @@ test("each mood draws its face on a ghost of HEADER_LINES lines", () => {
 });
 
 test("the header is as tall as HEADER_LINES, the text beside the head", () => {
-  const options = { org: "acme", author: "@me", watch: true, dryRun: false, interactive: true };
+  const options = { org: "acme", authors: ["@me"], watch: true, dryRun: false, interactive: true };
   const output = renderToString(createElement(Header, { options, mood: "checking", now: new Date(), nextCheckAt: new Date(Date.now() + 5_000) }));
   const lines = output.split("\n");
   assert.equal(lines.length, HEADER_LINES);

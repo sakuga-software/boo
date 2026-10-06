@@ -2,7 +2,7 @@ import { render } from "ink";
 import meow from "meow";
 import { homedir } from "node:os";
 import { App } from "./app.js";
-import { loadSettings, saveSettings, settingsPath } from "./settings.js";
+import { loadSettings, parseAuthors, saveSettings, settingsPath } from "./settings.js";
 import { detectBackground } from "./theme.js";
 
 const DEFAULT_ORG = "sakuga-software";
@@ -18,7 +18,9 @@ const cli = meow(
   Options
     -s, --since <YYYY-MM-DD>  Only the pull requests created on or after this date
     -o, --org <org>           GitHub organization, or "all"   (default: ${DEFAULT_ORG})
-    -a, --author <login>      Pull request author             (default: @me)
+    -a, --author <login>      Pull request author; repeat it for more authors, and
+                              write app/<slug> for a GitHub App
+                              (default: "authors" in the settings file, else @me)
     -w, --watch               Stay open until Ctrl+C, and refresh the list once a minute
     -n, --dry-run             Show the state, but post and merge nothing
     -h, --help                Show this help
@@ -99,6 +101,7 @@ const cli = meow(
     $ boo --watch
     $ boo --org all
     $ boo --dry-run --since 2026-09-15
+    $ boo --author @me --author app/my-agent
 
   Requires an authenticated gh (gh auth status).
 `,
@@ -109,7 +112,7 @@ const cli = meow(
     flags: {
       since: { type: "string", shortFlag: "s" },
       org: { type: "string", shortFlag: "o", default: DEFAULT_ORG },
-      author: { type: "string", shortFlag: "a", default: "@me" },
+      author: { type: "string", shortFlag: "a", isMultiple: true },
       watch: { type: "boolean", shortFlag: "w", default: false },
       dryRun: { type: "boolean", shortFlag: "n", default: false },
       help: { type: "boolean", shortFlag: "h" },
@@ -127,8 +130,10 @@ const org = cli.flags.org === "all" ? "" : cli.flags.org;
 const interactive = cli.flags.watch && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
 const background = process.stdout.isTTY ? await detectBackground(process.stdin, process.stdout, process.env) : "unknown";
 const settings = await loadSettings();
+const { watch, dryRun } = cli.flags;
+const authors = parseAuthors(cli.flags.author) ?? settings.authors;
 const app = render(
-  <App options={{ ...cli.flags, org, ...(since && { since }), interactive, background }} settings={settings} saveSettings={saveSettings} />,
+  <App options={{ watch, dryRun, org, authors, ...(since && { since }), interactive, background }} settings={settings} saveSettings={saveSettings} />,
   { alternateScreen: interactive },
 );
 process.once("SIGTERM", () => app.unmount());

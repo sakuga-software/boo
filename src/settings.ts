@@ -15,18 +15,34 @@ export const SETTINGS = [
 ] as const;
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];
-export type Settings = Record<SettingKey, boolean>;
+export type Settings = Record<SettingKey, boolean> & {
+  /** The authors of the listed pull requests: a login, "@me", or "app/<slug>" for a GitHub App. */
+  authors: string[];
+};
 
-export const DEFAULT_SETTINGS = Object.fromEntries(SETTINGS.map(({ key, fallback }) => [key, fallback])) as Settings;
+export const DEFAULT_AUTHORS: readonly string[] = ["@me"];
+
+export const DEFAULT_SETTINGS: Settings = {
+  ...(Object.fromEntries(SETTINGS.map(({ key, fallback }) => [key, fallback])) as Record<SettingKey, boolean>),
+  authors: [...DEFAULT_AUTHORS],
+};
+
+/** Reads a list of authors from any JSON value. Returns undefined if the value is not a list with one author or more. */
+export function parseAuthors(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const authors = [...new Set(value.filter((author): author is string => typeof author === "string").map((author) => author.trim()).filter(Boolean))];
+  return authors.length > 0 ? authors : undefined;
+}
 
 /** Reads the settings from any JSON value. A missing or invalid value keeps its default. */
 export function parseSettings(value: unknown): Settings {
-  const settings = { ...DEFAULT_SETTINGS };
+  const settings = { ...DEFAULT_SETTINGS, authors: [...DEFAULT_AUTHORS] };
   if (typeof value !== "object" || value === null) return settings;
   for (const { key } of SETTINGS) {
     const stored = (value as Record<string, unknown>)[key];
     if (typeof stored === "boolean") settings[key] = stored;
   }
+  settings.authors = parseAuthors((value as Record<string, unknown>).authors) ?? settings.authors;
   return settings;
 }
 
@@ -37,7 +53,7 @@ export async function loadSettings(path = settingsPath()): Promise<Settings> {
   try {
     return parseSettings(JSON.parse(await readFile(path, "utf8")));
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return parseSettings(undefined);
   }
 }
 
