@@ -25,11 +25,36 @@ export interface PullRequest {
 
 export interface SearchOptions {
   org: string;
-  author: string;
+  authors: string[];
   since?: string;
 }
 
-export async function listPullRequests({ org, author, since }: SearchOptions): Promise<PullRequest[]> {
+interface SearchResult {
+  repository: { nameWithOwner: string };
+  number: number;
+  title: string;
+  url: string;
+  isDraft: boolean;
+  updatedAt: string;
+}
+
+/** The GitHub search has no OR between two authors: each author is one search. */
+export async function listPullRequests({ org, authors, since }: SearchOptions): Promise<PullRequest[]> {
+  const searches = await Promise.all(authors.map((author) => searchPullRequests({ org, author, ...(since && { since }) })));
+  return mergeSearches(searches).map((result) => ({
+    repo: result.repository.nameWithOwner,
+    number: result.number,
+    title: result.title,
+    url: result.url,
+  }));
+}
+
+export function mergeSearches<T extends Pick<SearchResult, "url" | "isDraft" | "updatedAt">>(searches: T[][]): T[] {
+  const byUrl = new Map(searches.flat().map((result) => [result.url, result]));
+  return [...byUrl.values()].filter((result) => !result.isDraft).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+async function searchPullRequests({ org, author, since }: { org: string; author: string; since?: string }): Promise<SearchResult[]> {
   const output = await gh([
     "search", "prs",
     ...(org ? ["--owner", org] : []),
@@ -39,23 +64,9 @@ export async function listPullRequests({ org, author, since }: SearchOptions): P
     "--sort", "updated",
     // 1000 is the most results that the GitHub search gives.
     "--limit", "1000",
-    "--json", "repository,number,title,url,isDraft",
+    "--json", "repository,number,title,url,isDraft,updatedAt",
   ]);
-  const results = JSON.parse(output) as {
-    repository: { nameWithOwner: string };
-    number: number;
-    title: string;
-    url: string;
-    isDraft: boolean;
-  }[];
-  return results
-    .filter((result) => !result.isDraft)
-    .map((result) => ({
-      repo: result.repository.nameWithOwner,
-      number: result.number,
-      title: result.title,
-      url: result.url,
-    }));
+  return JSON.parse(output) as SearchResult[];
 }
 
 export type PullRequestStatus = "open" | "draft" | "merged" | "closed";

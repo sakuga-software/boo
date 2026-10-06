@@ -16,7 +16,7 @@ import { visibleRange } from "./viewport.js";
 
 export interface Options {
   org: string;
-  author: string;
+  authors: string[];
   since?: string;
   watch: boolean;
   dryRun: boolean;
@@ -708,7 +708,7 @@ export function App(props: AppProps) {
       )}
       {rows?.length === 0 && (
         <Text dimColor>
-          No open pull request by {options.author}{options.org ? ` in ${options.org}` : ""}{options.since ? ` since ${formatDay(options.since)}` : ""}.
+          No open pull request by {options.authors.join(" or ")}{options.org ? ` in ${options.org}` : ""}{options.since ? ` since ${formatDay(options.since)}` : ""}.
         </Text>
       )}
       {panel !== undefined && <SettingsPanel settings={settings} cursor={panel} registerButton={registerButton} />}
@@ -810,7 +810,7 @@ export function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
   const status = !options.watch || mood === "done" || mood === "failed"
     ? " "
     : `${nextCheckAt ? `next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : "checking…"}${options.interactive ? "" : " · Ctrl+C to quit"}`;
-  const scope = [options.author, options.org || "all organizations", options.since && `since ${formatDay(options.since)}`].filter(Boolean);
+  const scope = [options.authors.join(" + "), options.org || "all organizations", options.since && `since ${formatDay(options.since)}`].filter(Boolean);
   return (
     <Box>
       <Ghost mood={mood} background={options.background} />
@@ -1258,6 +1258,9 @@ function SettingsPanel({ settings, cursor, registerButton }: SettingsPanelProps)
     <Box flexDirection="column" marginTop={1}>
       <Text bold>Settings</Text>
       <Text dimColor>A narrow terminal hides more parts of a row.</Text>
+      <Text dimColor wrap="truncate-end">
+        Authors: {settings.authors.join(", ")} · change "authors" in the settings file
+      </Text>
       {SETTINGS.map(({ key, label }, index) => (
         <Box key={key} ref={registerButton(`setting:${key}`)}>
           <Box width={2} flexShrink={0}>

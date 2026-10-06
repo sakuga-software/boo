@@ -8,7 +8,8 @@ the checks, and the review quotas. It also retries CodeRabbit by itself after it
 The pull requests that your agents open collect reviews from several bots. Some bots are out of
 quota, some review in several passes, and some leave a red check that tells nothing about the code.
 `boo` reads all of it for each pull request, and shows one line of state, one line of reviewers,
-and the checks. It is the page <https://github.com/pulls/authored>, with the review state in it.
+and the checks. It is the page <https://github.com/pulls/authored>, with the review state in it,
+for you and for the GitHub Apps that open pull requests for you.
 
 ## Installation
 
@@ -29,6 +30,7 @@ boo                     # show the state once, retry CodeRabbit if its quota is 
 boo --watch             # stay open until Ctrl+C, and refresh
 boo --org all           # all organizations; the default organization is sakuga-software
 boo --since 2026-09-15  # only the pull requests created on or after this date
+boo --author @me --author app/my-agent  # the pull requests of these authors, for this run
 boo --dry-run           # post and merge nothing
 boo --help              # options, states and marks
 ```
@@ -77,6 +79,16 @@ closes the panel. The tool saves them in `~/.config/boo/settings.json` (or under
 - Show the checks, the reviewers on head and the review count, the last reviewer, the mark of each
   reviewer, and the details of the selected pull request. A narrow terminal can still hide them.
 - Compact rows: no blank line between the pull requests.
+
+The authors of the listed pull requests are also in this file, but the panel only shows them. Add
+an `authors` key to list the pull requests of more than one author by default:
+
+```json
+{ "authors": ["@me", "app/my-agent"] }
+```
+
+An author is a login, `@me` (the account of `gh`), or `app/<slug>` for a GitHub App. The default is
+`["@me"]`. `--author` replaces the list for one run.
 
 ## Rules
 
