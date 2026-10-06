@@ -1,14 +1,14 @@
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
-import { requestText, type Request } from "./actions.js";
-import type { Comment, Review } from "./decide.js";
-import type { Check, CheckState } from "./reviewers.js";
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { requestText, type Request } from './actions.js';
+import type { Comment, Review } from './decide.js';
+import type { Check, CheckState } from './reviewers.js';
 
 const execFileAsync = promisify(execFile);
 
 async function gh(args: string[]): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("gh", args, { maxBuffer: 64 * 1024 * 1024 });
+    const { stdout } = await execFileAsync('gh', args, { maxBuffer: 64 * 1024 * 1024 });
     return stdout;
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
@@ -40,7 +40,9 @@ interface SearchResult {
 
 /** The GitHub search has no OR between two authors: each author is one search. */
 export async function listPullRequests({ org, authors, since }: SearchOptions): Promise<PullRequest[]> {
-  const searches = await Promise.all(authors.map((author) => searchPullRequests({ org, author, ...(since && { since }) })));
+  const searches = await Promise.all(
+    authors.map((author) => searchPullRequests({ org, author, ...(since && { since }) })),
+  );
   return mergeSearches(searches).map((result) => ({
     repo: result.repository.nameWithOwner,
     number: result.number,
@@ -49,27 +51,41 @@ export async function listPullRequests({ org, authors, since }: SearchOptions): 
   }));
 }
 
-export function mergeSearches<T extends Pick<SearchResult, "url" | "isDraft" | "updatedAt">>(searches: T[][]): T[] {
+export function mergeSearches<T extends Pick<SearchResult, 'url' | 'isDraft' | 'updatedAt'>>(searches: T[][]): T[] {
   const byUrl = new Map(searches.flat().map((result) => [result.url, result]));
   return [...byUrl.values()].filter((result) => !result.isDraft).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-async function searchPullRequests({ org, author, since }: { org: string; author: string; since?: string }): Promise<SearchResult[]> {
+async function searchPullRequests({
+  org,
+  author,
+  since,
+}: {
+  org: string;
+  author: string;
+  since?: string;
+}): Promise<SearchResult[]> {
   const output = await gh([
-    "search", "prs",
-    ...(org ? ["--owner", org] : []),
-    "--author", author,
-    "--state", "open",
-    ...(since ? ["--created", `>=${since}`] : []),
-    "--sort", "updated",
+    'search',
+    'prs',
+    ...(org ? ['--owner', org] : []),
+    '--author',
+    author,
+    '--state',
+    'open',
+    ...(since ? ['--created', `>=${since}`] : []),
+    '--sort',
+    'updated',
     // 1000 is the most results that the GitHub search gives.
-    "--limit", "1000",
-    "--json", "repository,number,title,url,isDraft,updatedAt",
+    '--limit',
+    '1000',
+    '--json',
+    'repository,number,title,url,isDraft,updatedAt',
   ]);
   return JSON.parse(output) as SearchResult[];
 }
 
-export type PullRequestStatus = "open" | "draft" | "merged" | "closed";
+export type PullRequestStatus = 'open' | 'draft' | 'merged' | 'closed';
 
 export interface PullRequestSnapshot {
   status: PullRequestStatus;
@@ -84,13 +100,15 @@ export interface PullRequestSnapshot {
   requested: string[];
 }
 
-const REVIEW_FIELDS = "author { login __typename } state submittedAt body commit { oid } comments(first: 10) { totalCount nodes { replyTo { id } } }";
-const COMMENT_FIELDS = "databaseId author { login __typename } body createdAt updatedAt";
-const CONTEXT_FIELDS = "__typename ... on CheckRun { name status conclusion } ... on StatusContext { context state description }";
-const OLDER = "pageInfo { hasPreviousPage startCursor }";
-const NEWER = "pageInfo { hasNextPage endCursor }";
-const PULL = "repository(owner: $owner, name: $name) { pullRequest(number: $number)";
-const VARIABLES = "$owner: String!, $name: String!, $number: Int!";
+const REVIEW_FIELDS =
+  'author { login __typename } state submittedAt body commit { oid } comments(first: 10) { totalCount nodes { replyTo { id } } }';
+const COMMENT_FIELDS = 'databaseId author { login __typename } body createdAt updatedAt';
+const CONTEXT_FIELDS =
+  '__typename ... on CheckRun { name status conclusion } ... on StatusContext { context state description }';
+const OLDER = 'pageInfo { hasPreviousPage startCursor }';
+const NEWER = 'pageInfo { hasNextPage endCursor }';
+const PULL = 'repository(owner: $owner, name: $name) { pullRequest(number: $number)';
+const VARIABLES = '$owner: String!, $name: String!, $number: Int!';
 
 // The first query reads the newest reviews and comments, and the first checks. A long pull request
 // needs more pages: the decisions depend on old verdicts and on the first CodeRabbit comment.
@@ -148,17 +166,17 @@ interface Page<T> {
 }
 
 type ContextNode =
-  | { __typename: "CheckRun"; name: string; status: string; conclusion: string | null }
-  | { __typename: "StatusContext"; context: string; state: string; description: string | null };
+  | { __typename: 'CheckRun'; name: string; status: string; conclusion: string | null }
+  | { __typename: 'StatusContext'; context: string; state: string; description: string | null };
 
 interface PullRequestNode {
-  state: "OPEN" | "CLOSED" | "MERGED";
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
   isDraft: boolean;
   merged: boolean;
   mergeStateStatus: string;
   headRefOid: string;
   author: Actor | null;
-  reviewRequests: { nodes: { requestedReviewer: ({ __typename: string; login?: string; slug?: string }) | null }[] };
+  reviewRequests: { nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[] };
   reviews: Page<ReviewNode>;
   comments: Page<CommentNode>;
   commits: { nodes: { commit: { statusCheckRollup: { contexts: Page<ContextNode> } | null } }[] };
@@ -166,7 +184,7 @@ interface PullRequestNode {
 
 /** GraphQL drops the "[bot]" suffix of a bot login. The REST API and the decision rules keep it. */
 export const loginOf = (actor: Actor | null) =>
-  actor ? (actor.__typename === "Bot" ? `${actor.login}[bot]` : actor.login) : null;
+  actor ? (actor.__typename === 'Bot' ? `${actor.login}[bot]` : actor.login) : null;
 
 const userOf = (actor: Actor | null) => {
   const login = loginOf(actor);
@@ -174,7 +192,13 @@ const userOf = (actor: Actor | null) => {
 };
 
 function toComment(node: CommentNode): Comment {
-  return { id: node.databaseId, user: userOf(node.author), body: node.body, created_at: node.createdAt, updated_at: node.updatedAt };
+  return {
+    id: node.databaseId,
+    user: userOf(node.author),
+    body: node.body,
+    created_at: node.createdAt,
+    updated_at: node.updatedAt,
+  };
 }
 
 // A reply in a review thread makes GitHub add a review whose line comments all answer an earlier comment.
@@ -184,7 +208,10 @@ function toReview(node: ReviewNode): Review | null {
   // The query reads 10 line comments of each review. A review with more is not a reply, so a real review is never lost.
   const comments = node.comments.nodes;
   const threadReply =
-    node.body === "" && comments.length > 0 && node.comments.totalCount <= comments.length && comments.every((comment) => comment.replyTo !== null);
+    node.body === '' &&
+    comments.length > 0 &&
+    node.comments.totalCount <= comments.length &&
+    comments.every((comment) => comment.replyTo !== null);
   return {
     user: userOf(node.author),
     commit_id: node.commit.oid,
@@ -196,40 +223,42 @@ function toReview(node: ReviewNode): Review | null {
 }
 
 function checkState(node: ContextNode): CheckState {
-  if (node.__typename === "StatusContext") {
-    if (node.state === "PENDING" || node.state === "EXPECTED") return "pending";
-    return node.state === "SUCCESS" ? "success" : "failure";
+  if (node.__typename === 'StatusContext') {
+    if (node.state === 'PENDING' || node.state === 'EXPECTED') return 'pending';
+    return node.state === 'SUCCESS' ? 'success' : 'failure';
   }
-  if (node.status !== "COMPLETED") return "pending";
-  if (node.conclusion === "SUCCESS" || node.conclusion === "NEUTRAL") return "success";
-  return node.conclusion === "SKIPPED" ? "skipped" : "failure";
+  if (node.status !== 'COMPLETED') return 'pending';
+  if (node.conclusion === 'SUCCESS' || node.conclusion === 'NEUTRAL') return 'success';
+  return node.conclusion === 'SKIPPED' ? 'skipped' : 'failure';
 }
 
 function toCheck(node: ContextNode): Check {
-  if (node.__typename === "StatusContext") {
+  if (node.__typename === 'StatusContext') {
     return { name: node.context, state: checkState(node), ...(node.description && { description: node.description }) };
   }
   return { name: node.name, state: checkState(node) };
 }
 
 function statusOf(pull: PullRequestNode): PullRequestStatus {
-  if (pull.merged || pull.state === "MERGED") return "merged";
-  if (pull.state === "CLOSED") return "closed";
-  return pull.isDraft ? "draft" : "open";
+  if (pull.merged || pull.state === 'MERGED') return 'merged';
+  if (pull.state === 'CLOSED') return 'closed';
+  return pull.isDraft ? 'draft' : 'open';
 }
 
 export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
   return {
     status: statusOf(pull),
     head: pull.headRefOid,
-    author: loginOf(pull.author) ?? "",
+    author: loginOf(pull.author) ?? '',
     mergeState: pull.mergeStateStatus.toLowerCase(),
     reviews: pull.reviews.nodes.map(toReview).filter((review) => review !== null),
     comments: pull.comments.nodes.map(toComment),
     checks: (pull.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []).map(toCheck),
     requested: pull.reviewRequests.nodes
       .map(({ requestedReviewer: reviewer }) =>
-        reviewer?.__typename === "Team" ? reviewer.slug : reviewer?.login && loginOf({ login: reviewer.login, __typename: reviewer.__typename }),
+        reviewer?.__typename === 'Team'
+          ? reviewer.slug
+          : reviewer?.login && loginOf({ login: reviewer.login, __typename: reviewer.__typename }),
       )
       .filter((login): login is string => Boolean(login)),
   };
@@ -238,21 +267,28 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
 type Variables = Record<string, string | number>;
 
 async function graphql(query: string, variables: Variables): Promise<PullRequestNode> {
-  const args = Object.entries(variables).flatMap(([key, value]) => [typeof value === "number" ? "-F" : "-f", `${key}=${value}`]);
-  const response = JSON.parse(await gh(["api", "graphql", ...args, "-f", `query=${query}`])) as {
+  const args = Object.entries(variables).flatMap(([key, value]) => [
+    typeof value === 'number' ? '-F' : '-f',
+    `${key}=${value}`,
+  ]);
+  const response = JSON.parse(await gh(['api', 'graphql', ...args, '-f', `query=${query}`])) as {
     data?: { repository: { pullRequest: PullRequestNode | null } | null };
     errors?: { message: string }[];
   };
-  if (response.errors?.length) throw new Error(`GitHub GraphQL: ${response.errors.map((error) => error.message).join("; ")}`);
+  if (response.errors?.length)
+    throw new Error(`GitHub GraphQL: ${response.errors.map((error) => error.message).join('; ')}`);
   const pull = response.data?.repository?.pullRequest;
-  if (!pull) throw new Error(`${variables.owner}/${variables.name}#${variables.number} is not readable: no such pull request, or no access`);
+  if (!pull)
+    throw new Error(
+      `${variables.owner}/${variables.name}#${variables.number} is not readable: no such pull request, or no access`,
+    );
   return pull;
 }
 
 /** Reads the other pages of a connection, older pages first or newer pages last, and returns all its nodes. */
 async function allNodes<T>(
   first: Page<T>,
-  direction: "older" | "newer",
+  direction: 'older' | 'newer',
   query: string,
   variables: Variables,
   pageOf: (pull: PullRequestNode) => Page<T> | undefined,
@@ -261,29 +297,35 @@ async function allNodes<T>(
   let info = first.pageInfo;
   const seen = new Set<string>();
   while (true) {
-    const cursor = direction === "older" ? info?.hasPreviousPage && info.startCursor : info?.hasNextPage && info.endCursor;
+    const cursor =
+      direction === 'older' ? info?.hasPreviousPage && info.startCursor : info?.hasNextPage && info.endCursor;
     if (!cursor) return nodes;
-    if (seen.has(cursor)) throw new Error(`GitHub GraphQL gave the same page cursor twice for ${variables.owner}/${variables.name}#${variables.number}`);
+    if (seen.has(cursor))
+      throw new Error(
+        `GitHub GraphQL gave the same page cursor twice for ${variables.owner}/${variables.name}#${variables.number}`,
+      );
     seen.add(cursor);
     const page = pageOf(await graphql(query, { ...variables, cursor }));
     if (!page || page.nodes.length === 0) return nodes;
-    nodes = direction === "older" ? [...page.nodes, ...nodes] : [...nodes, ...page.nodes];
+    nodes = direction === 'older' ? [...page.nodes, ...nodes] : [...nodes, ...page.nodes];
     info = page.pageInfo;
   }
 }
 
 export async function fetchPullRequest(pr: PullRequest): Promise<PullRequestSnapshot> {
-  const [owner = "", name = ""] = pr.repo.split("/");
+  const [owner = '', name = ''] = pr.repo.split('/');
   const variables = { owner, name, number: pr.number };
   const pull = await graphql(QUERY, variables);
   type Pages = { page?: Page<never> };
   const page = (value: unknown) => (value as Pages).page;
   const rollup = pull.commits.nodes[0]?.commit.statusCheckRollup;
   const [reviews, comments, contexts] = await Promise.all([
-    allNodes(pull.reviews, "older", PAGE_QUERIES.reviews, variables, page),
-    allNodes(pull.comments, "older", PAGE_QUERIES.comments, variables, page),
+    allNodes(pull.reviews, 'older', PAGE_QUERIES.reviews, variables, page),
+    allNodes(pull.comments, 'older', PAGE_QUERIES.comments, variables, page),
     rollup
-      ? allNodes(rollup.contexts, "newer", PAGE_QUERIES.contexts, variables, (next) => page(next.commits.nodes[0]?.commit.statusCheckRollup))
+      ? allNodes(rollup.contexts, 'newer', PAGE_QUERIES.contexts, variables, (next) =>
+          page(next.commits.nodes[0]?.commit.statusCheckRollup),
+        )
       : Promise.resolve([]),
   ]);
   return toSnapshot({
@@ -301,10 +343,10 @@ export async function fetchPullRequest(pr: PullRequest): Promise<PullRequestSnap
 export async function requestReview(pr: PullRequest, request: Request): Promise<string> {
   const { reviewer } = request.bot;
   if (reviewer) {
-    await gh(["pr", "edit", String(pr.number), "--repo", pr.repo, "--add-reviewer", reviewer]);
+    await gh(['pr', 'edit', String(pr.number), '--repo', pr.repo, '--add-reviewer', reviewer]);
     return pr.url;
   }
-  const url = await gh(["pr", "comment", String(pr.number), "--repo", pr.repo, "--body", requestText(request)]);
+  const url = await gh(['pr', 'comment', String(pr.number), '--repo', pr.repo, '--body', requestText(request)]);
   return url.trim();
 }
 
@@ -315,19 +357,24 @@ export async function requestReview(pr: PullRequest, request: Request): Promise<
  */
 export async function mergePullRequest(pr: PullRequest, head: string): Promise<void> {
   const allowed = JSON.parse(
-    await gh(["api", `repos/${pr.repo}`, "--jq", "{squash: .allow_squash_merge, merge: .allow_merge_commit, rebase: .allow_rebase_merge}"]),
-  ) as Record<"squash" | "merge" | "rebase", boolean>;
-  const method = (["squash", "merge", "rebase"] as const).find((candidate) => allowed[candidate]);
+    await gh([
+      'api',
+      `repos/${pr.repo}`,
+      '--jq',
+      '{squash: .allow_squash_merge, merge: .allow_merge_commit, rebase: .allow_rebase_merge}',
+    ]),
+  ) as Record<'squash' | 'merge' | 'rebase', boolean>;
+  const method = (['squash', 'merge', 'rebase'] as const).find((candidate) => allowed[candidate]);
   if (!method) throw new Error(`${pr.repo} allows no merge method`);
-  await gh(["pr", "merge", String(pr.number), "--repo", pr.repo, `--${method}`, "--match-head-commit", head]);
+  await gh(['pr', 'merge', String(pr.number), '--repo', pr.repo, `--${method}`, '--match-head-commit', head]);
 }
 
 export function openInBrowser(url: string): Promise<void> {
-  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
+  const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
   return new Promise((resolve, reject) => {
-    const child = spawn(opener, [url], { stdio: "ignore", detached: true });
-    child.once("error", reject);
-    child.once("spawn", () => {
+    const child = spawn(opener, [url], { stdio: 'ignore', detached: true });
+    child.once('error', reject);
+    child.once('spawn', () => {
       child.unref();
       resolve();
     });

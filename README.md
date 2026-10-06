@@ -62,12 +62,12 @@ protection rule that blocks the merge, and the quota return times.
 
 A narrow terminal shows less of each row, from the least useful part:
 
-| Width | The row drops |
-| --- | --- |
-| below 120 columns | the reviewers on head and the review count |
+| Width             | The row drops                                                |
+| ----------------- | ------------------------------------------------------------ |
+| below 120 columns | the reviewers on head and the review count                   |
 | below 100 columns | the name of the state (the icon stays) and the word "checks" |
-| below 80 columns | the last reviewer, and the labels of the action bar |
-| below 60 columns | the checks |
+| below 80 columns  | the last reviewer, and the labels of the action bar          |
+| below 60 columns  | the checks                                                   |
 
 ## Settings
 
@@ -193,26 +193,26 @@ bot, with its commands. `←` or `Space` goes back one level, and `Esc` goes bac
 A key of a bot or of a command works only at the level that shows it, so two bots can use the same
 key. The keys of the main set work at every level.
 
-| Key | Action |
-| --- | --- |
-| `↑` `↓` or `k` `j` | select a pull request (the mouse wheel does it too) |
-| `o` or `Enter` | open the pull request in the browser |
-| `m` | merge the pull request: squash if the repository allows it, else merge, else rebase |
-| `h` | show or hide the merged, closed and draft pull requests |
-| `,` | open the settings |
-| `→` or `Space` | show the list of the review bots |
-| `←` or `Space` | go back one level |
-| `Esc` | go back to the main set |
-| `q` | quit |
+| Key                | Action                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `↑` `↓` or `k` `j` | select a pull request (the mouse wheel does it too)                                 |
+| `o` or `Enter`     | open the pull request in the browser                                                |
+| `m`                | merge the pull request: squash if the repository allows it, else merge, else rebase |
+| `h`                | show or hide the merged, closed and draft pull requests                             |
+| `,`                | open the settings                                                                   |
+| `→` or `Space`     | show the list of the review bots                                                    |
+| `←` or `Space`     | go back one level                                                                   |
+| `Esc`              | go back to the main set                                                             |
+| `q`                | quit                                                                                |
 
 In the list of the review bots:
 
-| Key | Menu | Commands |
-| --- | --- | --- |
+| Key | Menu       | Commands                                                                                                                                                                                                                      |
+| --- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `r` | CodeRabbit | `r` posts `@coderabbitai review`, `f` posts `@coderabbitai full review`, `a` posts `@coderabbitai approve` (resolve the CodeRabbit threads, then approve), `s` posts `@coderabbitai resolve` (resolve the CodeRabbit threads) |
-| `g` | Greptile | `r` posts `@greptileai review` |
-| `c` | Copilot | `r` asks Copilot for a review (`gh pr edit --add-reviewer @copilot`, needs `gh` 2.88 or later) |
-| `p` | PR-Agent | `r` posts `/review` (PR-Agent reviews the pull request again), `i` posts `/improve` (PR-Agent suggests code changes on the lines) |
+| `g` | Greptile   | `r` posts `@greptileai review`                                                                                                                                                                                                |
+| `c` | Copilot    | `r` asks Copilot for a review (`gh pr edit --add-reviewer @copilot`, needs `gh` 2.88 or later)                                                                                                                                |
+| `p` | PR-Agent   | `r` posts `/review` (PR-Agent reviews the pull request again), `i` posts `/improve` (PR-Agent suggests code changes on the lines)                                                                                             |
 
 A command to CodeRabbit, Greptile or PR-Agent works only on a pull request that the bot reviews; the
 bar dims the bot and its commands on the other ones. Copilot gets a review request from GitHub and not a comment: a mention of

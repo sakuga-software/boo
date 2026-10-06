@@ -1,4 +1,4 @@
-import type { Settings } from "./settings.js";
+import type { Settings } from './settings.js';
 
 export interface Layout {
   /** The column with the name of the state, such as "ready to merge". Without it, the row shows the icon only. */

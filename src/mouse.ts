@@ -1,9 +1,9 @@
-export const ENABLE_MOUSE = "\u001B[?1000h\u001B[?1006h";
-export const DISABLE_MOUSE = "\u001B[?1006l\u001B[?1000l";
+export const ENABLE_MOUSE = '\u001B[?1000h\u001B[?1006h';
+export const DISABLE_MOUSE = '\u001B[?1006l\u001B[?1000l';
 
 export type MouseEvent =
-  | { kind: "click"; x: number; y: number }
-  | { kind: "wheel"; direction: "up" | "down"; x: number; y: number };
+  | { kind: 'click'; x: number; y: number }
+  | { kind: 'wheel'; direction: 'up' | 'down'; x: number; y: number };
 
 const SEQUENCE = /\u001B\[<(\d+);(\d+);(\d+)([Mm])/g;
 const INCOMPLETE_TAIL = /\u001B(\[(<[\d;]*)?)?$/;
@@ -18,10 +18,10 @@ const PENDING_EXPIRY_MS = 100;
  * Ink then passes the end of that report, for example "m", to useInput as if it were a key.
  */
 export function createMouseParser(onEvent: (event: MouseEvent) => void, now: () => number = Date.now) {
-  let pending = "";
+  let pending = '';
   let pendingAt = 0;
   return (chunk: string): boolean => {
-    if (pending && now() - pendingAt > PENDING_EXPIRY_MS) pending = "";
+    if (pending && now() - pendingAt > PENDING_EXPIRY_MS) pending = '';
     const carried = pending.length;
     const data = pending + chunk;
     let end = 0;
@@ -33,15 +33,15 @@ export function createMouseParser(onEvent: (event: MouseEvent) => void, now: () 
       const button = Number(code);
       const x = Number(column) - 1;
       const y = Number(line) - 1;
-      if (button === 64 || button === 65) onEvent({ kind: "wheel", direction: button === 64 ? "up" : "down", x, y });
-      else if (button === 0 && final === "M") onEvent({ kind: "click", x, y });
+      if (button === 64 || button === 65) onEvent({ kind: 'wheel', direction: button === 64 ? 'up' : 'down', x, y });
+      else if (button === 0 && final === 'M') onEvent({ kind: 'click', x, y });
     }
     const rest = data.slice(end);
-    pending = INCOMPLETE_TAIL.exec(rest)?.[0] ?? "";
+    pending = INCOMPLETE_TAIL.exec(rest)?.[0] ?? '';
     pendingAt = now();
     return completedCarried;
   };
 }
 
 /** Tells if a string from Ink's useInput is a piece of a mouse report and not a key press. */
-export const isMouseFragment = (input: string) => /^\[?<[\d;]*[Mm]?$|^[\d;]+[Mm]$/.test(input) && input !== "";
+export const isMouseFragment = (input: string) => /^\[?<[\d;]*[Mm]?$|^[\d;]+[Mm]$/.test(input) && input !== '';

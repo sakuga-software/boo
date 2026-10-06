@@ -1,6 +1,6 @@
-import type { PullRequestStatus } from "./github.js";
+import type { PullRequestStatus } from './github.js';
 
-export type LeftStatus = Exclude<PullRequestStatus, "open">;
+export type LeftStatus = Exclude<PullRequestStatus, 'open'>;
 
 export interface Tracked {
   key: string;

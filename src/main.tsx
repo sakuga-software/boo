@@ -1,11 +1,11 @@
-import { render } from "ink";
-import meow from "meow";
-import { homedir } from "node:os";
-import { App } from "./app.js";
-import { loadSettings, parseAuthors, saveSettings, settingsPath } from "./settings.js";
-import { detectBackground } from "./theme.js";
+import { render } from 'ink';
+import meow from 'meow';
+import { homedir } from 'node:os';
+import { App } from './app.js';
+import { loadSettings, parseAuthors, saveSettings, settingsPath } from './settings.js';
+import { detectBackground } from './theme.js';
 
-const DEFAULT_ORG = "sakuga-software";
+const DEFAULT_ORG = 'sakuga-software';
 
 const cli = meow(
   `
@@ -78,7 +78,7 @@ const cli = meow(
     h               show or hide the merged, closed and draft pull requests;
                     they are hidden by default
     ,               open the settings: the hidden pull requests and the parts
-                    of a row; saved in ${settingsPath().replace(homedir(), "~")}
+                    of a row; saved in ${settingsPath().replace(homedir(), '~')}
     →  or  space    show the list of the review bots
     ←  or  space    go back one level; Esc goes back to the main set
     In the list of the review bots, a key opens the menu of a bot:
@@ -110,12 +110,12 @@ const cli = meow(
     description: false,
     allowUnknownFlags: false,
     flags: {
-      since: { type: "string", shortFlag: "s" },
-      org: { type: "string", shortFlag: "o", default: DEFAULT_ORG },
-      author: { type: "string", shortFlag: "a", isMultiple: true },
-      watch: { type: "boolean", shortFlag: "w", default: false },
-      dryRun: { type: "boolean", shortFlag: "n", default: false },
-      help: { type: "boolean", shortFlag: "h" },
+      since: { type: 'string', shortFlag: 's' },
+      org: { type: 'string', shortFlag: 'o', default: DEFAULT_ORG },
+      author: { type: 'string', shortFlag: 'a', isMultiple: true },
+      watch: { type: 'boolean', shortFlag: 'w', default: false },
+      dryRun: { type: 'boolean', shortFlag: 'n', default: false },
+      help: { type: 'boolean', shortFlag: 'h' },
     },
   },
 );
@@ -125,18 +125,24 @@ if (since !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(D
   console.error(`--since expects a YYYY-MM-DD date, got "${since}".`);
   process.exit(2);
 }
-const org = cli.flags.org === "all" ? "" : cli.flags.org;
+const org = cli.flags.org === 'all' ? '' : cli.flags.org;
 
 const interactive = cli.flags.watch && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
-const background = process.stdout.isTTY ? await detectBackground(process.stdin, process.stdout, process.env) : "unknown";
+const background = process.stdout.isTTY
+  ? await detectBackground(process.stdin, process.stdout, process.env)
+  : 'unknown';
 const settings = await loadSettings();
 const { watch, dryRun } = cli.flags;
 const authors = parseAuthors(cli.flags.author) ?? settings.authors;
 const app = render(
-  <App options={{ watch, dryRun, org, authors, ...(since && { since }), interactive, background }} settings={settings} saveSettings={saveSettings} />,
+  <App
+    options={{ watch, dryRun, org, authors, ...(since && { since }), interactive, background }}
+    settings={settings}
+    saveSettings={saveSettings}
+  />,
   { alternateScreen: interactive },
 );
-process.once("SIGTERM", () => app.unmount());
+process.once('SIGTERM', () => app.unmount());
 try {
   await app.waitUntilExit();
 } catch (error) {
