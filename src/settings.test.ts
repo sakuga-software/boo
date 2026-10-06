@@ -68,3 +68,8 @@ test('a change of a setting keeps the stored authors', async () => {
   await saveSettings({ ...parseSettings({ authors: ['octocat', 'app/my-agent'] }), compact: true }, path);
   assert.deepEqual((await loadSettings(path)).authors, ['octocat', 'app/my-agent']);
 });
+
+test('the authors line of the panel gives a list: one author between two commas', () => {
+  assert.deepEqual(parseAuthors(' octocat, app/my-agent ,,'.split(',')), ['octocat', 'app/my-agent']);
+  assert.equal(parseAuthors(' , '.split(',')), undefined);
+});

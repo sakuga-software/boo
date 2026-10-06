@@ -77,8 +77,8 @@ const cli = meow(
     m               merge the pull request (squash, else merge, else rebase)
     h               show or hide the merged, closed and draft pull requests;
                     they are hidden by default
-    ,               open the settings: the hidden pull requests and the parts
-                    of a row; saved in ${settingsPath().replace(homedir(), '~')}
+    ,               open the settings: the hidden pull requests, the parts of
+                    a row and the authors; saved in ${settingsPath().replace(homedir(), '~')}
     →  or  space    show the list of the review bots
     ←  or  space    go back one level; Esc goes back to the main set
     In the list of the review bots, a key opens the menu of a bot:
