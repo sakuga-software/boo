@@ -9,7 +9,7 @@ import type { PullRequest, PullRequestSnapshot } from "./github.js";
 import { layoutFor, LABEL_WIDTH, rowHeight, type Layout } from "./layout.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
 import { summarize, type Overall, type Reviewer, type ReviewerStatus, type Summary } from "./reviewers.js";
-import { DEFAULT_SETTINGS, SETTINGS, type SettingKey, type Settings } from "./settings.js";
+import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from "./settings.js";
 import { planSync, type LeftStatus } from "./sync.js";
 import { createReplyFilter, GHOST_PALETTES, type Background } from "./theme.js";
 import { visibleRange } from "./viewport.js";
@@ -159,6 +159,17 @@ export function App(props: AppProps) {
   // The line of the settings panel under the cursor. Undefined: the panel is closed.
   const [panel, setPanel] = useState<number>();
   const panelRef = useRef<number>(undefined);
+  // The list of authors that the search uses. --author sets it for the start, the settings panel changes it.
+  const [authors, setAuthors] = useState(options.authors);
+  const authorsRef = useRef(authors);
+  // The text of the authors line while the user changes it. Undefined: no change in progress.
+  const [authorsDraft, setAuthorsDraft] = useState<string>();
+  const authorsDraftRef = useRef<string>(undefined);
+  const checkingAuthors = useRef(false);
+  // These two outlive a new list of authors, which starts the workflow again: the repost guard and the
+  // queue of the CodeRabbit posts must still hold for a post that the earlier workflow sent.
+  const lastPosts = useRef(new Map<string, { at: number; before: Comment[] }>());
+  const postLock = useRef<Promise<void>>(Promise.resolve());
   const pendingEscape = useRef<NodeJS.Timeout>(undefined);
   const isLateReply = useRef(createReplyFilter());
   const merging = useRef(new Set<string>());
@@ -173,12 +184,13 @@ export function App(props: AppProps) {
   useEffect(() => {
     const abort = new AbortController();
     const { signal } = abort;
-    const lastPosts = new Map<string, { at: number; before: Comment[] }>();
-    let postLock = Promise.resolve();
 
+    // A stopped workflow can still end a fetch or a post. Its result must not reach the rows of the next one.
     const update = (pr: PullRequest, patch: Partial<Row>) => {
       const key = keyOf(pr);
-      rowsRef.current.set(key, { ...rowsRef.current.get(key)!, ...patch });
+      const row = rowsRef.current.get(key);
+      if (!row || signal.aborted) return;
+      rowsRef.current.set(key, { ...row, ...patch });
       setRows([...rowsRef.current.values()]);
     };
     const rowOf = (pr: PullRequest) => rowsRef.current.get(keyOf(pr))!;
@@ -186,11 +198,11 @@ export function App(props: AppProps) {
     // The CodeRabbit quota belongs to the developer. Posts go one at a time. Each post waits until
     // reply polling finishes or times out. A new rate limit blocks the developer's other pull requests too.
     function exclusive(task: () => Promise<void>): Promise<void> {
-      const run = postLock.then(() => {
+      const run = postLock.current.then(() => {
         signal.throwIfAborted();
         return task();
       });
-      postLock = run.catch(() => {});
+      postLock.current = run.catch(() => {});
       return run;
     }
 
@@ -225,7 +237,7 @@ export function App(props: AppProps) {
         }
         update(pr, { fetched: state, left: undefined, activity: undefined, error: undefined });
         redecide();
-        return rowOf(pr).decision;
+        return rowsRef.current.get(keyOf(pr))?.decision;
       } catch (error) {
         update(pr, { activity: undefined, error: message(error) });
         return undefined;
@@ -247,7 +259,7 @@ export function App(props: AppProps) {
       update(pr, { activity: { posting: request } });
       try {
         const url = await gitHub.requestReview(pr, request);
-        if (isCodeRabbit(request) && isReviewRequest(request)) lastPosts.set(keyOf(pr), { at: Date.now(), before: commentsBefore });
+        if (isCodeRabbit(request) && isReviewRequest(request)) lastPosts.current.set(keyOf(pr), { at: Date.now(), before: commentsBefore });
         update(pr, { activity: undefined, posted: { request, url } });
         return true;
       } catch (error) {
@@ -301,7 +313,7 @@ export function App(props: AppProps) {
           const row = rowOf(pr);
           // A row whose last fetch failed shows old data: its head and its status are not checked.
           if (row.left || row.error || row.decision?.kind !== "trigger") return;
-          if (unanswered(row, lastPosts.get(keyOf(pr)))) return;
+          if (unanswered(row, lastPosts.current.get(keyOf(pr)))) return;
           if (await post(pr, { bot: CODERABBIT, command: "review" })) setTriggered((count) => count + 1);
         });
       }
@@ -318,7 +330,8 @@ export function App(props: AppProps) {
     const tracked = () => [...rowsRef.current.values()].map((row) => row.pr);
 
     async function syncList() {
-      const listed = new Map((await gitHub.listPullRequests(options)).map((pr) => [keyOf(pr), pr]));
+      const listed = new Map((await gitHub.listPullRequests({ ...options, authors })).map((pr) => [keyOf(pr), pr]));
+      signal.throwIfAborted();
       const plan = planSync(
         [...rowsRef.current].map(([key, row]) => ({ key, left: row.left })),
         [...listed.keys()],
@@ -379,7 +392,7 @@ export function App(props: AppProps) {
         setDone(true);
       });
     return () => abort.abort();
-  }, []);
+  }, [authors]);
 
   useEffect(() => {
     if (!options.watch) return;
@@ -445,20 +458,74 @@ export function App(props: AppProps) {
     setPanel(line);
   }
 
-  function toggleSetting(key: SettingKey) {
-    const next = { ...settingsRef.current, [key]: !settingsRef.current[key] };
+  function store(next: Settings) {
     settingsRef.current = next;
     setSettings(next);
-    select(live().key);
     saveSettings?.(next).catch((error) => setFlash({ text: `Could not save the settings: ${message(error)}`, color: "red" }));
   }
 
+  function toggleSetting(key: SettingKey) {
+    store({ ...settingsRef.current, [key]: !settingsRef.current[key] });
+    select(live().key);
+  }
+
+  function draftAuthors(text: string | undefined) {
+    authorsDraftRef.current = text;
+    setAuthorsDraft(text);
+  }
+
+  async function saveAuthors(text: string) {
+    const next = parseAuthors(text.split(","));
+    if (!next) return setFlash({ text: "The list needs one author or more.", color: "yellow" });
+    const live = next.join() === authorsRef.current.join();
+    if (!live) {
+      // A search with an unknown author fails. A saved list that fails stops each later start.
+      checkingAuthors.current = true;
+      setFlash({ text: "Checking the authors…", color: "blue" });
+      try {
+        await gitHub.listPullRequests({ ...options, authors: next });
+      } catch (error) {
+        return setFlash({ text: `Could not list these authors: ${message(error).split("\n")[0]}`, color: "red" });
+      } finally {
+        checkingAuthors.current = false;
+      }
+      setFlash({ text: `Listing the pull requests of ${next.join(", ")}.`, color: "green" });
+    }
+    draftAuthors(undefined);
+    store({ ...settingsRef.current, authors: next });
+    if (live) return;
+    // The pull requests of the earlier authors leave the list: the workflow starts again with an empty one.
+    rowsRef.current.clear();
+    setRows(null);
+    setListError(undefined);
+    select(undefined);
+    authorsRef.current = next;
+    setAuthors(next);
+  }
+
+  function typeAuthorsKey(char: string) {
+    if (checkingAuthors.current) return;
+    const draft = authorsDraftRef.current ?? "";
+    if (char === "\r") void saveAuthors(draft);
+    else if (char === "\u001B") draftAuthors(undefined);
+    else if (char === BACKSPACE) draftAuthors(draft.slice(0, -1));
+    else if (char >= " ") draftAuthors(draft + char);
+  }
+
   function typePanelKey(char: string) {
+    if (authorsDraftRef.current !== undefined) return typeAuthorsKey(char);
     const line = panelRef.current ?? 0;
     if (char === "k") openPanel(Math.max(0, line - 1));
-    else if (char === "j") openPanel(Math.min(SETTINGS.length - 1, line + 1));
+    else if (char === "j") openPanel(Math.min(AUTHORS_LINE, line + 1));
+    else if ((char === " " || char === "\r") && line === AUTHORS_LINE) draftAuthors(settingsRef.current.authors.join(", "));
     else if (char === " " || char === "\r") toggleSetting(SETTINGS[line]!.key);
     else if (char === "," || char === "q" || char === "\u001B") openPanel(undefined);
+  }
+
+  // An arrow or the mouse wheel moves the selection. In the authors line, it must not type a letter.
+  function step(direction: "k" | "j") {
+    if (confirmationRef.current || authorsDraftRef.current !== undefined) return;
+    typeKey(direction);
   }
 
   function mergeWarning(row: Row): string | undefined {
@@ -568,7 +635,13 @@ export function App(props: AppProps) {
   function press(id: string) {
     if (id === "yes" || id === "no") return answer(id === "yes");
     if (confirmationRef.current) return;
+    if (id === "setting:authors") {
+      openPanel(AUTHORS_LINE);
+      if (authorsDraftRef.current === undefined) draftAuthors(settingsRef.current.authors.join(", "));
+      return;
+    }
     if (id.startsWith("setting:")) {
+      if (authorsDraftRef.current !== undefined) return;
       const key = id.slice("setting:".length) as SettingKey;
       openPanel(SETTINGS.findIndex((setting) => setting.key === key));
       return toggleSetting(key);
@@ -610,8 +683,12 @@ export function App(props: AppProps) {
       if (isMouseFragment(input) || isLateReply.current(input)) return;
       // The raw stdin listener handles a lone "m": only the mouse parser knows if it ends a split report.
       if (input === "m") return;
-      if (key.upArrow) return confirmationRef.current ? undefined : typeKey("k");
-      if (key.downArrow) return confirmationRef.current ? undefined : typeKey("j");
+      if (key.upArrow) return step("k");
+      if (key.downArrow) return step("j");
+      if (authorsDraftRef.current !== undefined) {
+        if (key.backspace || key.delete) return typeKey(BACKSPACE);
+        if (key.ctrl || key.meta || key.tab) return;
+      }
       if (key.rightArrow) return confirmationRef.current || panelRef.current !== undefined ? undefined : modeRef.current === "main" ? switchMode("bots") : undefined;
       if (key.leftArrow) return confirmationRef.current || panelRef.current !== undefined ? undefined : switchMode(parentOf(modeRef.current));
       if (key.return) return typeKey("\r");
@@ -629,8 +706,11 @@ export function App(props: AppProps) {
       // The rest of the chunk stops when a key opens or closes a prompt.
       for (const char of input) {
         const hadPrompt = confirmationRef.current !== undefined;
+        const hadDraft = authorsDraftRef.current !== undefined;
         typeKey(char);
         if (hadPrompt !== (confirmationRef.current !== undefined)) break;
+        // The rest of a paste that saved the authors must not run as keys of the panel.
+        if (hadDraft && authorsDraftRef.current === undefined) break;
       }
     },
     { isActive: options.interactive },
@@ -642,8 +722,8 @@ export function App(props: AppProps) {
     return () => clearTimeout(timer);
   }, [flash]);
 
-  const handlers = useRef({ press, move, select, typeKey });
-  handlers.current = { press, move, select, typeKey };
+  const handlers = useRef({ press, move, select, typeKey, step });
+  handlers.current = { press, move, select, typeKey, step };
 
   useEffect(() => {
     if (!options.interactive) return;
@@ -651,7 +731,7 @@ export function App(props: AppProps) {
     stdout.write(ENABLE_MOUSE);
     process.once("exit", disable);
     const feed = createMouseParser((event) => {
-      if (event.kind === "wheel") return handlers.current.typeKey(event.direction === "up" ? "k" : "j");
+      if (event.kind === "wheel") return handlers.current.step(event.direction === "up" ? "k" : "j");
       const button = hitTest(buttonNodes.current, event.x, event.y);
       if (button) return handlers.current.press(button);
       const row = hitTest(rowNodes.current, event.x, event.y);
@@ -697,7 +777,7 @@ export function App(props: AppProps) {
 
   return (
     <Box flexDirection="column" paddingX={1} {...(options.interactive && { height: screenRows })}>
-      <Header options={options} mood={fatal ? "failed" : done ? "done" : nextCheckAt ? "sleeping" : "checking"} now={clock} nextCheckAt={nextCheckAt} />
+      <Header options={{ ...options, authors }} mood={fatal ? "failed" : done ? "done" : nextCheckAt ? "sleeping" : "checking"} now={clock} nextCheckAt={nextCheckAt} />
       {rows === null && !fatal && (
         <Text>
           <Text color="cyan">
@@ -708,10 +788,10 @@ export function App(props: AppProps) {
       )}
       {rows?.length === 0 && (
         <Text dimColor>
-          No open pull request by {options.authors.join(" or ")}{options.org ? ` in ${options.org}` : ""}{options.since ? ` since ${formatDay(options.since)}` : ""}.
+          No open pull request by {authors.join(" or ")}{options.org ? ` in ${options.org}` : ""}{options.since ? ` since ${formatDay(options.since)}` : ""}.
         </Text>
       )}
-      {panel !== undefined && <SettingsPanel settings={settings} cursor={panel} registerButton={registerButton} />}
+      {panel !== undefined && <SettingsPanel settings={settings} cursor={panel} authorsDraft={authorsDraft} registerButton={registerButton} />}
       {rows && rows.length > 0 && panel === undefined && (
         <Box flexDirection="column" marginTop={1}>
           {options.interactive && (
@@ -761,6 +841,7 @@ export function App(props: AppProps) {
           hiddenCount={hiddenCount}
           mode={mode}
           panelOpen={panel !== undefined}
+          editing={authorsDraft !== undefined}
           short={layout.shortBar}
           shortBots={layout.shortBar || columns - 2 < BOT_BAR_WIDTH}
           reviewers={selectedRow?.summary?.reviewers}
@@ -1129,6 +1210,8 @@ interface ControlsProps {
   hiddenCount: number;
   mode: Mode;
   panelOpen: boolean;
+  /** The user changes the authors line of the settings panel. */
+  editing: boolean;
   /** Show the keys only, for a narrow terminal. */
   short: boolean;
   shortBots: boolean;
@@ -1204,7 +1287,7 @@ function ActionBar({ registerButton, disabledCommands, revealed, hiddenCount, mo
 }
 
 function Controls(props: ControlsProps) {
-  const { confirmation, flash, registerButton, panelOpen } = props;
+  const { confirmation, flash, registerButton, panelOpen, editing } = props;
   return (
     <Box flexDirection="column" marginTop={1}>
       {confirmation ? (
@@ -1233,7 +1316,7 @@ function Controls(props: ControlsProps) {
         <>
           {panelOpen ? (
             <Text dimColor wrap="truncate-end">
-              ↑↓ choose · space or ⏎ change · , or esc close
+              {editing ? "type the authors, with a comma between two · ⏎ save · esc cancel" : "↑↓ choose · space or ⏎ change · , or esc close"}
             </Text>
           ) : (
             <ActionBar {...props} />
@@ -1247,20 +1330,21 @@ function Controls(props: ControlsProps) {
   );
 }
 
+const AUTHORS_LINE = SETTINGS.length;
+const BACKSPACE = "\u007F";
+
 interface SettingsPanelProps {
   settings: Settings;
   cursor: number;
+  authorsDraft: string | undefined;
   registerButton: ControlsProps["registerButton"];
 }
 
-function SettingsPanel({ settings, cursor, registerButton }: SettingsPanelProps) {
+function SettingsPanel({ settings, cursor, authorsDraft, registerButton }: SettingsPanelProps) {
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text bold>Settings</Text>
       <Text dimColor>A narrow terminal hides more parts of a row.</Text>
-      <Text dimColor wrap="truncate-end">
-        Authors: {settings.authors.join(", ")} · change "authors" in the settings file
-      </Text>
       {SETTINGS.map(({ key, label }, index) => (
         <Box key={key} ref={registerButton(`setting:${key}`)}>
           <Box width={2} flexShrink={0}>
@@ -1274,6 +1358,23 @@ function SettingsPanel({ settings, cursor, registerButton }: SettingsPanelProps)
           <Text wrap="truncate-end"> {label}</Text>
         </Box>
       ))}
+      <Box ref={registerButton("setting:authors")}>
+        <Box width={2} flexShrink={0}>
+          <Text color={BRAND} bold>
+            {cursor === AUTHORS_LINE ? "❯" : " "}
+          </Text>
+        </Box>
+        {authorsDraft === undefined ? (
+          <Text wrap="truncate-end">
+            Authors: {settings.authors.join(", ")} <Text dimColor>· a login, @me, or app/&lt;slug&gt; for a GitHub App</Text>
+          </Text>
+        ) : (
+          <Text wrap="truncate-end">
+            Authors: <Text color={BRAND}>{authorsDraft}</Text>
+            <Text inverse> </Text>
+          </Text>
+        )}
+      </Box>
     </Box>
   );
 }
