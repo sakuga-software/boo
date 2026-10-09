@@ -3,8 +3,8 @@
 # See https://github.com/sakuga-software/sakuga-review.
 #
 # A copy of the jobs of review.yml in sakuga-review, not a call to it: this repository is public, and
-# a public repository cannot call a workflow of a private one. Keep it in step with review.yml, and
-# take the script at the SHA of the same version (the step that checks out the script).
+# a public repository cannot call a workflow of a private one. Keep its jobs in step with review.yml;
+# the script comes from the release `stable` of sakuga-review.
 #
 # `sakuga-agent[bot]` is the App that the Claude Code agents push with: it counts as a person, as the
 # `trusted_bots` input of review.yml does by default. A copy has no input, so its name is written here.
@@ -63,12 +63,12 @@ jobs:
           fetch-depth: 0
           path: repo
           persist-credentials: false
-      # The script and its prompt at v5. The private repository opens with the token of the App.
+      # The script and its prompt at the release `stable` of sakuga-review. The private repository opens with the token of the App.
       - name: Check out the review script
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: sakuga-software/sakuga-review
-          ref: 146912bd2b76ad5addee85eeade678ce2058f891 # v5.1
+          ref: stable
           path: settings
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
@@ -170,7 +170,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: sakuga-software/sakuga-review
-          ref: 146912bd2b76ad5addee85eeade678ce2058f891 # v5.1
+          ref: stable
           path: settings
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
