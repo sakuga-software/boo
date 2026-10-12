@@ -435,7 +435,14 @@ export function App(props: AppProps) {
               setTriggered((count) => count + 1);
               void refresh(pr);
             } else {
-              retried.current.set(retryKey(pr, retry), Date.now() + RETRY_AFTER_FAILURE_MS);
+              const next = Date.now() + RETRY_AFTER_FAILURE_MS;
+              retried.current.set(retryKey(pr, retry), next);
+              // The next fetch clears the error of the row, so the flash keeps the failure visible.
+              if (!signal.aborted)
+                setFlash({
+                  text: `Could not retry ${retry.bot.name} on ${keyOf(pr)}: ${rowOf(pr).error ?? 'unknown error'}. Next try at ${formatTime(new Date(next))}.`,
+                  color: 'red',
+                });
             }
           }
         }),

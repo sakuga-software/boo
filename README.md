@@ -214,8 +214,8 @@ The automatic retry of a bot other than CodeRabbit is off by default. When it is
 - the tool posts the first command of the bot, or asks GitHub for a review if the bot takes review
   requests (Copilot);
 - each refusal gets one retry only. A new refusal after the retry gives a new retry.
-- if the post fails, for example because the bot is not a collaborator, the tool tries again 5
-  minutes later.
+- if the post fails, for example because the bot is not a collaborator, a red message says why,
+  and the tool tries again 5 minutes later.
 
 The details of the selected pull request show the time of each planned retry.
 
