@@ -17,7 +17,7 @@ test('a narrow terminal drops the parts from the least useful', () => {
   const medium = layoutFor(99, DEFAULT_SETTINGS, true);
   assert.deepEqual([medium.label, medium.shortChecks, medium.lastReview, medium.indent], [false, true, true, 5]);
   const small = layoutFor(79, DEFAULT_SETTINGS, true);
-  assert.deepEqual([small.lastReview, small.shortBar, small.checks], [false, true, true]);
+  assert.deepEqual([small.lastReview, small.stack, small.shortBar, small.checks], [false, false, true, true]);
   assert.equal(layoutFor(59, DEFAULT_SETTINGS, true).checks, false);
 });
 

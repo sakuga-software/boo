@@ -87,6 +87,8 @@ let requestedAt: number | undefined;
 type Facts = Pick<PullRequestSnapshot, 'head' | 'reviews' | 'comments' | 'checks'> & Partial<PullRequestSnapshot>;
 
 const mergedByHand = new Set<number>();
+// web#921 merges into the branch of web#517: the list shows it under web#517.
+const STACKED_ON: Record<number, number> = { 921: 517 };
 
 function status(target: PullRequest): PullRequestStatus {
   if (mergedByHand.has(target.number)) return 'merged';
@@ -164,7 +166,17 @@ const fakeGitHub: GitHub = {
   },
   async fetchPullRequest(target) {
     await sleep(300 + Math.random() * 700);
-    return { author: 'octocat', mergeState: 'clean', requested: [], status: status(target), ...state(target) };
+    const parent = STACKED_ON[target.number];
+    return {
+      author: 'octocat',
+      mergeState: 'clean',
+      requested: [],
+      branch: `pr-${target.number}`,
+      base: parent ? `pr-${parent}` : 'main',
+      defaultBranch: 'main',
+      status: status(target),
+      ...state(target),
+    };
   },
   async requestReview(target, request) {
     await sleep(900);
