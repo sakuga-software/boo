@@ -94,6 +94,15 @@ test('a pull request on the default branch is on no pull request whose head is t
   );
 });
 
+test('an open pull request comes before a merged one on the same head branch', () => {
+  const merged = { ...item('web#1', 'a'), left: true };
+  const open = item('web#2', 'a');
+  const child = item('web#3', 'c', 'a');
+  assert.equal(parentFinder([merged, open, child])(child)?.key, 'web#2');
+  assert.equal(parentFinder([open, merged, child])(child)?.key, 'web#2');
+  assert.equal(parentFinder([merged, child])(child)?.key, 'web#1');
+});
+
 test('the parent of a pull request follows the rule of the tree', () => {
   const items = [
     { ...item('web#1', 'feat'), fork: true },

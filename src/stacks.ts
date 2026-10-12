@@ -9,6 +9,8 @@ export interface StackItem {
   base?: string | undefined;
   /** The default branch of the repository. A pull request on it is on no other pull request. */
   defaultBranch?: string | undefined;
+  /** True if the pull request is merged or closed. Its head branch can be in use again by an open one. */
+  left?: boolean | undefined;
 }
 
 export interface Placement {
@@ -35,13 +37,14 @@ const BLANK = '   ';
 /**
  * Returns a function that gives the listed pull request that an item merges into. The two pull
  * requests are in the same repository, and the base of the item is the head branch of the other.
- * A base that is the default branch, and the head branch of a fork, make no stack.
+ * A base that is the default branch, and the head branch of a fork, make no stack. If two pull
+ * requests have one head branch, an open one comes before one that is merged or closed.
  */
 export function parentFinder(items: readonly StackItem[]): (item: StackItem) => StackItem | undefined {
   const byBranch = new Map<string, StackItem>();
   for (const item of items) {
     const id = item.branch && !item.fork && `${item.repo}:${item.branch}`;
-    if (id && !byBranch.has(id)) byBranch.set(id, item);
+    if (id && (!byBranch.has(id) || (byBranch.get(id)!.left && !item.left))) byBranch.set(id, item);
   }
   return (item) => {
     if (!item.base || item.base === item.defaultBranch) return undefined;

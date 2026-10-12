@@ -120,6 +120,7 @@ const stackItemOf = (row: Row): StackItem => ({
   fork: row.fetched?.fork,
   base: row.fetched?.base,
   defaultBranch: row.fetched?.defaultBranch,
+  left: Boolean(row.left),
 });
 
 /** Returns the listed pull request that this one merges into, with the rule of the tree. */
