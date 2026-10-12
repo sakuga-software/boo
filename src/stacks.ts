@@ -80,32 +80,40 @@ export function placeStacks(items: readonly StackItem[]): Placement[] {
     return below.length > 1 || below.some((child) => forks(child, visiting));
   }
 
-  function visit(
-    item: StackItem,
-    depth: number,
-    lines: string,
-    last: boolean,
-    stack: { size: number; linear: boolean },
-  ) {
+  /** Returns the item and the items above it, each before its children, with its depth. */
+  function walk(item: StackItem, depth: number): { item: StackItem; depth: number }[] {
     seen.add(item.key);
     const below = (children.get(item.key) ?? []).filter((child) => !seen.has(child.key));
-    const parent = depth > 0 ? parentOf(item) : undefined;
+    return [{ item, depth }, ...below.flatMap((child) => (seen.has(child.key) ? [] : walk(child, depth + 1)))];
+  }
+
+  // The tree has one level only: all the pull requests above a root show at the same indent.
+  function start(root: StackItem) {
+    const stack = { size: size(root), linear: !forks(root) };
+    const above = walk(root, 0).slice(1);
     placed.push({
-      key: item.key,
-      depth,
-      ...(parent && { parent: parent.key }),
-      lead: depth > 0 ? lines + (last ? LAST_BRANCH : BRANCH) : '',
-      trail: (depth > 0 ? lines + (last ? BLANK : PIPE) : '') + (below.length > 0 ? PIPE : BLANK),
+      key: root.key,
+      depth: 0,
+      lead: '',
+      trail: above.length > 0 ? PIPE : BLANK,
       size: stack.size,
-      ...(stack.linear && { position: depth + 1 }),
+      ...(stack.linear && { position: 1 }),
     });
-    const next = depth > 0 ? lines + (last ? BLANK : PIPE) : '';
-    below.forEach((child, index) => {
-      if (!seen.has(child.key)) visit(child, depth + 1, next, index === below.length - 1, stack);
+    above.forEach(({ item, depth }, index) => {
+      const last = index === above.length - 1;
+      const parent = parentOf(item);
+      placed.push({
+        key: item.key,
+        depth,
+        ...(parent && { parent: parent.key }),
+        lead: last ? LAST_BRANCH : BRANCH,
+        trail: (last ? BLANK : PIPE) + BLANK,
+        size: stack.size,
+        ...(stack.linear && { position: depth + 1 }),
+      });
     });
   }
 
-  const start = (item: StackItem) => visit(item, 0, '', true, { size: size(item), linear: !forks(item) });
   for (const item of items) if (!parentOf(item)) start(item);
   // Two pull requests that merge into each other have no root. They start a tree each.
   for (const item of items) if (!seen.has(item.key)) start(item);

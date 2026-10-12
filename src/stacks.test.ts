@@ -15,7 +15,7 @@ test('a pull request on the default branch stays a root, in its place', () => {
   );
 });
 
-test('a chain shows under its bottom pull request, with its place in the stack', () => {
+test('a chain shows under its bottom pull request at one indent, with its place in the stack', () => {
   const placed = placeStacks([
     item('web#3', 'c', 'b'),
     item('web#9', 'z'),
@@ -35,13 +35,13 @@ test('a chain shows under its bottom pull request, with its place in the stack',
     [
       { key: 'web#9', parent: undefined, depth: 0, lead: '', trail: '   ', size: 1, position: 1 },
       { key: 'web#1', parent: undefined, depth: 0, lead: '', trail: '│  ', size: 3, position: 1 },
-      { key: 'web#2', parent: 'web#1', depth: 1, lead: '└─ ', trail: '   │  ', size: 3, position: 2 },
-      { key: 'web#3', parent: 'web#2', depth: 2, lead: '   └─ ', trail: '         ', size: 3, position: 3 },
+      { key: 'web#2', parent: 'web#1', depth: 1, lead: '├─ ', trail: '│     ', size: 3, position: 2 },
+      { key: 'web#3', parent: 'web#2', depth: 2, lead: '└─ ', trail: '      ', size: 3, position: 3 },
     ],
   );
 });
 
-test('a fork draws a branch for each child and gives no place in the stack', () => {
+test('a fork keeps one indent, each pull request after its parent, and gives no place in the stack', () => {
   const placed = placeStacks([
     item('web#1', 'a'),
     item('web#2', 'b', 'a'),
@@ -52,8 +52,8 @@ test('a fork draws a branch for each child and gives no place in the stack', () 
     placed.map(({ key, lead, trail, size, position }) => ({ key, lead, trail, size, position })),
     [
       { key: 'web#1', lead: '', trail: '│  ', size: 4, position: undefined },
-      { key: 'web#2', lead: '├─ ', trail: '│  │  ', size: 4, position: undefined },
-      { key: 'web#4', lead: '│  └─ ', trail: '│        ', size: 4, position: undefined },
+      { key: 'web#2', lead: '├─ ', trail: '│     ', size: 4, position: undefined },
+      { key: 'web#4', lead: '├─ ', trail: '│     ', size: 4, position: undefined },
       { key: 'web#3', lead: '└─ ', trail: '      ', size: 4, position: undefined },
     ],
   );

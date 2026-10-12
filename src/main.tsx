@@ -44,8 +44,8 @@ const cli = meow(
 
   Stacks
     A pull request that merges into the head branch of another listed pull
-    request shows under it, joined by a line: "on #921 · 2/3" is its place in
-    the stack. A pull request on another base shows that base ("on feat/x").
+    request shows after it, under the bottom of the stack, with one indent and
+    a line: "on #921 · 2/3" is its place in the stack. A pull request on another base shows that base ("on feat/x").
     The settings can turn the grouping off.
 
   Reviewers

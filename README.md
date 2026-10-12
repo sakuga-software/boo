@@ -58,12 +58,14 @@ boo --help              # options, states and marks
 ### Stacks
 
 A pull request is stacked on another if it merges into the head branch of the other, in the same
-repository. The list shows it under that pull request, with a line that joins them:
+repository. The list shows the stack under its bottom pull request, with a line that joins them.
+All the pull requests above the bottom one have the same indent, at each height of the stack, and
+each one comes after the pull request that it merges into:
 
 ```
 ✔  ready to merge     web#921  feat(a)                       stack of 3  ✔ 10/10 checks
-└─ ⟳  reviewing          web#924  feat(b)                 on #921 · 2/3  ✔ 6/6 checks
-   └─ ◷  quota              web#930  feat(c)              on #924 · 3/3  ◌ 2/8 running
+├─ ⟳  reviewing          web#924  feat(b)                 on #921 · 2/3  ✔ 6/6 checks
+└─ ◷  quota              web#930  feat(c)                 on #924 · 3/3  ◌ 2/8 running
 ```
 
 - The bottom pull request shows the size of the stack. Each other one shows the pull request
