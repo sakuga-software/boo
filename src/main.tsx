@@ -82,6 +82,8 @@ const cli = meow(
     ↑ ↓  or  k j    select a pull request; the mouse wheel does it too
     o  or  Enter    open the pull request in the browser
     m               merge the pull request (squash, else merge, else rebase)
+    r               read the list and every pull request again now; only in
+                    the main set, because the bots use r
     h               show or hide the merged, closed and draft pull requests;
                     they are hidden by default
     ,               open the settings: the hidden pull requests, the parts of

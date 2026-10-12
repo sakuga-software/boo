@@ -268,18 +268,20 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
 With `--watch` in a terminal, the tool opens in full screen and takes keys and mouse clicks. The
 counts and the action bar stay at the bottom of the window. Piped or scheduled runs stay as they are.
 
-The action bar has three levels. The main set shows open, merge, the hidden pull requests and the
-settings. `→` or `Space` shows the list of the review bots. The key of a bot opens the menu of that
+The action bar has three levels. The main set shows open, merge, refresh, the hidden pull requests
+and the settings. `→` or `Space` shows the list of the review bots. The key of a bot opens the menu of that
 bot, with its commands. `←` or `Space` goes back one level, and `Esc` goes back to the main set.
 
 A key of a bot or of a command works only at the level that shows it, so two bots can use the same
-key. The keys of the main set work at every level.
+key. The keys of the main set work at every level, except `r`: in the bot levels, `r` belongs to the
+bots.
 
 | Key                | Action                                                                              |
 | ------------------ | ----------------------------------------------------------------------------------- |
 | `↑` `↓` or `k` `j` | select a pull request (the mouse wheel does it too)                                 |
 | `o` or `Enter`     | open the pull request in the browser                                                |
 | `m`                | merge the pull request: squash if the repository allows it, else merge, else rebase |
+| `r`                | read the list and every pull request again now, in the main set only                |
 | `h`                | show or hide the merged, closed and draft pull requests                             |
 | `,`                | open the settings                                                                   |
 | `→` or `Space`     | show the list of the review bots                                                    |

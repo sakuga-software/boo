@@ -195,6 +195,8 @@ interface Confirmation {
 interface PostControls {
   post(pr: PullRequest, request: Request): Promise<void>;
   refresh(pr: PullRequest): Promise<unknown>;
+  /** Stops the wait of the watch loop, and reads the list and every pull request again. */
+  refreshAll(): void;
 }
 
 interface AppProps {
@@ -280,6 +282,8 @@ export function App(props: AppProps) {
   useEffect(() => {
     const abort = new AbortController();
     const { signal } = abort;
+    let refreshAsked = false;
+    let wake = new AbortController();
 
     // A stopped workflow can still end a fetch or a post. Its result must not reach the rows of the next one.
     const update = (pr: PullRequest, patch: Partial<Row>) => {
@@ -397,6 +401,10 @@ export function App(props: AppProps) {
 
     controls.current = {
       refresh,
+      refreshAll: () => {
+        refreshAsked = true;
+        wake.abort();
+      },
       post: (pr, request) =>
         (isCodeRabbit(request) ? exclusive(() => postOnce(pr, request)) : postOnce(pr, request)).catch((error) => {
           if (!signal.aborted) setFlash({ text: `Could not post on ${keyOf(pr)}: ${message(error)}`, color: 'red' });
@@ -486,10 +494,14 @@ export function App(props: AppProps) {
         const watched = tracked().filter((pr) => needsWatch(rowOf(pr), autoPost));
         const delay = nextDelay(watched);
         setNextCheckAt(new Date(Date.now() + delay));
-        await sleep(delay, undefined, { signal });
+        await sleep(delay, undefined, { signal: AbortSignal.any([signal, wake.signal]) }).catch((error) => {
+          if (signal.aborted) throw error;
+        });
+        wake = new AbortController();
         setNextCheckAt(undefined);
 
-        if (Date.now() - listedAt >= timing.listRefreshMs) {
+        if (refreshAsked || Date.now() - listedAt >= timing.listRefreshMs) {
+          refreshAsked = false;
           listedAt = Date.now();
           try {
             await syncList();
@@ -891,6 +903,7 @@ export function App(props: AppProps) {
     }
     if (panelRef.current !== undefined) return;
     if (id === 'h') return toggleHidden();
+    if (id === 'r' && modeRef.current === 'main') return refreshAll();
     if (id === ',') return openPanel(0);
     if (id === 'bots') return switchMode('bots');
     if (id === 'back') return switchMode(parentOf(modeRef.current));
@@ -901,6 +914,12 @@ export function App(props: AppProps) {
     if (bot) return switchMode(bot);
     const action = actionForKey(id, modeRef.current);
     if (action) request(action);
+  }
+
+  function refreshAll() {
+    if (!options.watch) return;
+    setFlash({ text: 'Refreshing the list…', color: 'blue' });
+    controls.current?.refreshAll();
   }
 
   function move(step: number) {
@@ -1750,6 +1769,7 @@ function ActionBar({
   return (
     <Box height={1} overflow="hidden">
       {actionsOf('main').map((action) => button(action, disabledCommands && action.merge))}
+      <Button id="r" hotkey="r" label="refresh" short={short} register={registerButton} />
       <Button id="h" hotkey="h" label={hiddenLabel(revealed, hiddenCount)} short={short} register={registerButton} />
       <Button id="bots" hotkey="→" label="bots" short={short} register={registerButton} />
       <Button id="," hotkey="," label="settings" short={short} register={registerButton} />
