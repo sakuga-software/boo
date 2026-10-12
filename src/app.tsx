@@ -1018,7 +1018,8 @@ export function App(props: AppProps) {
         options,
         stack: stackNote(row),
         coderabbitRetry: coderabbitRetries(),
-        retries: retriesOf(row),
+        // Without --watch, the tool stops before a retry that is due later.
+        retries: options.watch ? retriesOf(row) : [],
       }),
     ]),
   );
