@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { BOTS, mentionProblem, RESERVED_KEYS } from './actions.js';
 
 export const SETTINGS = [
   { key: 'hideMerged', label: 'Hide the merged pull requests', fallback: true },
@@ -16,9 +17,32 @@ export const SETTINGS = [
 ] as const;
 
 export type SettingKey = (typeof SETTINGS)[number]['key'];
+
+/** The switches of one review bot. A missing switch keeps the default of the bot. */
+export interface BotSwitches {
+  enabled?: boolean;
+  autoRetry?: boolean;
+}
+
+/** A review bot that the user adds. Its first command asks for a review. */
+export interface CustomBot {
+  name: string;
+  key: string;
+  logins: string[];
+  /** The mention that starts a command in a comment, for example "@sourcery-ai". */
+  mention?: string;
+  /** The reviewer that `gh pr edit --add-reviewer` takes, in place of a comment. */
+  reviewer?: string;
+  /** With no mention and no reviewer, the bot takes "/command". */
+  commands: string[];
+}
+
 export type Settings = Record<SettingKey, boolean> & {
   /** The authors of the listed pull requests: a login, "@me", or "app/<slug>" for a GitHub App. */
   authors: string[];
+  /** The switches of each review bot, by the id of the bot. */
+  bots: Record<string, BotSwitches>;
+  customBots: CustomBot[];
 };
 
 export const DEFAULT_AUTHORS: readonly string[] = ['@me'];
@@ -26,7 +50,48 @@ export const DEFAULT_AUTHORS: readonly string[] = ['@me'];
 export const DEFAULT_SETTINGS: Settings = {
   ...(Object.fromEntries(SETTINGS.map(({ key, fallback }) => [key, fallback])) as Record<SettingKey, boolean>),
   authors: [...DEFAULT_AUTHORS],
+  bots: {},
+  customBots: [],
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const words = (value: unknown) =>
+  Array.isArray(value)
+    ? value
+        .filter((word): word is string => typeof word === 'string')
+        .map((word) => word.trim())
+        .filter(Boolean)
+    : [];
+
+function parseSwitches(value: unknown): Record<string, BotSwitches> {
+  if (!isRecord(value)) return {};
+  const bots: Record<string, BotSwitches> = {};
+  for (const [id, stored] of Object.entries(value)) {
+    if (!isRecord(stored)) continue;
+    const switches: BotSwitches = {};
+    if (typeof stored.enabled === 'boolean') switches.enabled = stored.enabled;
+    if (typeof stored.autoRetry === 'boolean') switches.autoRetry = stored.autoRetry;
+    bots[id] = switches;
+  }
+  return bots;
+}
+
+/** Reads one custom bot. Returns undefined if a field that the bot needs is missing, or if its key has another use. */
+export function parseCustomBot(value: unknown): CustomBot | undefined {
+  if (!isRecord(value)) return undefined;
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  const key = typeof value.key === 'string' ? value.key : '';
+  const logins = words(value.logins);
+  const commands = words(value.commands);
+  if (!name || !/^[a-z0-9]$/.test(key) || RESERVED_KEYS.has(key) || logins.length === 0 || commands.length === 0)
+    return undefined;
+  const text = (field: unknown) => (typeof field === 'string' && field.trim()) || undefined;
+  const mention = text(value.mention);
+  if (mention && mentionProblem(mention)) return undefined;
+  const reviewer = mention ? undefined : text(value.reviewer);
+  return { name, key, logins, ...(mention && { mention }), ...(reviewer && { reviewer }), commands };
+}
 
 /** Reads a list of authors from any JSON value. Returns undefined if the value is not a list with one author or more. */
 export function parseAuthors(value: unknown): string[] | undefined {
@@ -44,13 +109,25 @@ export function parseAuthors(value: unknown): string[] | undefined {
 
 /** Reads the settings from any JSON value. A missing or invalid value keeps its default. */
 export function parseSettings(value: unknown): Settings {
-  const settings = { ...DEFAULT_SETTINGS, authors: [...DEFAULT_AUTHORS] };
+  const settings: Settings = { ...DEFAULT_SETTINGS, authors: [...DEFAULT_AUTHORS], bots: {}, customBots: [] };
   if (typeof value !== 'object' || value === null) return settings;
   for (const { key } of SETTINGS) {
     const stored = (value as Record<string, unknown>)[key];
     if (typeof stored === 'boolean') settings[key] = stored;
   }
   settings.authors = parseAuthors((value as Record<string, unknown>).authors) ?? settings.authors;
+  settings.bots = parseSwitches((value as Record<string, unknown>).bots);
+  const custom = (value as Record<string, unknown>).customBots;
+  // The id of a custom bot comes from its name, and the bar opens the first bot of a key.
+  // Thus a bot with the name or the key of an earlier bot is dropped.
+  const names = new Set(BOTS.map((bot) => bot.name.toLowerCase()));
+  const keys = new Set(BOTS.map((bot) => bot.key));
+  settings.customBots = (Array.isArray(custom) ? custom.map(parseCustomBot) : []).filter((bot): bot is CustomBot => {
+    if (!bot || names.has(bot.name.toLowerCase()) || keys.has(bot.key)) return false;
+    names.add(bot.name.toLowerCase());
+    keys.add(bot.key);
+    return true;
+  });
   return settings;
 }
 

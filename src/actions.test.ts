@@ -14,6 +14,7 @@ import {
   refusal,
   requestText,
   reselect,
+  RESERVED_KEYS,
   type Mode,
 } from './actions.js';
 
@@ -36,8 +37,8 @@ test('each key maps to one action or one bot at its level', () => {
 });
 
 test('a key of a bot works only in the menu of that bot', () => {
-  assert.equal(actionForKey('r', CODERABBIT)?.request?.bot, CODERABBIT);
-  assert.equal(actionForKey('r', PR_AGENT)?.request?.bot, PR_AGENT);
+  assert.equal(actionForKey('r', CODERABBIT)?.request?.bot.id, CODERABBIT.id);
+  assert.equal(actionForKey('r', PR_AGENT)?.request?.bot.id, PR_AGENT.id);
   assert.equal(actionForKey('a', GREPTILE), undefined);
   assert.equal(actionForKey('r'), undefined);
   assert.equal(actionForKey('r', 'bots'), undefined);
@@ -61,7 +62,7 @@ test('the bot levels show their labels in a terminal of 80 columns', () => {
 });
 
 test('the keys that the list, the prompt, the panel and the main set use are free at the bot levels', () => {
-  const taken = ['j', 'k', 'q', 'h', ',', ' ', 'y', 'n', 'o', 'm'];
+  const taken = [...RESERVED_KEYS];
   assert.deepEqual(
     LEVELS.slice(1)
       .flatMap(keysAt)
