@@ -76,6 +76,8 @@ test('the form refuses a used name, a used or reserved key, no login and a menti
   assert.match(checkBotField(3, '@Copilot', bots)!, /coding agent/);
   assert.equal(checkBotField(3, '/', bots), undefined);
   assert.match(checkBotField(3, '/review', bots)!, /alone/);
+  assert.match(checkBotField(3, '@', bots)!, /with a name/);
+  assert.equal(checkBotField(3, '@sourcery-ai', bots), undefined);
 });
 
 test('the form gives a bot with a mention, a slash command or a review request', () => {
@@ -131,6 +133,8 @@ test('the settings file keeps the valid switches and custom bots, and drops the 
       { ...SOURCERY, name: 'Twin', key: 's' },
       { ...SOURCERY, name: 'Greptile', key: 'y' },
       { ...SOURCERY, name: 'Agent', key: 'x', mention: '@Copilot' },
+      { ...SOURCERY, name: 'Bare', key: 'w', mention: '@' },
+      { ...SOURCERY, name: 'NoAt', key: 'v', mention: 'sourcery-ai' },
       { ...SOURCERY, name: 'Opener', key: 'o' },
       { name: 'NoLogin', key: 'x', logins: [], commands: ['review'] },
       'broken',
