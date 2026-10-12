@@ -53,6 +53,31 @@ boo --help              # options, states and marks
   commit; `⟳` reviewing, with `2/3` if the bot shows its progress; `◷` out of quota, with the
   return time if the notice gives one; `↻` CodeRabbit to retry; `○` requested; `◌` reviewed an
   older commit only (`✔ old` if its approval still stands); `⊘` skipped; `‖` paused.
+- **The place in the stack**, for a pull request that merges into another listed pull request.
+
+### Stacks
+
+A pull request is stacked on another if it merges into the head branch of the other, in the same
+repository. The list shows the stack under its bottom pull request, with a line that joins them.
+All the pull requests above the bottom one have the same indent, at each height of the stack, and
+each one comes after the pull request that it merges into:
+
+```
+✔  ready to merge     web#921  feat(a)                       stack of 3  ✔ 10/10 checks
+├─ ⟳  reviewing          web#924  feat(b)                 on #921 · 2/3  ✔ 6/6 checks
+└─ ◷  quota              web#930  feat(c)                 on #924 · 3/3  ◌ 2/8 running
+```
+
+- The bottom pull request shows the size of the stack. Each other one shows the pull request
+  under it, and its place in the stack if the stack has no fork.
+- A pull request whose base is not the default branch, but no listed pull request, shows that base:
+  `on feat/x`.
+- The details of a stacked pull request give the state of the pull request under it.
+- Before you merge a stacked pull request, the confirmation warns that the merge lands in the
+  branch under it, not in the default branch.
+- If the pull request under it is hidden, such as a merged one, the stacked pull request shows as a
+  root. `h` shows the tree again.
+- A narrow terminal drops the text of the place in the stack, but it keeps the tree lines.
 
 The ghost at the top left asks the terminal for its background color (OSC 11, or `COLORFGBG`) and
 picks colors that read on it. A terminal that does not answer gets colors that read on both.
@@ -62,12 +87,12 @@ protection rule that blocks the merge, and the quota return times.
 
 A narrow terminal shows less of each row, from the least useful part:
 
-| Width             | The row drops                                                |
-| ----------------- | ------------------------------------------------------------ |
-| below 120 columns | the reviewers on head and the review count                   |
-| below 100 columns | the name of the state (the icon stays) and the word "checks" |
-| below 80 columns  | the last reviewer, and the labels of the action bar          |
-| below 60 columns  | the checks                                                   |
+| Width             | The row drops                                                                           |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| below 120 columns | the reviewers on head and the review count                                              |
+| below 100 columns | the name of the state (the icon stays) and the word "checks"                            |
+| below 80 columns  | the last reviewer, the text of the place in the stack, and the labels of the action bar |
+| below 60 columns  | the checks                                                                              |
 
 ## Settings
 
@@ -79,6 +104,8 @@ closes the panel. The tool saves them in `~/.config/boo/settings.json` (or under
 - Show the checks, the reviewers on head and the review count, the last reviewer, the mark of each
   reviewer, and the details of the selected pull request. A narrow terminal can still hide them.
 - Compact rows: no blank line between the pull requests.
+- Show each stacked pull request under the pull request that it merges into. It is on. Off, the list
+  keeps its order, but the details and the merge confirmation still name the pull request under it.
 
 - The authors of the listed pull requests. `Space` or `Enter` on this line starts the change: type
   the authors with a comma between two, then `Enter` saves and `Esc` cancels. The list follows the
@@ -224,7 +251,8 @@ CodeRabbit quota.
 
 Each post and each merge asks for a confirmation: `y` or `Enter` confirms, `n` or `Esc` cancels. Before a merge,
 the confirmation warns about a request for changes, a missing approval, a failing or running check,
-a conflict, a protection rule or a branch behind its base. You can still merge: GitHub enforces the
+a conflict, a protection rule, a branch behind its base, or a base that is not the default branch
+(a stacked pull request). You can still merge: GitHub enforces the
 protection rules anyway. The repository settings decide if GitHub deletes the branch. A click
 selects a row, presses a button of the bar, or changes a line of the settings. The mouse mode takes over text selection: hold Shift or Option, depending on the terminal, to
 select text. A merged or closed pull request accepts only `o`, and `--dry-run` disables every post

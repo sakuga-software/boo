@@ -12,6 +12,7 @@ export const SETTINGS = [
   { key: 'marks', label: 'Show a mark for each reviewer', fallback: true },
   { key: 'details', label: 'Show the details of the selected pull request', fallback: true },
   { key: 'compact', label: 'Compact rows: no blank line between the pull requests', fallback: false },
+  { key: 'stacks', label: 'Show each stacked pull request under the pull request that it merges into', fallback: true },
 ] as const;
 
 export type SettingKey = (typeof SETTINGS)[number]['key'];

@@ -42,6 +42,12 @@ const cli = meow(
                        the pull request left the list; a draft comes back when
                        it is ready for review
 
+  Stacks
+    A pull request that merges into the head branch of another listed pull
+    request shows after it, under the bottom of the stack, with one indent and
+    a line: "on #921 · 2/3" is its place in the stack. A pull request on another base shows that base ("on feat/x").
+    The settings can turn the grouping off.
+
   Reviewers
     A reviewer is a person or a bot that submitted a review, that GitHub asks
     for a review, CodeRabbit if it commented, or PR-Agent if it posted its
@@ -92,8 +98,8 @@ const cli = meow(
   A key of a bot or of a command works only at its level. A narrow terminal hides some parts of a row.
   Each post and each merge asks for a confirmation: y or Enter confirms, n or
   Esc cancels. Before a merge, the confirmation warns about a request for
-  changes, a missing approval, a failing or running check, a conflict or a
-  protection rule. A click selects a row or presses a button. The mouse mode
+  changes, a missing approval, a failing or running check, a conflict, a
+  protection rule, or a base that is not the default branch. A click selects a row or presses a button. The mouse mode
   takes over text selection: hold Shift or Option, depending on the terminal,
   to select text.
 

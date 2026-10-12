@@ -90,6 +90,13 @@ export type PullRequestStatus = 'open' | 'draft' | 'merged' | 'closed';
 export interface PullRequestSnapshot {
   status: PullRequestStatus;
   head: string;
+  /** The head branch. */
+  branch: string;
+  /** True if the head branch is in a fork. */
+  fork: boolean;
+  /** The branch that the pull request merges into. */
+  base: string;
+  defaultBranch: string;
   author: string;
   /** The GitHub mergeable state in lower case: clean, dirty, blocked, unstable, behind, unknown… */
   mergeState: string;
@@ -115,7 +122,8 @@ const VARIABLES = '$owner: String!, $name: String!, $number: Int!';
 const QUERY = `
 query(${VARIABLES}) {
   ${PULL} {
-    state isDraft merged mergeStateStatus headRefOid
+    state isDraft merged mergeStateStatus headRefOid headRefName baseRefName isCrossRepository
+    baseRepository { defaultBranchRef { name } }
     author { login __typename }
     reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
     reviews(last: 100) { ${OLDER} nodes { ${REVIEW_FIELDS} } }
@@ -175,6 +183,10 @@ interface PullRequestNode {
   merged: boolean;
   mergeStateStatus: string;
   headRefOid: string;
+  headRefName: string;
+  baseRefName: string;
+  isCrossRepository: boolean;
+  baseRepository: { defaultBranchRef: { name: string } | null } | null;
   author: Actor | null;
   reviewRequests: { nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[] };
   reviews: Page<ReviewNode>;
@@ -251,6 +263,10 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
   return {
     status: statusOf(pull),
     head: pull.headRefOid,
+    branch: pull.headRefName,
+    fork: pull.isCrossRepository,
+    base: pull.baseRefName,
+    defaultBranch: pull.baseRepository?.defaultBranchRef?.name ?? pull.baseRefName,
     author: loginOf(pull.author) ?? '',
     mergeState: pull.mergeStateStatus.toLowerCase(),
     reviews: pull.reviews.nodes.map(toReview).filter((review) => review !== null),

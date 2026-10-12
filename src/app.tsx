@@ -33,10 +33,11 @@ import {
 } from './decide.js';
 import * as github from './github.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
-import { layoutFor, LABEL_WIDTH, rowHeight, type Layout } from './layout.js';
+import { ICON_WIDTH, layoutFor, LABEL_WIDTH, rowHeight, SELECTION_WIDTH, type Layout } from './layout.js';
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from './mouse.js';
 import { summarize, type Overall, type Reviewer, type ReviewerStatus, type Summary } from './reviewers.js';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
+import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
@@ -103,6 +104,31 @@ export const HEADER_LINES = 4;
 const CHROME_LINES = HEADER_LINES + 8;
 
 const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
+const alone = (key: string): Placement => ({ key, depth: 0, lead: '', trail: ' '.repeat(ICON_WIDTH), size: 1 });
+
+/** Puts the rows in the order of the list. With grouping, each stacked pull request follows the one that it merges into. */
+function arrange(rows: Row[], grouped: boolean): { rows: Row[]; places: Map<string, Placement> } {
+  const byKey = new Map(rows.map((row) => [keyOf(row.pr), row]));
+  const placed = grouped ? placeStacks(rows.map(stackItemOf)) : [...byKey.keys()].map(alone);
+  return { rows: placed.map(({ key }) => byKey.get(key)!), places: new Map(placed.map((place) => [place.key, place])) };
+}
+
+const stackItemOf = (row: Row): StackItem => ({
+  key: keyOf(row.pr),
+  repo: row.pr.repo,
+  branch: row.fetched?.branch,
+  fork: row.fetched?.fork,
+  base: row.fetched?.base,
+  defaultBranch: row.fetched?.defaultBranch,
+  left: Boolean(row.left),
+});
+
+/** Returns the listed pull request that this one merges into, with the rule of the tree. */
+function stackParent(row: Row, rows: Iterable<Row>): Row | undefined {
+  const byKey = new Map([...rows].map((other) => [keyOf(other.pr), other]));
+  const parent = parentFinder([...byKey.values()].map(stackItemOf))(stackItemOf(row));
+  return parent && byKey.get(parent.key);
+}
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const isHidden = (row: Row, settings: Settings, revealed: boolean) =>
   Boolean(row.left) && !revealed && settings[HIDING_SETTING[row.left!]];
@@ -454,7 +480,10 @@ export function App(props: AppProps) {
   }, [done]);
 
   const allKeys = rows?.map((row) => keyOf(row.pr)) ?? [];
-  const shownRows = (rows ?? []).filter((row) => !isHidden(row, settings, revealed));
+  const { rows: shownRows, places } = arrange(
+    (rows ?? []).filter((row) => !isHidden(row, settings, revealed)),
+    settings.stacks,
+  );
   const keys = shownRows.map((row) => keyOf(row.pr));
   const selection = reselect(allKeys, keys, selected);
   const hiddenCount = allKeys.length - keys.length;
@@ -464,9 +493,8 @@ export function App(props: AppProps) {
   function live() {
     const all = [...rowsRef.current.values()];
     const everyKey = all.map((row) => keyOf(row.pr));
-    const shownKeys = all
-      .filter((row) => !isHidden(row, settingsRef.current, revealedRef.current))
-      .map((row) => keyOf(row.pr));
+    const shown = all.filter((row) => !isHidden(row, settingsRef.current, revealedRef.current));
+    const shownKeys = arrange(shown, settingsRef.current.stacks).rows.map((row) => keyOf(row.pr));
     return { shownKeys, key: reselect(everyKey, shownKeys, selectedRef.current) };
   }
 
@@ -600,6 +628,15 @@ export function App(props: AppProps) {
       warnings.push(`${row.summary.checks.pending} running check${row.summary.checks.pending === 1 ? '' : 's'}`);
     const state = MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'];
     if (state) warnings.push(state);
+    const base = row.fetched?.base;
+    if (base && base !== row.fetched?.defaultBranch) {
+      const parent = stackParent(row, rowsRef.current.values());
+      warnings.push(
+        parent && !parent.left
+          ? `stacked on ${keyOf(parent.pr)}, which is still open: the merge lands in ${base}`
+          : `the merge lands in ${base}, not in ${row.fetched!.defaultBranch}`,
+      );
+    }
     return warnings.length > 0 ? `Warning: ${warnings.join(', ')}.` : undefined;
   }
 
@@ -831,7 +868,11 @@ export function App(props: AppProps) {
 
   const clock = options.watch ? now : new Date();
   const selectedIndex = selection ? keys.indexOf(selection) : 0;
-  const views = new Map(shownRows.map((row) => [row, describe(row, clock, options)]));
+  const stackNote = (row: Row) => {
+    const parent = stackParent(row, rowsRef.current.values());
+    return parent && stackDetail(row, parent, describe(parent, clock, options), options);
+  };
+  const views = new Map(shownRows.map((row) => [row, describe(row, clock, options, stackNote(row))]));
   // In a terminal, only the selected row shows its details. A piped run shows them all.
   const expanded = (row: Row) => !options.interactive || keyOf(row.pr) === selection;
   const layout = layoutFor(columns, settings, options.interactive);
@@ -901,6 +942,8 @@ export function App(props: AppProps) {
               view={views.get(row)!}
               options={options}
               layout={layout}
+              place={places.get(keyOf(row.pr))!}
+              hint={stackHint(row, places.get(keyOf(row.pr))!, rowsRef.current)}
               now={clock}
               expanded={expanded(row)}
               selected={options.interactive && keyOf(row.pr) === selection}
@@ -1075,10 +1118,11 @@ function coderabbitDetail(decision: Decision | undefined, now: Date, options: Op
   }
 }
 
-function details(row: Row, now: Date, options: Options): string | undefined {
+function details(row: Row, now: Date, options: Options, stack?: string): string | undefined {
   const summary = row.summary;
-  if (!summary) return undefined;
+  if (!summary) return stack;
   const parts = [
+    stack,
     summary.checks.failed.length > 0 && `failing: ${summary.checks.failed.join(', ')}`,
     summary.checks.pending > 0 && `${summary.checks.pending} check${summary.checks.pending === 1 ? '' : 's'} running`,
     MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
@@ -1093,7 +1137,7 @@ function details(row: Row, now: Date, options: Options): string | undefined {
   return parts.length > 0 ? parts.join(' · ') : undefined;
 }
 
-function describe(row: Row, now: Date, options: Options): View {
+function describe(row: Row, now: Date, options: Options, stack?: string): View {
   if (typeof row.activity === 'object') {
     const request = row.activity.posting;
     return {
@@ -1105,10 +1149,30 @@ function describe(row: Row, now: Date, options: Options): View {
   }
   if (row.left) return LEFT_VIEWS[row.left];
   if (row.error) return { icon: <Text color="red">✖</Text>, label: 'error', color: 'red', detail: row.error };
-  if (!row.summary) return { icon: spinner('gray'), label: 'checking', color: 'gray' };
+  if (!row.summary) return { icon: spinner('gray'), label: 'checking', color: 'gray', ...(stack && { detail: stack }) };
   const { icon, ...view } = OVERALL_VIEWS[row.summary.overall];
-  const detail = details(row, now, options);
+  const detail = details(row, now, options, stack);
   return { ...view, icon: icon(), ...(detail && { detail }) };
+}
+
+const shortName = (pr: PullRequest, options: Options) =>
+  options.org && pr.repo.startsWith(`${options.org}/`) ? pr.repo.slice(options.org.length + 1) : pr.repo;
+
+function stackDetail(row: Row, parent: Row, parentView: View, options: Options): string {
+  const name = `${shortName(parent.pr, options)}#${parent.pr.number}`;
+  if (parent.left) return `stacked on ${name}, ${parent.left}: the base is still ${row.fetched!.base}`;
+  return `stacked on ${name} (${parentView.label}): merge it first`;
+}
+
+/** The place of the pull request in its stack, or the base branch if it is not the default branch. */
+function stackHint(row: Row, place: Placement, rows: Map<string, Row>): string | undefined {
+  if (place.parent) {
+    const parent = rows.get(place.parent)!;
+    return `on #${parent.pr.number}${place.position ? ` · ${place.position}/${place.size}` : ''}`;
+  }
+  if (place.size > 1) return `stack of ${place.size}`;
+  const fetched = row.fetched;
+  return fetched && fetched.base !== fetched.defaultBranch ? `on ${fetched.base}` : undefined;
 }
 
 const CHIPS: Record<ReviewerStatus, { icon: string; color: string }> = {
@@ -1194,6 +1258,8 @@ interface RowViewProps {
   view: View;
   options: Options;
   layout: Layout;
+  place: Placement;
+  hint: string | undefined;
   now: Date;
   expanded: boolean;
   selected: boolean;
@@ -1204,22 +1270,56 @@ function lastReviewText(summary: Summary, now: Date): string {
   return summary.reviewers.length === 0 ? 'no reviewer yet' : 'no review yet';
 }
 
-function RowView({ ref, row, view, options, layout, now, expanded, selected }: RowViewProps) {
-  const name =
-    options.org && row.pr.repo.startsWith(`${options.org}/`) ? row.pr.repo.slice(options.org.length + 1) : row.pr.repo;
-  const { indent } = layout;
+// The lines under a row draw the tree of the stack under the icon, then start at the column of the state name.
+function Under({
+  before,
+  trail,
+  rest,
+  children,
+}: {
+  before: number;
+  trail: string;
+  rest: number;
+  children: ReactNode;
+}) {
+  return (
+    <Box>
+      <Box width={before} flexShrink={0} />
+      <Text dimColor>{trail}</Text>
+      <Box paddingLeft={rest} flexShrink={1} overflow="hidden">
+        {children}
+      </Box>
+    </Box>
+  );
+}
+
+function RowView({ ref, row, view, options, layout, place, hint, now, expanded, selected }: RowViewProps) {
+  const name = shortName(row.pr, options);
+  const before = options.interactive ? SELECTION_WIDTH : 0;
+  const rest = layout.indent - before - ICON_WIDTH;
+  const under = (children: ReactNode) => (
+    <Under before={before} trail={place.trail} rest={rest}>
+      {children}
+    </Under>
+  );
+  const gap = `${' '.repeat(before)}${place.trail.trimEnd()}` || ' ';
   const summary = row.summary;
   return (
-    <Box ref={ref} flexDirection="column" marginBottom={layout.gap}>
+    <Box ref={ref} flexDirection="column">
       <Box>
         {options.interactive && (
-          <Box width={2} flexShrink={0}>
+          <Box width={SELECTION_WIDTH} flexShrink={0}>
             <Text color={BRAND} bold>
               {selected ? '❯' : ' '}
             </Text>
           </Box>
         )}
-        <Box width={3} flexShrink={0}>
+        {place.lead && (
+          <Box flexShrink={0}>
+            <Text dimColor>{place.lead}</Text>
+          </Box>
+        )}
+        <Box width={ICON_WIDTH} flexShrink={0}>
           {view.icon}
         </Box>
         {layout.label && (
@@ -1237,6 +1337,13 @@ function RowView({ ref, row, view, options, layout, now, expanded, selected }: R
         <Box flexGrow={1} flexShrink={1}>
           <Text wrap="truncate-end">{row.pr.title}</Text>
         </Box>
+        {layout.stack && hint && (
+          <Box flexShrink={0} marginLeft={2}>
+            <Text color="magenta" dimColor>
+              {hint}
+            </Text>
+          </Box>
+        )}
         {summary && !row.left && (layout.checks || layout.counts) && (
           <Box flexShrink={0} marginLeft={2}>
             {layout.checks && <ChecksBadge summary={summary} short={layout.shortChecks} />}
@@ -1250,36 +1357,43 @@ function RowView({ ref, row, view, options, layout, now, expanded, selected }: R
           </Box>
         )}
       </Box>
-      {summary && (layout.lastReview || layout.marks) && (
-        <Box paddingLeft={indent}>
-          {layout.lastReview && (
-            <Box flexShrink={0} marginRight={2}>
-              <Text dimColor>{lastReviewText(summary, now)}</Text>
-            </Box>
-          )}
-          {layout.marks && (
-            <Box flexShrink={1} overflow="hidden">
-              {summary.reviewers.map((reviewer) => (
-                <ReviewerChip key={reviewer.login} reviewer={reviewer} />
-              ))}
-            </Box>
-          )}
-        </Box>
-      )}
-      {expanded && layout.details && view.detail && (
-        <Box paddingLeft={indent}>
+      {summary &&
+        (layout.lastReview || layout.marks) &&
+        under(
+          <>
+            {layout.lastReview && (
+              <Box flexShrink={0} marginRight={2}>
+                <Text dimColor>{lastReviewText(summary, now)}</Text>
+              </Box>
+            )}
+            {layout.marks && (
+              <Box flexShrink={1} overflow="hidden">
+                {summary.reviewers.map((reviewer) => (
+                  <ReviewerChip key={reviewer.login} reviewer={reviewer} />
+                ))}
+              </Box>
+            )}
+          </>,
+        )}
+      {expanded &&
+        layout.details &&
+        view.detail &&
+        under(
           <Text dimColor wrap="truncate-end">
             {view.detail}
-          </Text>
-        </Box>
-      )}
-      {row.posted && (
-        <Box paddingLeft={indent}>
+          </Text>,
+        )}
+      {row.posted &&
+        under(
           <Text color="green" wrap="truncate-end">
             ↻ {requestText(row.posted.request)} → {row.posted.url}
-          </Text>
-        </Box>
-      )}
+          </Text>,
+        )}
+      {Array.from({ length: layout.gap }, (_, line) => (
+        <Text key={line} dimColor>
+          {gap}
+        </Text>
+      ))}
     </Box>
   );
 }
