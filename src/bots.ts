@@ -1,4 +1,12 @@
-import { BOTS, CODERABBIT, isReviewerOf, RESERVED_KEYS, type Bot, type BotCommand } from './actions.js';
+import {
+  BOTS,
+  CODERABBIT,
+  isReviewerOf,
+  RESERVED_KEYS,
+  startsCodingAgent,
+  type Bot,
+  type BotCommand,
+} from './actions.js';
 import type { Reviewer } from './reviewers.js';
 import type { CustomBot, Settings } from './settings.js';
 
@@ -103,9 +111,7 @@ export function checkBotField(step: number, text: string, bots: readonly Bot[]):
       return list(value).length === 0 ? 'The bot needs one login or more.' : undefined;
     case 3:
       if (!value) return 'Type @mention, / or a login.';
-      // A mention of @copilot starts the Copilot coding agent, which pushes commits.
-      if (value.toLowerCase() === '@copilot')
-        return 'A mention of @copilot starts its coding agent: use the Copilot bot.';
+      if (startsCodingAgent(value)) return 'A mention of @copilot starts its coding agent: use the Copilot bot.';
       if (value.startsWith('/') && value !== '/') return 'Type / alone: the commands come in the next field.';
       return /\s/.test(value) ? 'Type one word.' : undefined;
     default:

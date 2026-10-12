@@ -98,6 +98,9 @@ export const BOTS: readonly Bot[] = [CODERABBIT, GREPTILE, COPILOT, PR_AGENT];
  */
 export const RESERVED_KEYS: ReadonlySet<string> = new Set(['j', 'k', 'q', 'h', ',', ' ', 'y', 'n', 'o', 'm']);
 
+/** A mention of @copilot starts the Copilot coding agent, which pushes commits. */
+export const startsCodingAgent = (mention: string) => mention.trim().toLowerCase() === '@copilot';
+
 /** Returns the actions that the bar shows at a level. The list of bots shows bots, not actions. A key belongs to the menu of one bot. */
 export function actionsOf(mode: Mode): readonly Action[] {
   if (mode === 'main') return MAIN_ACTIONS;

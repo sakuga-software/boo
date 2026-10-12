@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { BOTS, RESERVED_KEYS } from './actions.js';
+import { BOTS, RESERVED_KEYS, startsCodingAgent } from './actions.js';
 
 export const SETTINGS = [
   { key: 'hideMerged', label: 'Hide the merged pull requests', fallback: true },
@@ -88,6 +88,7 @@ export function parseCustomBot(value: unknown): CustomBot | undefined {
     return undefined;
   const text = (field: unknown) => (typeof field === 'string' && field.trim()) || undefined;
   const mention = text(value.mention);
+  if (mention && startsCodingAgent(mention)) return undefined;
   const reviewer = mention ? undefined : text(value.reviewer);
   return { name, key, logins, ...(mention && { mention }), ...(reviewer && { reviewer }), commands };
 }

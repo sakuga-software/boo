@@ -120,6 +120,7 @@ test('the settings file keeps the valid switches and custom bots, and drops the 
       { ...SOURCERY, name: 'Clash', key: 'g' },
       { ...SOURCERY, name: 'Twin', key: 's' },
       { ...SOURCERY, name: 'Greptile', key: 'y' },
+      { ...SOURCERY, name: 'Agent', key: 'x', mention: '@Copilot' },
       { ...SOURCERY, name: 'Opener', key: 'o' },
       { name: 'NoLogin', key: 'x', logins: [], commands: ['review'] },
       'broken',
