@@ -39,6 +39,8 @@ export interface Reviewer {
   lastReviewAt?: Date;
   /** The time when the quota of the reviewer comes back, if a notice gives it. */
   until?: Date;
+  /** The time of the quota refusal that gives the "quota" status. */
+  refusedAt?: Date;
   progress?: { done: number; total: number };
   /** The reviewer is a PR-Agent install. Its review is a comment, so its status never counts as a GitHub verdict. */
   prAgent?: true;
@@ -153,7 +155,7 @@ function genericReviewer(login: string, facts: PullRequestFacts): Reviewer {
   if (real.some((review) => review.commit_id === facts.head)) return { ...base, status: reviewVerdict(real) };
   if (lastRefusal && (!last || time(last.submitted_at) < time(lastRefusal.submitted_at))) {
     const until = quotaUntil(lastRefusal, facts.comments);
-    return { ...base, status: 'quota', ...(until && { until }) };
+    return { ...base, status: 'quota', refusedAt: new Date(lastRefusal.submitted_at), ...(until && { until }) };
   }
   if (facts.requested.includes(login)) return { ...base, status: 'requested' };
   return { ...base, status: 'stale' };

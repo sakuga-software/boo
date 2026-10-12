@@ -84,7 +84,9 @@ const cli = meow(
     h               show or hide the merged, closed and draft pull requests;
                     they are hidden by default
     ,               open the settings: the hidden pull requests, the parts of
-                    a row and the authors; saved in ${settingsPath().replace(homedir(), '~')}
+                    a row, the authors and the review bots (on or off,
+                    automatic retry, bots of your own); saved in
+                    ${settingsPath().replace(homedir(), '~')}
     →  or  space    show the list of the review bots
     ←  or  space    go back one level; Esc goes back to the main set
     In the list of the review bots, a key opens the menu of a bot:

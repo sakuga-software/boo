@@ -5,8 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   actionForKey,
   actionsOf,
-  BOT_BAR_WIDTH,
-  BOTS,
+  botBarWidth,
   CODERABBIT,
   isAbsent,
   isCodeRabbit,
@@ -16,6 +15,7 @@ import {
   requestText,
   reselect,
   type Action,
+  type Bot,
   type Mode,
   type Request,
   type ReviewerRef,
@@ -31,6 +31,17 @@ import {
   type QuotaSignal,
   type QuotaSource,
 } from './decide.js';
+import {
+  activeBots,
+  allBots,
+  BOT_FIELDS,
+  checkBotField,
+  customBotOf,
+  isEnabled,
+  plannedRetries,
+  retriesOn,
+  type Retry,
+} from './bots.js';
 import * as github from './github.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { ICON_WIDTH, layoutFor, LABEL_WIDTH, rowHeight, SELECTION_WIDTH, type Layout } from './layout.js';
@@ -138,7 +149,8 @@ const inProgress = (row: Row) =>
   Boolean(row.summary?.checks.pending) ||
   Boolean(row.summary?.reviewers.some((reviewer) => reviewer.status === 'reviewing'));
 
-function needsWatch(row: Row, dryRun: boolean): boolean {
+/** `autoPost`: the tool can post a CodeRabbit retry. */
+function needsWatch(row: Row, autoPost: boolean): boolean {
   if (row.left) return false;
   if (row.error || inProgress(row)) return true;
   switch (row.decision?.kind) {
@@ -147,7 +159,7 @@ function needsWatch(row: Row, dryRun: boolean): boolean {
     case 'wait':
       return true;
     case 'trigger':
-      return !dryRun;
+      return autoPost;
     default:
       return false;
   }
@@ -233,6 +245,11 @@ export function App(props: AppProps) {
   const [authorsDraft, setAuthorsDraft] = useState<string>();
   const authorsDraftRef = useRef<string>(undefined);
   const checkingAuthors = useRef(false);
+  // The form that adds a review bot: the fields typed so far, and the text of the current field.
+  const [botDraft, setBotDraft] = useState<BotDraft>();
+  const botDraftRef = useRef<BotDraft>(undefined);
+  // The retries of the other bots that the tool posted, one for each refusal. It outlives a new list of authors.
+  const retried = useRef(new Set<string>());
   // These two outlive a new list of authors, which starts the workflow again: the repost guard and the
   // queue of the CodeRabbit posts must still hold for a post that the earlier workflow sent.
   const lastPosts = useRef(new Map<string, { at: number; before: Comment[] }>());
@@ -247,6 +264,15 @@ export function App(props: AppProps) {
   const rowNodes = useRef(new Map<string, DOMElement>());
   const buttonNodes = useRef(new Map<string, DOMElement>());
   const scrollStart = useRef(0);
+
+  const coderabbitRetries = () =>
+    isEnabled(settingsRef.current, CODERABBIT) && retriesOn(settingsRef.current, CODERABBIT);
+  const retriesOf = (row: Row): Retry[] =>
+    !row.summary || row.left || options.dryRun
+      ? []
+      : plannedRetries(row.summary.reviewers, activeBots(settingsRef.current), settingsRef.current).filter(
+          (retry) => !retried.current.has(retryKey(row.pr, retry)),
+        );
 
   useEffect(() => {
     const abort = new AbortController();
@@ -382,7 +408,7 @@ export function App(props: AppProps) {
     }
 
     async function triggerReady(prs: PullRequest[]) {
-      if (options.dryRun) return;
+      if (options.dryRun || !coderabbitRetries()) return;
       for (const pr of prs) {
         await exclusive(async () => {
           const row = rowOf(pr);
@@ -394,11 +420,31 @@ export function App(props: AppProps) {
       }
     }
 
-    function nextDelay(prs: PullRequest[]): number {
-      const ends = prs
+    // The other bots do not share the CodeRabbit quota, so their retries skip its queue.
+    async function retryOthers(prs: PullRequest[]) {
+      await Promise.all(
+        prs.map(async (pr) => {
+          const row = rowOf(pr);
+          if (row.error) return;
+          for (const retry of retriesOf(row).filter(({ at }) => at.getTime() <= Date.now())) {
+            retried.current.add(retryKey(pr, retry));
+            if (await send(pr, { bot: retry.bot, command: retry.bot.commands[0]!.command })) {
+              setTriggered((count) => count + 1);
+              void refresh(pr);
+            }
+          }
+        }),
+      );
+    }
+
+    // A retry of another bot needs no new fetch: the loop only wakes up at its time.
+    function nextDelay(watched: PullRequest[]): number {
+      const waits = watched
         .map((pr) => rowOf(pr).decision)
         .filter((decision) => decision?.kind === 'wait')
-        .map((decision) => decision.availableAt.getTime() + 2_000 - Date.now());
+        .map((decision) => decision.availableAt.getTime());
+      const retries = tracked().flatMap((pr) => retriesOf(rowOf(pr)).map(({ at }) => at.getTime()));
+      const ends = [...waits, ...retries].map((end) => end + 2_000 - Date.now());
       return Math.max(1_000, Math.min(timing.watchPollMs, ...ends));
     }
 
@@ -422,11 +468,13 @@ export function App(props: AppProps) {
     async function run() {
       await syncList();
       await triggerReady(tracked());
+      await retryOthers(tracked());
       if (!options.watch) return;
 
       let listedAt = Date.now();
       while (true) {
-        const watched = tracked().filter((pr) => needsWatch(rowOf(pr), options.dryRun));
+        const autoPost = !options.dryRun && coderabbitRetries();
+        const watched = tracked().filter((pr) => needsWatch(rowOf(pr), autoPost));
         const delay = nextDelay(watched);
         setNextCheckAt(new Date(Date.now() + delay));
         await sleep(delay, undefined, { signal });
@@ -444,7 +492,7 @@ export function App(props: AppProps) {
           // or someone approves a pull request that waits for the quota. The loop below refreshes the others.
           const quiet = tracked().filter((pr) => {
             const row = rowOf(pr);
-            return !row.left && !inProgress(row) && (!needsWatch(row, options.dryRun) || row.decision?.kind === 'wait');
+            return !row.left && !inProgress(row) && (!needsWatch(row, autoPost) || row.decision?.kind === 'wait');
           });
           await Promise.all(quiet.map(refresh));
         }
@@ -456,6 +504,7 @@ export function App(props: AppProps) {
         });
         await Promise.all(due.map(refresh));
         await triggerReady(tracked());
+        await retryOthers(tracked());
       }
     }
 
@@ -543,6 +592,12 @@ export function App(props: AppProps) {
   function store(next: Settings) {
     settingsRef.current = next;
     setSettings(next);
+    // The menu of a bot that the change turns off or deletes closes. Another menu takes the new version of its bot.
+    const mode = modeRef.current;
+    if (mode !== 'main' && mode !== 'bots') {
+      const bot = activeBots(next).find((candidate) => candidate.id === mode.id);
+      switchMode(bot ?? 'bots');
+    }
     saveSettings?.(next).catch((error) =>
       setFlash({ text: `Could not save the settings: ${message(error)}`, color: 'red' }),
     );
@@ -587,6 +642,57 @@ export function App(props: AppProps) {
     setAuthors(next);
   }
 
+  const typing = () => authorsDraftRef.current !== undefined || botDraftRef.current !== undefined;
+
+  function draftBot(next: BotDraft | undefined) {
+    botDraftRef.current = next;
+    setBotDraft(next);
+  }
+
+  function typeBotKey(char: string) {
+    const draft = botDraftRef.current!;
+    if (char === '\u001B') {
+      draftBot(undefined);
+      return setFlash({ text: 'Cancelled.', color: 'gray' });
+    }
+    if (char === BACKSPACE) return draftBot({ ...draft, text: draft.text.slice(0, -1) });
+    if (char !== '\r') return char >= ' ' ? draftBot({ ...draft, text: draft.text + char }) : undefined;
+    const error = checkBotField(draft.values.length, draft.text, allBots(settingsRef.current));
+    if (error) return setFlash({ text: error, color: 'yellow' });
+    const values = [...draft.values, draft.text];
+    // A review request has no command text, so the form skips the commands.
+    const request = values[3]?.trim();
+    const complete =
+      values.length === BOT_FIELDS.length || (values.length === 4 && !request!.startsWith('@') && request !== '/');
+    if (!complete) {
+      setFlash(undefined);
+      return draftBot({ values, text: '' });
+    }
+    const bot = customBotOf(values);
+    draftBot(undefined);
+    store({ ...settingsRef.current, customBots: [...settingsRef.current.customBots, bot] });
+    setFlash({ text: `Added ${bot.name}: → then ${bot.key} opens its menu.`, color: 'green' });
+  }
+
+  function switchBot(bot: Bot, change: 'enabled' | 'autoRetry') {
+    const current = settingsRef.current;
+    const value = change === 'enabled' ? isEnabled(current, bot) : retriesOn(current, bot);
+    store({ ...current, bots: { ...current.bots, [bot.id]: { ...current.bots[bot.id], [change]: !value } } });
+  }
+
+  function deleteBot(bot: Bot) {
+    if (!bot.custom) return setFlash({ text: `${bot.name} is a known bot: space turns it off.`, color: 'yellow' });
+    const current = settingsRef.current;
+    const { [bot.id]: _removed, ...bots } = current.bots;
+    store({
+      ...current,
+      bots,
+      customBots: current.customBots.filter((custom) => custom.name !== bot.name),
+    });
+    openPanel(Math.min(panelRef.current ?? 0, lastPanelLine(settingsRef.current)));
+    setFlash({ text: `Deleted ${bot.name}.`, color: 'gray' });
+  }
+
   function typeAuthorsKey(char: string) {
     if (checkingAuthors.current) return;
     const draft = authorsDraftRef.current ?? '';
@@ -598,18 +704,24 @@ export function App(props: AppProps) {
 
   function typePanelKey(char: string) {
     if (authorsDraftRef.current !== undefined) return typeAuthorsKey(char);
+    if (botDraftRef.current !== undefined) return typeBotKey(char);
     const line = panelRef.current ?? 0;
+    const bot = allBots(settingsRef.current)[line - FIRST_BOT_LINE];
+    const change = char === ' ' || char === '\r';
     if (char === 'k') openPanel(Math.max(0, line - 1));
-    else if (char === 'j') openPanel(Math.min(AUTHORS_LINE, line + 1));
-    else if ((char === ' ' || char === '\r') && line === AUTHORS_LINE)
-      draftAuthors(settingsRef.current.authors.join(', '));
-    else if (char === ' ' || char === '\r') toggleSetting(SETTINGS[line]!.key);
+    else if (char === 'j') openPanel(Math.min(lastPanelLine(settingsRef.current), line + 1));
+    else if (change && line === AUTHORS_LINE) draftAuthors(settingsRef.current.authors.join(', '));
+    else if (change && line === lastPanelLine(settingsRef.current)) draftBot({ values: [], text: '' });
+    else if (bot && change) switchBot(bot, 'enabled');
+    else if (bot && char === 'a') switchBot(bot, 'autoRetry');
+    else if (bot && char === 'd') deleteBot(bot);
+    else if (change) toggleSetting(SETTINGS[line]!.key);
     else if (char === ',' || char === 'q' || char === '\u001B') openPanel(undefined);
   }
 
   // An arrow or the mouse wheel moves the selection. In the authors line, it must not type a letter.
   function step(direction: 'k' | 'j') {
-    if (confirmationRef.current || authorsDraftRef.current !== undefined) return;
+    if (confirmationRef.current || typing()) return;
     typeKey(direction);
   }
 
@@ -744,12 +856,26 @@ export function App(props: AppProps) {
     if (id === 'yes' || id === 'no') return answer(id === 'yes');
     if (confirmationRef.current) return;
     if (id === 'setting:authors') {
+      if (botDraftRef.current !== undefined) return;
       openPanel(AUTHORS_LINE);
       if (authorsDraftRef.current === undefined) draftAuthors(settingsRef.current.authors.join(', '));
       return;
     }
+    if (id === 'bot:add') {
+      if (typing()) return;
+      openPanel(lastPanelLine(settingsRef.current));
+      return draftBot({ values: [], text: '' });
+    }
+    if (id.startsWith('bot:') || id.startsWith('retry:')) {
+      if (typing()) return;
+      const bots = allBots(settingsRef.current);
+      const bot = bots.find((candidate) => id === `bot:${candidate.id}` || id === `retry:${candidate.id}`);
+      if (!bot) return;
+      openPanel(FIRST_BOT_LINE + bots.indexOf(bot));
+      return switchBot(bot, id.startsWith('bot:') ? 'enabled' : 'autoRetry');
+    }
     if (id.startsWith('setting:')) {
-      if (authorsDraftRef.current !== undefined) return;
+      if (typing()) return;
       const key = id.slice('setting:'.length) as SettingKey;
       openPanel(SETTINGS.findIndex((setting) => setting.key === key));
       return toggleSetting(key);
@@ -759,7 +885,10 @@ export function App(props: AppProps) {
     if (id === ',') return openPanel(0);
     if (id === 'bots') return switchMode('bots');
     if (id === 'back') return switchMode(parentOf(modeRef.current));
-    const bot = modeRef.current === 'bots' ? BOTS.find((candidate) => candidate.key === id) : undefined;
+    const bot =
+      modeRef.current === 'bots'
+        ? activeBots(settingsRef.current).find((candidate) => candidate.key === id)
+        : undefined;
     if (bot) return switchMode(bot);
     const action = actionForKey(id, modeRef.current);
     if (action) request(action);
@@ -793,7 +922,7 @@ export function App(props: AppProps) {
       if (input === 'm') return;
       if (key.upArrow) return step('k');
       if (key.downArrow) return step('j');
-      if (authorsDraftRef.current !== undefined) {
+      if (typing()) {
         if (key.backspace || key.delete) return typeKey(BACKSPACE);
         if (key.ctrl || key.meta || key.tab) return;
       }
@@ -820,11 +949,11 @@ export function App(props: AppProps) {
       // The rest of the chunk stops when a key opens or closes a prompt.
       for (const char of input) {
         const hadPrompt = confirmationRef.current !== undefined;
-        const hadDraft = authorsDraftRef.current !== undefined;
+        const hadDraft = typing();
         typeKey(char);
         if (hadPrompt !== (confirmationRef.current !== undefined)) break;
         // The rest of a paste that saved the authors must not run as keys of the panel.
-        if (hadDraft && authorsDraftRef.current === undefined) break;
+        if (hadDraft && !typing()) break;
       }
     },
     { isActive: options.interactive },
@@ -870,9 +999,21 @@ export function App(props: AppProps) {
   const selectedIndex = selection ? keys.indexOf(selection) : 0;
   const stackNote = (row: Row) => {
     const parent = stackParent(row, rowsRef.current.values());
-    return parent && stackDetail(row, parent, describe(parent, clock, options), options);
+    return parent && stackDetail(row, parent, describe(parent, { now: clock, options }), options);
   };
-  const views = new Map(shownRows.map((row) => [row, describe(row, clock, options, stackNote(row))]));
+  const views = new Map(
+    shownRows.map((row) => [
+      row,
+      describe(row, {
+        now: clock,
+        options,
+        stack: stackNote(row),
+        coderabbitRetry: coderabbitRetries(),
+        retries: retriesOf(row),
+      }),
+    ]),
+  );
+  const bots = activeBots(settings);
   // In a terminal, only the selected row shows its details. A piped run shows them all.
   const expanded = (row: Row) => !options.interactive || keyOf(row.pr) === selection;
   const layout = layoutFor(columns, settings, options.interactive);
@@ -924,7 +1065,13 @@ export function App(props: AppProps) {
         </Text>
       )}
       {panel !== undefined && (
-        <SettingsPanel settings={settings} cursor={panel} authorsDraft={authorsDraft} registerButton={registerButton} />
+        <SettingsPanel
+          settings={settings}
+          cursor={panel}
+          authorsDraft={authorsDraft}
+          botDraft={botDraft}
+          registerButton={registerButton}
+        />
       )}
       {rows && rows.length > 0 && panel === undefined && (
         <Box flexDirection="column" marginTop={1}>
@@ -969,9 +1116,10 @@ export function App(props: AppProps) {
           hiddenCount={hiddenCount}
           mode={mode}
           panelOpen={panel !== undefined}
-          editing={authorsDraft !== undefined}
+          editing={editingHint(authorsDraft, botDraft)}
           short={layout.shortBar}
-          shortBots={layout.shortBar || columns - 2 < BOT_BAR_WIDTH}
+          shortBots={layout.shortBar || columns - 2 < botBarWidth(bots)}
+          bots={bots}
           reviewers={selectedRow?.summary?.reviewers}
         />
       )}
@@ -1093,7 +1241,18 @@ const LEFT_VIEWS: Record<LeftStatus, View> = {
   },
 };
 
-function coderabbitDetail(decision: Decision | undefined, now: Date, options: Options): string | undefined {
+interface DescribeContext {
+  now: Date;
+  options: Options;
+  /** The state of the pull request under this one in its stack. */
+  stack?: string | undefined;
+  /** The tool posts the CodeRabbit retries by itself. */
+  coderabbitRetry?: boolean;
+  /** The retries of the other bots that the tool plans. */
+  retries?: readonly Retry[];
+}
+
+function coderabbitDetail(decision: Decision | undefined, { now, options, coderabbitRetry }: DescribeContext) {
   switch (decision?.kind) {
     case 'wait': {
       const remaining = decision.availableAt.getTime() - now.getTime();
@@ -1103,7 +1262,7 @@ function coderabbitDetail(decision: Decision | undefined, now: Date, options: Op
     }
     case 'trigger': {
       const since = formatDuration(now.getTime() - decision.availableAt.getTime(), false);
-      return `CodeRabbit quota back for ${since}${sourceNote(decision.source, options)}${options.dryRun ? ' · dry run, nothing posted' : ', retry queued'}`;
+      return `CodeRabbit quota back for ${since}${sourceNote(decision.source, options)}${retryNote(options, coderabbitRetry)}`;
     }
     case 'pending':
       return `CodeRabbit asked at ${formatTime(decision.requestedAt)}, no reply yet`;
@@ -1118,11 +1277,16 @@ function coderabbitDetail(decision: Decision | undefined, now: Date, options: Op
   }
 }
 
-function details(row: Row, now: Date, options: Options, stack?: string): string | undefined {
+function retryNote(options: Options, retry: boolean | undefined): string {
+  if (options.dryRun) return ' · dry run, nothing posted';
+  return retry ? ', retry queued' : ', automatic retry off';
+}
+
+function details(row: Row, context: DescribeContext): string | undefined {
   const summary = row.summary;
-  if (!summary) return stack;
+  if (!summary) return context.stack;
   const parts = [
-    stack,
+    context.stack,
     summary.checks.failed.length > 0 && `failing: ${summary.checks.failed.join(', ')}`,
     summary.checks.pending > 0 && `${summary.checks.pending} check${summary.checks.pending === 1 ? '' : 's'} running`,
     MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
@@ -1132,12 +1296,14 @@ function details(row: Row, now: Date, options: Options, stack?: string): string 
         (reviewer) =>
           `${reviewer.name} quota ${reviewer.until ? `back at ${formatTime(reviewer.until)}` : 'with no return time'}`,
       ),
-    coderabbitDetail(row.decision, now, options),
+    ...(context.retries ?? []).map(({ bot, at }) => `${bot.name} retry at ${formatTime(at)}`),
+    coderabbitDetail(row.decision, context),
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(' · ') : undefined;
 }
 
-function describe(row: Row, now: Date, options: Options, stack?: string): View {
+function describe(row: Row, context: DescribeContext): View {
+  const { stack } = context;
   if (typeof row.activity === 'object') {
     const request = row.activity.posting;
     return {
@@ -1151,7 +1317,7 @@ function describe(row: Row, now: Date, options: Options, stack?: string): View {
   if (row.error) return { icon: <Text color="red">✖</Text>, label: 'error', color: 'red', detail: row.error };
   if (!row.summary) return { icon: spinner('gray'), label: 'checking', color: 'gray', ...(stack && { detail: stack }) };
   const { icon, ...view } = OVERALL_VIEWS[row.summary.overall];
-  const detail = details(row, now, options, stack);
+  const detail = details(row, context);
   return { ...view, icon: icon(), ...(detail && { detail }) };
 }
 
@@ -1428,7 +1594,7 @@ function Footer({ rows, triggered, done, listError, options }: FooterProps) {
       OVERALL_VIEWS[overall].label,
       OVERALL_VIEWS[overall].color,
     ]),
-    [triggered, 'CodeRabbit retried', 'blue'],
+    [triggered, 'retried', 'blue'],
     [countLeft('merged'), 'merged', 'magenta'],
     [countLeft('closed'), 'closed', 'red'],
     [countLeft('draft'), 'draft', 'gray'],
@@ -1473,13 +1639,15 @@ interface ControlsProps {
   hiddenCount: number;
   mode: Mode;
   panelOpen: boolean;
-  /** The user changes the authors line of the settings panel. */
-  editing: boolean;
+  /** The hint of the line that the user types in the settings panel. Undefined: the user types nothing. */
+  editing: string | undefined;
   /** Show the keys only, for a narrow terminal. */
   short: boolean;
   shortBots: boolean;
   /** The reviewers of the selected pull request. */
   reviewers?: readonly ReviewerRef[] | undefined;
+  /** The bots that the settings turn on. */
+  bots: readonly Bot[];
 }
 
 interface ButtonProps {
@@ -1527,6 +1695,7 @@ function ActionBar({
   short: shortMain,
   shortBots,
   reviewers,
+  bots,
 }: ControlsProps) {
   const short = mode === 'main' ? shortMain : shortBots;
   const button = (action: Action, dim?: boolean) => (
@@ -1543,7 +1712,7 @@ function ActionBar({
   if (mode === 'bots') {
     return (
       <Box height={1} overflow="hidden">
-        {BOTS.map((bot) => (
+        {bots.map((bot) => (
           <Button
             key={bot.name}
             id={bot.key}
@@ -1611,9 +1780,7 @@ function Controls(props: ControlsProps) {
         <>
           {panelOpen ? (
             <Text dimColor wrap="truncate-end">
-              {editing
-                ? 'type the authors, with a comma between two · ⏎ save · esc cancel'
-                : '↑↓ choose · space or ⏎ change · , or esc close'}
+              {editing ?? '↑↓ choose · space or ⏎ change · a automatic retry · d delete a bot · , or esc close'}
             </Text>
           ) : (
             <ActionBar {...props} />
@@ -1628,16 +1795,55 @@ function Controls(props: ControlsProps) {
 }
 
 const AUTHORS_LINE = SETTINGS.length;
+const FIRST_BOT_LINE = AUTHORS_LINE + 1;
 const BACKSPACE = '\u007F';
+
+/** The last line of the settings panel: the line that adds a review bot. */
+const lastPanelLine = (settings: Settings) => FIRST_BOT_LINE + allBots(settings).length;
+
+interface BotDraft {
+  /** The fields that the user typed, in the order of BOT_FIELDS. */
+  values: string[];
+  text: string;
+}
+
+const retryKey = (pr: PullRequest, retry: Retry) => `${keyOf(pr)} ${retry.bot.id} ${retry.refusal}`;
+
+function editingHint(authorsDraft: string | undefined, botDraft: BotDraft | undefined): string | undefined {
+  if (authorsDraft !== undefined) return 'type the authors, with a comma between two · ⏎ save · esc cancel';
+  if (!botDraft) return undefined;
+  const last = botDraft.values.length === BOT_FIELDS.length - 1;
+  return `${BOT_FIELDS[botDraft.values.length]!.hint} · ⏎ ${last ? 'save' : 'next'} · esc cancel`;
+}
+
+function requestOf(bot: Bot): string {
+  if (bot.reviewer) return 'review request';
+  return bot.mention ?? '/command';
+}
 
 interface SettingsPanelProps {
   settings: Settings;
   cursor: number;
   authorsDraft: string | undefined;
+  botDraft: BotDraft | undefined;
   registerButton: ControlsProps['registerButton'];
 }
 
-function SettingsPanel({ settings, cursor, authorsDraft, registerButton }: SettingsPanelProps) {
+function SettingsPanel({ settings, cursor, authorsDraft, botDraft, registerButton }: SettingsPanelProps) {
+  const bots = allBots(settings);
+  const nameWidth = Math.max(...bots.map((bot) => bot.name.length)) + 2;
+  const pointer = (line: number) => (
+    <Box width={2} flexShrink={0}>
+      <Text color={BRAND} bold>
+        {line === cursor ? '❯' : ' '}
+      </Text>
+    </Box>
+  );
+  const box = (on: boolean) => (
+    <Text color={on ? 'green' : undefined} dimColor={!on}>
+      {on ? '[x]' : '[ ]'}
+    </Text>
+  );
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text bold>Settings</Text>
@@ -1656,11 +1862,7 @@ function SettingsPanel({ settings, cursor, authorsDraft, registerButton }: Setti
         </Box>
       ))}
       <Box ref={registerButton('setting:authors')}>
-        <Box width={2} flexShrink={0}>
-          <Text color={BRAND} bold>
-            {cursor === AUTHORS_LINE ? '❯' : ' '}
-          </Text>
-        </Box>
+        {pointer(AUTHORS_LINE)}
         {authorsDraft === undefined ? (
           <Text wrap="truncate-end">
             Authors: {settings.authors.join(', ')}{' '}
@@ -1671,6 +1873,51 @@ function SettingsPanel({ settings, cursor, authorsDraft, registerButton }: Setti
             Authors: <Text color={BRAND}>{authorsDraft}</Text>
             <Text inverse> </Text>
           </Text>
+        )}
+      </Box>
+      <Box marginTop={1}>
+        <Text bold>Review bots</Text>
+        <Text dimColor> · space turns a bot on or off · a turns its automatic retry on or off</Text>
+      </Box>
+      {bots.map((bot, index) => {
+        const on = isEnabled(settings, bot);
+        return (
+          <Box key={bot.id}>
+            <Box ref={registerButton(`bot:${bot.id}`)} flexShrink={0}>
+              {pointer(FIRST_BOT_LINE + index)}
+              {box(on)}
+              <Box width={nameWidth + 1} flexShrink={0}>
+                <Text dimColor={!on}> {bot.name}</Text>
+              </Box>
+              <Text color={on ? BRAND : undefined} dimColor={!on} bold>
+                {bot.key}
+              </Text>
+            </Box>
+            <Box ref={registerButton(`retry:${bot.id}`)} flexShrink={0} marginLeft={2}>
+              {box(retriesOn(settings, bot))}
+              <Text dimColor={!on}> retry</Text>
+            </Box>
+            <Text dimColor wrap="truncate-end">
+              {'  '}
+              {requestOf(bot)}
+              {bot.logins.length > 0 && ` · ${bot.logins.join(', ')}`}
+              {bot.custom && ' · yours, d deletes it'}
+            </Text>
+          </Box>
+        );
+      })}
+      <Box ref={registerButton('bot:add')}>
+        {pointer(FIRST_BOT_LINE + bots.length)}
+        {botDraft ? (
+          <Text wrap="truncate-end">
+            New bot {botDraft.values.length + 1}/{BOT_FIELDS.length}
+            {botDraft.values.length > 0 && <Text dimColor> ({botDraft.values.join(' · ')})</Text>}
+            {' · '}
+            {BOT_FIELDS[botDraft.values.length]!.label}: <Text color={BRAND}>{botDraft.text}</Text>
+            <Text inverse> </Text>
+          </Text>
+        ) : (
+          <Text color={BRAND}>+ add a review bot</Text>
         )}
       </Box>
     </Box>

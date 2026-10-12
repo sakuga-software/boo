@@ -118,6 +118,44 @@ An author is a login, `@me` (the account of `gh`), or `app/<slug>` for a GitHub 
 { "authors": ["@me", "app/my-agent"] }
 ```
 
+### Review bots
+
+The settings list the review bots of the action bar, with their key, the way the tool asks them, and
+their logins.
+
+- `Space` or `Enter` turns a bot on or off. A bot that is off leaves the list of the review bots, and
+  CodeRabbit gets no more automatic retries. The tool still shows the bot as a reviewer.
+- `a` turns the automatic retry of a bot on or off. It is on for CodeRabbit only. See
+  [Retries of the other bots](#retries-of-the-other-bots).
+- `+ add a review bot` opens a form of five fields. `Enter` goes to the next field, `Esc` cancels:
+  1. the name that the bar shows;
+  2. the key that opens its menu: one letter or one digit that no other bot and no other action uses;
+  3. its GitHub logins, with a comma between two, such as `sourcery-ai[bot]`. The bar dims the bot
+     on a pull request where no reviewer has one of these logins;
+  4. the way to ask it: `@mention` posts `@mention <command>`, `/` posts `/<command>`, and a login
+     asks GitHub for a review by that login (`gh pr edit --add-reviewer`). A review request has no
+     command, so the form stops there;
+  5. its commands, with a comma between two. The first one asks for a review: the automatic retry
+     posts it. Each command takes the first free letter of its name as its key.
+- `d` deletes a bot that you added. A known bot can only be turned off.
+
+The file holds the switches by bot, and the bots that you added:
+
+```json
+{
+  "bots": { "greptile": { "enabled": false }, "copilot": { "autoRetry": true } },
+  "customBots": [
+    {
+      "name": "Sourcery",
+      "key": "s",
+      "logins": ["sourcery-ai[bot]"],
+      "mention": "@sourcery-ai",
+      "commands": ["review", "summary"]
+    }
+  ]
+}
+```
+
 ## Rules
 
 ### Reviewers
@@ -165,6 +203,19 @@ reviewer, so each install works under its own name (`sakuga-review[bot]` at Saku
 - A check counts as a quota check, and not as a failure, if its description names a quota
   (CodeRabbit: "Review rate limited"), or if it fails and belongs to a reviewer that refused for
   quota. A red check of a refused reviewer tells nothing about the code.
+
+### Retries of the other bots
+
+The automatic retry of a bot other than CodeRabbit is off by default. When it is on:
+
+- the bot gets a retry if its last review of the pull request is a quota refusal;
+- the retry waits for the return time that the refusal gives, or 1 hour after the refusal if it
+  gives no time;
+- the tool posts the first command of the bot, or asks GitHub for a review if the bot takes review
+  requests (Copilot);
+- each refusal gets one retry only. A new refusal after the retry gives a new retry.
+
+The details of the selected pull request show the time of each planned retry.
 
 ### CodeRabbit retries
 
@@ -242,10 +293,11 @@ In the list of the review bots:
 | `c` | Copilot    | `r` asks Copilot for a review (`gh pr edit --add-reviewer @copilot`, needs `gh` 2.88 or later)                                                                                                                                |
 | `p` | PR-Agent   | `r` posts `/review` (PR-Agent reviews the pull request again), `i` posts `/improve` (PR-Agent suggests code changes on the lines)                                                                                             |
 
-A command to CodeRabbit, Greptile or PR-Agent works only on a pull request that the bot reviews; the
-bar dims the bot and its commands on the other ones. Copilot gets a review request from GitHub and not a comment: a mention of
+A command to a bot that takes its commands in a comment, such as CodeRabbit, Greptile or PR-Agent,
+works only on a pull request that the bot reviews; the bar dims the bot and its commands on the other ones. Copilot gets a review request from GitHub and not a comment: a mention of
 `@copilot` starts its coding agent. The detection of the reviewers keeps no list of bots, but the
-list of the review bots does: only these four bots have a known command. A CodeRabbit post goes through the queue
+list of the review bots does: only these four bots, and the bots that you add in the settings, have a
+known command. A CodeRabbit post goes through the queue
 of the automatic retries. A post to another bot goes at once, because it does not spend the
 CodeRabbit quota.
 

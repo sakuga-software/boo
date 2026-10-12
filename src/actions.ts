@@ -1,8 +1,16 @@
 import { BOT_LOGIN } from './decide.js';
 
-export type Command = 'review' | 'full review' | 'approve' | 'resolve' | 'improve';
+/** A command of a bot, such as "review". A custom bot can take any command. */
+export type Command = string;
+
+export interface BotCommand {
+  key: string;
+  command: Command;
+}
 
 export interface Bot {
+  /** A name that stays the same when the settings change. A level of the action bar finds its bot by it. */
+  id: string;
   name: string;
   /** The key that opens the menu of the bot in the list of bots. */
   key: string;
@@ -12,19 +20,53 @@ export interface Bot {
   mention?: string;
   /** The reviewer that `gh pr edit --add-reviewer` takes. A bot with a mention gets a comment instead. */
   reviewer?: string;
+  /** The commands of the menu of the bot. The first one asks for a review: the automatic retry posts it. */
+  commands: readonly BotCommand[];
+  /** The user added the bot in the settings. */
+  custom?: true;
 }
 
-export const CODERABBIT: Bot = { name: 'CodeRabbit', key: 'r', logins: [BOT_LOGIN], mention: '@coderabbitai' };
-export const GREPTILE: Bot = { name: 'Greptile', key: 'g', logins: ['greptile-apps[bot]'], mention: '@greptileai' };
+export const CODERABBIT: Bot = {
+  id: 'coderabbit',
+  name: 'CodeRabbit',
+  key: 'r',
+  logins: [BOT_LOGIN],
+  mention: '@coderabbitai',
+  commands: [
+    { key: 'r', command: 'review' },
+    { key: 'f', command: 'full review' },
+    { key: 'a', command: 'approve' },
+    { key: 's', command: 'resolve' },
+  ],
+};
+export const GREPTILE: Bot = {
+  id: 'greptile',
+  name: 'Greptile',
+  key: 'g',
+  logins: ['greptile-apps[bot]'],
+  mention: '@greptileai',
+  commands: [{ key: 'r', command: 'review' }],
+};
 // A mention of @copilot in a comment starts the Copilot coding agent, which pushes commits. Only a review request is safe.
 export const COPILOT: Bot = {
+  id: 'copilot',
   name: 'Copilot',
   key: 'c',
   logins: ['copilot-pull-request-reviewer[bot]', 'Copilot'],
   reviewer: '@copilot',
+  commands: [{ key: 'r', command: 'review' }],
 };
 // Each PR-Agent install posts with its own login, so the reviewer carries a flag and the bot has no login.
-export const PR_AGENT: Bot = { name: 'PR-Agent', key: 'p', logins: [] };
+export const PR_AGENT: Bot = {
+  id: 'pr-agent',
+  name: 'PR-Agent',
+  key: 'p',
+  logins: [],
+  commands: [
+    { key: 'r', command: 'review' },
+    { key: 'i', command: 'improve' },
+  ],
+};
 
 export interface Request {
   bot: Bot;
@@ -47,25 +89,20 @@ const MAIN_ACTIONS: readonly Action[] = [
   { key: 'm', label: 'merge', merge: true },
 ];
 
-// A key belongs to the menu of one bot, so two bots can use the same key.
-const BOT_ACTIONS: readonly Action[] = [
-  { key: 'r', label: 'review', request: { bot: CODERABBIT, command: 'review' } },
-  { key: 'f', label: 'full review', request: { bot: CODERABBIT, command: 'full review' } },
-  { key: 'a', label: 'approve', request: { bot: CODERABBIT, command: 'approve' } },
-  { key: 's', label: 'resolve', request: { bot: CODERABBIT, command: 'resolve' } },
-  { key: 'r', label: 'review', request: { bot: GREPTILE, command: 'review' } },
-  { key: 'r', label: 'review', request: { bot: COPILOT, command: 'review' } },
-  { key: 'r', label: 'review', request: { bot: PR_AGENT, command: 'review' } },
-  { key: 'i', label: 'improve', request: { bot: PR_AGENT, command: 'improve' } },
-];
-
+/** The bots that the tool knows. The settings can turn each one off and add more. */
 export const BOTS: readonly Bot[] = [CODERABBIT, GREPTILE, COPILOT, PR_AGENT];
 
-/** Returns the actions that the bar shows at a level. The list of bots shows bots, not actions. */
+/**
+ * The keys that a bot or a command must not take: the list, the prompt and the panel read them first,
+ * the main set works at every level, and "m" ends a mouse report.
+ */
+export const RESERVED_KEYS: ReadonlySet<string> = new Set(['j', 'k', 'q', 'h', ',', ' ', 'y', 'n', 'o', 'm']);
+
+/** Returns the actions that the bar shows at a level. The list of bots shows bots, not actions. A key belongs to the menu of one bot. */
 export function actionsOf(mode: Mode): readonly Action[] {
   if (mode === 'main') return MAIN_ACTIONS;
   if (mode === 'bots') return [];
-  return BOT_ACTIONS.filter((action) => action.request!.bot === mode);
+  return mode.commands.map(({ key, command }) => ({ key, label: command, request: { bot: mode, command } }));
 }
 
 /** Returns the level above a level. The main set is the top. */
@@ -75,11 +112,11 @@ const BACK_WIDTH = '← back'.length + 2;
 const buttonWidth = (key: string, label: string) => key.length + label.length + 3;
 
 /** The width of the widest bot level of the action bar with its labels: the list of bots, or the menu of one bot. */
-export const BOT_BAR_WIDTH =
+export const botBarWidth = (bots: readonly Bot[]) =>
   BACK_WIDTH +
   Math.max(
-    BOTS.reduce((width, bot) => width + buttonWidth(bot.key, bot.name), 0),
-    ...BOTS.map(
+    bots.reduce((width, bot) => width + buttonWidth(bot.key, bot.name), 0),
+    ...bots.map(
       (bot) =>
         bot.name.length +
         1 +
@@ -87,7 +124,9 @@ export const BOT_BAR_WIDTH =
     ),
   );
 
-export const isCodeRabbit = (request: Request) => request.bot === CODERABBIT;
+export const BOT_BAR_WIDTH = botBarWidth(BOTS);
+
+export const isCodeRabbit = (request: Request) => request.bot.id === CODERABBIT.id;
 
 /** The comment that the request posts, or a description of the review request. */
 export function requestText({ bot, command }: Request): string {
@@ -104,13 +143,13 @@ export interface ReviewerRef {
   prAgent?: boolean;
 }
 
+/** Tells if a reviewer of a pull request is this bot. */
+export const isReviewerOf = (bot: Bot, reviewer: ReviewerRef) =>
+  bot.id === PR_AGENT.id ? Boolean(reviewer.prAgent) : bot.logins.includes(reviewer.login);
+
 /** Tells if a bot that takes its commands in a comment is absent from the reviewers of a pull request. */
 export const isAbsent = (bot: Bot, reviewers: readonly ReviewerRef[] | undefined) =>
-  Boolean(
-    !bot.reviewer &&
-    reviewers &&
-    !reviewers.some((reviewer) => (bot === PR_AGENT ? reviewer.prAgent : bot.logins.includes(reviewer.login))),
-  );
+  Boolean(!bot.reviewer && reviewers && !reviewers.some((reviewer) => isReviewerOf(bot, reviewer)));
 
 export interface Target {
   left: boolean;
