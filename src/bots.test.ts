@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { actionsOf, CODERABBIT, COPILOT, GREPTILE, requestText } from './actions.js';
-import { activeBots, allBots, assignKeys, checkBotField, customBotOf, plannedRetries, toBot } from './bots.js';
+import {
+  activeBots,
+  allBots,
+  assignKeys,
+  checkBotField,
+  customBotOf,
+  plannedRetries,
+  RETRY_AFTER_FAILURE_MS,
+  RetryLedger,
+  toBot,
+} from './bots.js';
 import type { Reviewer } from './reviewers.js';
 import { DEFAULT_SETTINGS, parseSettings, type Settings } from './settings.js';
 
@@ -128,4 +138,30 @@ test('the settings file keeps the valid switches and custom bots, and drops the 
   });
   assert.deepEqual(settings.bots, { coderabbit: { enabled: false } });
   assert.deepEqual(settings.customBots, [SOURCERY]);
+});
+
+test('a retry waits for its time, comes back 5 minutes after a failed post, and stops after a post that worked', () => {
+  const settings: Settings = { ...DEFAULT_SETTINGS, bots: { greptile: { autoRetry: true } } };
+  const [retry] = plannedRetries([quota('greptile-apps[bot]', '2026-10-12T10:00:00Z')], [GREPTILE], settings);
+  const ledger = new RetryLedger();
+  const times = () => ledger.pending('web#1', [retry!]).map(({ at }) => at.toISOString());
+
+  assert.deepEqual(times(), ['2026-10-12T11:00:00.000Z']);
+  ledger.start('web#1', retry!);
+  assert.deepEqual(times(), []);
+  const failedAt = Date.parse('2026-10-12T11:00:05Z');
+  assert.equal(ledger.fail('web#1', retry!, failedAt).getTime(), failedAt + RETRY_AFTER_FAILURE_MS);
+  assert.deepEqual(times(), ['2026-10-12T11:05:05.000Z']);
+  ledger.start('web#1', retry!);
+  assert.deepEqual(times(), []);
+  assert.equal(ledger.pending('web#2', [retry!]).length, 1);
+});
+
+test('a new refusal after a retry gives a new retry', () => {
+  const settings: Settings = { ...DEFAULT_SETTINGS, bots: { greptile: { autoRetry: true } } };
+  const [first] = plannedRetries([quota('greptile-apps[bot]', '2026-10-12T10:00:00Z')], [GREPTILE], settings);
+  const [second] = plannedRetries([quota('greptile-apps[bot]', '2026-10-12T12:00:00Z')], [GREPTILE], settings);
+  const ledger = new RetryLedger();
+  ledger.start('web#1', first!);
+  assert.equal(ledger.pending('web#1', [second!]).length, 1);
 });

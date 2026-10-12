@@ -77,6 +77,36 @@ export function plannedRetries(reviewers: readonly Reviewer[], bots: readonly Bo
     });
 }
 
+// A failure that stays, for example a bot that is not a collaborator, must not cause a post each second.
+export const RETRY_AFTER_FAILURE_MS = 5 * 60_000;
+
+/** Keeps the retries that the tool posted, and the time of the next try after a failed post. */
+export class RetryLedger {
+  readonly #nextTry = new Map<string, number>();
+
+  /** Returns the retries that are not posted yet, each at the time of its next try. */
+  pending(pr: string, retries: readonly Retry[]): Retry[] {
+    return retries.flatMap((retry) => {
+      const next = this.#nextTry.get(key(pr, retry)) ?? 0;
+      return next === Infinity ? [] : [{ ...retry, at: new Date(Math.max(retry.at.getTime(), next)) }];
+    });
+  }
+
+  /** Call this before the post: a second loop can start before the post ends, and must not post it again. */
+  start(pr: string, retry: Retry): void {
+    this.#nextTry.set(key(pr, retry), Infinity);
+  }
+
+  /** Returns the time of the next try after a failed post. */
+  fail(pr: string, retry: Retry, now = Date.now()): Date {
+    const next = now + RETRY_AFTER_FAILURE_MS;
+    this.#nextTry.set(key(pr, retry), next);
+    return new Date(next);
+  }
+}
+
+const key = (pr: string, retry: Retry) => `${pr} ${retry.bot.id} ${retry.refusal}`;
+
 export const BOT_FIELDS = [
   { label: 'Name', hint: 'as the bar shows it, for example Sourcery' },
   { label: 'Key', hint: 'one letter that opens its menu' },

@@ -40,6 +40,7 @@ import {
   isEnabled,
   plannedRetries,
   retriesOn,
+  RetryLedger,
   type Retry,
 } from './bots.js';
 import * as github from './github.js';
@@ -248,9 +249,8 @@ export function App(props: AppProps) {
   // The form that adds a review bot: the fields typed so far, and the text of the current field.
   const [botDraft, setBotDraft] = useState<BotDraft>();
   const botDraftRef = useRef<BotDraft>(undefined);
-  // For each refusal of another bot, the time of the next retry: Infinity after a post that worked.
-  // It outlives a new list of authors.
-  const retried = useRef(new Map<string, number>());
+  // The retries of the other bots. It outlives a new list of authors.
+  const retried = useRef(new RetryLedger());
   // These two outlive a new list of authors, which starts the workflow again: the repost guard and the
   // queue of the CodeRabbit posts must still hold for a post that the earlier workflow sent.
   const lastPosts = useRef(new Map<string, { at: number; before: Comment[] }>());
@@ -272,10 +272,10 @@ export function App(props: AppProps) {
   const retriesOf = (row: Row): Retry[] =>
     !row.summary || row.left || row.error || options.dryRun
       ? []
-      : plannedRetries(row.summary.reviewers, activeBots(settingsRef.current), settingsRef.current).flatMap((retry) => {
-          const next = retried.current.get(retryKey(row.pr, retry)) ?? 0;
-          return next === Infinity ? [] : [{ ...retry, at: new Date(Math.max(retry.at.getTime(), next)) }];
-        });
+      : retried.current.pending(
+          keyOf(row.pr),
+          plannedRetries(row.summary.reviewers, activeBots(settingsRef.current), settingsRef.current),
+        );
 
   useEffect(() => {
     const abort = new AbortController();
@@ -428,18 +428,16 @@ export function App(props: AppProps) {
       await Promise.all(
         prs.map(async (pr) => {
           for (const retry of retriesOf(rowOf(pr)).filter(({ at }) => at.getTime() <= Date.now())) {
-            // Mark the retry before the post: the next loop can start before the post ends.
-            retried.current.set(retryKey(pr, retry), Infinity);
+            retried.current.start(keyOf(pr), retry);
             if (await send(pr, { bot: retry.bot, command: retry.bot.commands[0]!.command })) {
               setTriggered((count) => count + 1);
               void refresh(pr);
             } else {
-              const next = Date.now() + RETRY_AFTER_FAILURE_MS;
-              retried.current.set(retryKey(pr, retry), next);
+              const next = retried.current.fail(keyOf(pr), retry);
               // The next fetch clears the error of the row, so the flash keeps the failure visible.
               if (!signal.aborted)
                 setFlash({
-                  text: `Could not retry ${retry.bot.name} on ${keyOf(pr)}: ${rowOf(pr).error ?? 'unknown error'}. Next try at ${formatTime(new Date(next))}.`,
+                  text: `Could not retry ${retry.bot.name} on ${keyOf(pr)}: ${rowOf(pr).error ?? 'unknown error'}. Next try at ${formatTime(next)}.`,
                   color: 'red',
                 });
             }
@@ -1817,10 +1815,6 @@ interface BotDraft {
   values: string[];
   text: string;
 }
-
-// A failure that stays, for example a bot that is not a collaborator, must not cause a post each second.
-const RETRY_AFTER_FAILURE_MS = 5 * 60_000;
-const retryKey = (pr: PullRequest, retry: Retry) => `${keyOf(pr)} ${retry.bot.id} ${retry.refusal}`;
 
 function editingHint(authorsDraft: string | undefined, botDraft: BotDraft | undefined): string | undefined {
   if (authorsDraft !== undefined) return 'type the authors, with a comma between two · ⏎ save · esc cancel';
