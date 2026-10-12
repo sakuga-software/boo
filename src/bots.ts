@@ -106,6 +106,7 @@ export function checkBotField(step: number, text: string, bots: readonly Bot[]):
       // A mention of @copilot starts the Copilot coding agent, which pushes commits.
       if (value.toLowerCase() === '@copilot')
         return 'A mention of @copilot starts its coding agent: use the Copilot bot.';
+      if (value.startsWith('/') && value !== '/') return 'Type / alone: the commands come in the next field.';
       return /\s/.test(value) ? 'Type one word.' : undefined;
     default:
       return undefined;

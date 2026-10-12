@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { RESERVED_KEYS } from './actions.js';
+import { BOTS, RESERVED_KEYS } from './actions.js';
 
 export const SETTINGS = [
   { key: 'hideMerged', label: 'Hide the merged pull requests', fallback: true },
@@ -117,12 +117,16 @@ export function parseSettings(value: unknown): Settings {
   settings.authors = parseAuthors((value as Record<string, unknown>).authors) ?? settings.authors;
   settings.bots = parseSwitches((value as Record<string, unknown>).bots);
   const custom = (value as Record<string, unknown>).customBots;
-  // The id of a custom bot comes from its name, so two bots with one name keep the first one only.
-  const names = new Set<string>();
-  settings.customBots = (Array.isArray(custom) ? custom.map(parseCustomBot) : []).filter(
-    (bot): bot is CustomBot =>
-      bot !== undefined && !names.has(bot.name.toLowerCase()) && Boolean(names.add(bot.name.toLowerCase())),
-  );
+  // The id of a custom bot comes from its name, and the bar opens the first bot of a key.
+  // Thus a bot with the name or the key of an earlier bot is dropped.
+  const names = new Set(BOTS.map((bot) => bot.name.toLowerCase()));
+  const keys = new Set(BOTS.map((bot) => bot.key));
+  settings.customBots = (Array.isArray(custom) ? custom.map(parseCustomBot) : []).filter((bot): bot is CustomBot => {
+    if (!bot || names.has(bot.name.toLowerCase()) || keys.has(bot.key)) return false;
+    names.add(bot.name.toLowerCase());
+    keys.add(bot.key);
+    return true;
+  });
   return settings;
 }
 
