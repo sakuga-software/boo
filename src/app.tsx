@@ -37,7 +37,7 @@ import { ICON_WIDTH, layoutFor, LABEL_WIDTH, rowHeight, SELECTION_WIDTH, type La
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from './mouse.js';
 import { summarize, type Overall, type Reviewer, type ReviewerStatus, type Summary } from './reviewers.js';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
-import { placeStacks, type Placement } from './stacks.js';
+import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
@@ -109,27 +109,24 @@ const alone = (key: string): Placement => ({ key, depth: 0, lead: '', trail: ' '
 /** Puts the rows in the order of the list. With grouping, each stacked pull request follows the one that it merges into. */
 function arrange(rows: Row[], grouped: boolean): { rows: Row[]; places: Map<string, Placement> } {
   const byKey = new Map(rows.map((row) => [keyOf(row.pr), row]));
-  const placed = grouped
-    ? placeStacks(
-        rows.map((row) => ({
-          key: keyOf(row.pr),
-          repo: row.pr.repo,
-          branch: row.fetched?.branch,
-          fork: row.fetched?.fork,
-          base: row.fetched?.base,
-        })),
-      )
-    : [...byKey.keys()].map(alone);
+  const placed = grouped ? placeStacks(rows.map(stackItemOf)) : [...byKey.keys()].map(alone);
   return { rows: placed.map(({ key }) => byKey.get(key)!), places: new Map(placed.map((place) => [place.key, place])) };
 }
 
-/** Returns the listed pull request whose head branch is the base of this one, in the same repository. */
+const stackItemOf = (row: Row): StackItem => ({
+  key: keyOf(row.pr),
+  repo: row.pr.repo,
+  branch: row.fetched?.branch,
+  fork: row.fetched?.fork,
+  base: row.fetched?.base,
+  defaultBranch: row.fetched?.defaultBranch,
+});
+
+/** Returns the listed pull request that this one merges into, with the rule of the tree. */
 function stackParent(row: Row, rows: Iterable<Row>): Row | undefined {
-  const base = row.fetched?.base;
-  if (!base || base === row.fetched?.defaultBranch) return undefined;
-  for (const other of rows)
-    if (other !== row && other.pr.repo === row.pr.repo && other.fetched?.branch === base) return other;
-  return undefined;
+  const byKey = new Map([...rows].map((other) => [keyOf(other.pr), other]));
+  const parent = parentFinder([...byKey.values()].map(stackItemOf))(stackItemOf(row));
+  return parent && byKey.get(parent.key);
 }
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const isHidden = (row: Row, settings: Settings, revealed: boolean) =>

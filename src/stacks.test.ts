@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { placeStacks, type StackItem } from './stacks.js';
+import { parentFinder, placeStacks, type StackItem } from './stacks.js';
 
 const item = (key: string, branch?: string, base = 'main', repo = 'web'): StackItem => ({ key, repo, branch, base });
 
@@ -79,6 +79,32 @@ test('a pull request from a fork is not the parent of a pull request on the same
       { key: 'web#2', depth: 0 },
     ],
   );
+});
+
+test('a pull request on the default branch is on no pull request whose head is the default branch', () => {
+  const release = { ...item('web#1', 'main', 'release'), defaultBranch: 'main' };
+  const feature = { ...item('web#2', 'b', 'main'), defaultBranch: 'main' };
+  assert.equal(parentFinder([release, feature])(feature), undefined);
+  assert.deepEqual(
+    placeStacks([release, feature]).map(({ key, depth }) => ({ key, depth })),
+    [
+      { key: 'web#1', depth: 0 },
+      { key: 'web#2', depth: 0 },
+    ],
+  );
+});
+
+test('the parent of a pull request follows the rule of the tree', () => {
+  const items = [
+    { ...item('web#1', 'feat'), fork: true },
+    item('web#3', 'a'),
+    item('web#2', 'b', 'a'),
+    item('web#4', 'c', 'feat'),
+  ];
+  const parentOf = parentFinder(items);
+  assert.equal(parentOf(items[2]!)?.key, 'web#3');
+  assert.equal(parentOf(items[3]!), undefined);
+  assert.equal(parentOf(items[1]!), undefined);
 });
 
 test('a pull request on a branch that no listed pull request has, or not read yet, stays a root', () => {

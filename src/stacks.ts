@@ -7,6 +7,8 @@ export interface StackItem {
   fork?: boolean | undefined;
   /** The branch that the pull request merges into. */
   base?: string | undefined;
+  /** The default branch of the repository. A pull request on it is on no other pull request. */
+  defaultBranch?: string | undefined;
 }
 
 export interface Placement {
@@ -31,20 +33,29 @@ const PIPE = '│  ';
 const BLANK = '   ';
 
 /**
- * Puts each pull request after the pull request that it merges into, as a tree. A pull request
- * merges into another if their repository is the same and its base is the head branch of the other.
- * The roots keep their order, and so do the children of one parent. The result has all the items.
+ * Returns a function that gives the listed pull request that an item merges into. The two pull
+ * requests are in the same repository, and the base of the item is the head branch of the other.
+ * A base that is the default branch, and the head branch of a fork, make no stack.
  */
-export function placeStacks(items: readonly StackItem[]): Placement[] {
+export function parentFinder(items: readonly StackItem[]): (item: StackItem) => StackItem | undefined {
   const byBranch = new Map<string, StackItem>();
   for (const item of items) {
     const id = item.branch && !item.fork && `${item.repo}:${item.branch}`;
     if (id && !byBranch.has(id)) byBranch.set(id, item);
   }
-  const parentOf = (item: StackItem) => {
-    const parent = item.base ? byBranch.get(`${item.repo}:${item.base}`) : undefined;
-    return parent && parent !== item ? parent : undefined;
+  return (item) => {
+    if (!item.base || item.base === item.defaultBranch) return undefined;
+    const parent = byBranch.get(`${item.repo}:${item.base}`);
+    return parent && parent.key !== item.key ? parent : undefined;
   };
+}
+
+/**
+ * Puts each pull request after the pull request that it merges into, as a tree. A pull request
+ * merges into another as parentFinder says. The roots keep their order, and so do the children of one parent. The result has all the items.
+ */
+export function placeStacks(items: readonly StackItem[]): Placement[] {
+  const parentOf = parentFinder(items);
   const children = new Map<string, StackItem[]>();
   for (const item of items) {
     const parent = parentOf(item);
