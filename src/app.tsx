@@ -268,8 +268,9 @@ export function App(props: AppProps) {
 
   const coderabbitRetries = () =>
     isEnabled(settingsRef.current, CODERABBIT) && retriesOn(settingsRef.current, CODERABBIT);
+  // A row whose last fetch failed shows old data, so it gets no retry until a fetch works.
   const retriesOf = (row: Row): Retry[] =>
-    !row.summary || row.left || options.dryRun
+    !row.summary || row.left || row.error || options.dryRun
       ? []
       : plannedRetries(row.summary.reviewers, activeBots(settingsRef.current), settingsRef.current).flatMap((retry) => {
           const next = retried.current.get(retryKey(row.pr, retry)) ?? 0;
@@ -426,9 +427,7 @@ export function App(props: AppProps) {
     async function retryOthers(prs: PullRequest[]) {
       await Promise.all(
         prs.map(async (pr) => {
-          const row = rowOf(pr);
-          if (row.error) return;
-          for (const retry of retriesOf(row).filter(({ at }) => at.getTime() <= Date.now())) {
+          for (const retry of retriesOf(rowOf(pr)).filter(({ at }) => at.getTime() <= Date.now())) {
             // Mark the retry before the post: the next loop can start before the post ends.
             retried.current.set(retryKey(pr, retry), Infinity);
             if (await send(pr, { bot: retry.bot, command: retry.bot.commands[0]!.command })) {
