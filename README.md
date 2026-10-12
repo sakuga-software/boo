@@ -75,6 +75,7 @@ repository. The list shows it under that pull request, with a line that joins th
   branch under it, not in the default branch.
 - If the pull request under it is hidden, such as a merged one, the stacked pull request shows as a
   root. `h` shows the tree again.
+- A narrow terminal drops the text of the place in the stack, but it keeps the tree lines.
 
 The ghost at the top left asks the terminal for its background color (OSC 11, or `COLORFGBG`) and
 picks colors that read on it. A terminal that does not answer gets colors that read on both.
@@ -84,12 +85,12 @@ protection rule that blocks the merge, and the quota return times.
 
 A narrow terminal shows less of each row, from the least useful part:
 
-| Width             | The row drops                                                               |
-| ----------------- | --------------------------------------------------------------------------- |
-| below 120 columns | the reviewers on head and the review count                                  |
-| below 100 columns | the name of the state (the icon stays) and the word "checks"                |
-| below 80 columns  | the last reviewer, the place in the stack, and the labels of the action bar |
-| below 60 columns  | the checks                                                                  |
+| Width             | The row drops                                                                           |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| below 120 columns | the reviewers on head and the review count                                              |
+| below 100 columns | the name of the state (the icon stays) and the word "checks"                            |
+| below 80 columns  | the last reviewer, the text of the place in the stack, and the labels of the action bar |
+| below 60 columns  | the checks                                                                              |
 
 ## Settings
 
@@ -101,7 +102,8 @@ closes the panel. The tool saves them in `~/.config/boo/settings.json` (or under
 - Show the checks, the reviewers on head and the review count, the last reviewer, the mark of each
   reviewer, and the details of the selected pull request. A narrow terminal can still hide them.
 - Compact rows: no blank line between the pull requests.
-- Show each stacked pull request under the pull request that it merges into. It is on.
+- Show each stacked pull request under the pull request that it merges into. It is on. Off, the list
+  keeps its order, but the details and the merge confirmation still name the pull request under it.
 
 - The authors of the listed pull requests. `Space` or `Enter` on this line starts the change: type
   the authors with a comma between two, then `Enter` saves and `Esc` cancels. The list follows the
