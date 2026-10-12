@@ -172,6 +172,7 @@ const fakeGitHub: GitHub = {
       mergeState: 'clean',
       requested: [],
       branch: `pr-${target.number}`,
+      fork: false,
       base: parent ? `pr-${parent}` : 'main',
       defaultBranch: 'main',
       status: status(target),

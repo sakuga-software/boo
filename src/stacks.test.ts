@@ -70,6 +70,17 @@ test('the same branch name in two repositories makes no stack', () => {
   );
 });
 
+test('a pull request from a fork is not the parent of a pull request on the same branch name', () => {
+  const placed = placeStacks([{ ...item('web#1', 'feat'), fork: true }, item('web#2', 'b', 'feat')]);
+  assert.deepEqual(
+    placed.map(({ key, depth }) => ({ key, depth })),
+    [
+      { key: 'web#1', depth: 0 },
+      { key: 'web#2', depth: 0 },
+    ],
+  );
+});
+
 test('a pull request on a branch that no listed pull request has, or not read yet, stays a root', () => {
   const placed = placeStacks([item('web#2', 'b', 'gone'), { key: 'web#3', repo: 'web' }, item('web#1', 'a')]);
   assert.deepEqual(

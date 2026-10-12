@@ -115,6 +115,7 @@ function arrange(rows: Row[], grouped: boolean): { rows: Row[]; places: Map<stri
           key: keyOf(row.pr),
           repo: row.pr.repo,
           branch: row.fetched?.branch,
+          fork: row.fetched?.fork,
           base: row.fetched?.base,
         })),
       )

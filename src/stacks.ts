@@ -3,6 +3,8 @@ export interface StackItem {
   repo: string;
   /** The head branch of the pull request. Unknown until the tool reads the pull request. */
   branch?: string | undefined;
+  /** True if the head branch is in a fork. A fork branch is not a branch of `repo`. */
+  fork?: boolean | undefined;
   /** The branch that the pull request merges into. */
   base?: string | undefined;
 }
@@ -36,7 +38,7 @@ const BLANK = '   ';
 export function placeStacks(items: readonly StackItem[]): Placement[] {
   const byBranch = new Map<string, StackItem>();
   for (const item of items) {
-    const id = item.branch && `${item.repo}:${item.branch}`;
+    const id = item.branch && !item.fork && `${item.repo}:${item.branch}`;
     if (id && !byBranch.has(id)) byBranch.set(id, item);
   }
   const parentOf = (item: StackItem) => {
