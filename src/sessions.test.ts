@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { appendFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -122,4 +122,19 @@ test('a session with no inbox key gets no message', async () => {
   await mkdir(join(home, 'sessions'));
   await assert.rejects(sendToSession(session(), 'hello', home), /no inbox key/);
   assert.match(inboxFrames(session(), 't', 'hello', 'id'), /"msg_id":"id"/);
+});
+
+test('a send ends after the write, even if the session keeps its side of the connection open', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'boo-inbox-'));
+  await mkdir(join(home, 'sessions'));
+  await writeFile(join(home, 'sessions', '100.abc123.key'), JSON.stringify({ peerToken: 'secret' }));
+  const socket = join(home, 'inbox.sock');
+  const connections: Socket[] = [];
+  const server = createServer({ allowHalfOpen: true }, (connection) => void connections.push(connection));
+  await new Promise<void>((resolve) => server.listen(socket, resolve));
+  const started = Date.now();
+  await sendToSession(session({ socket }), 'hello', home);
+  assert.ok(Date.now() - started < 2_000);
+  for (const connection of connections) connection.destroy();
+  server.close();
 });

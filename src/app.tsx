@@ -576,6 +576,9 @@ export function App(props: AppProps) {
         setOwners(next);
       } catch {
         // The session records are internal to Claude Code. If they are unreadable, the rows show no session.
+        if (stopped) return;
+        ownersRef.current = new Map();
+        setOwners(ownersRef.current);
       } finally {
         reading = false;
       }
