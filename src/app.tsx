@@ -1,6 +1,7 @@
 import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize, type DOMElement } from 'ink';
 import Spinner from 'ink-spinner';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { homedir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import {
   actionForKey,
@@ -113,6 +114,8 @@ const DEFAULT_TIMING: Timing = {
 };
 const REPOST_GUARD_MS = 15 * 60_000;
 const BRAND = '#8B5CF6';
+// The color of Claude Code in its own terminal theme.
+const CLAUDE = '#D77757';
 const isReviewRequest = (request: Request) => request.command === 'review' || request.command === 'full review';
 const HIDING_SETTING: Record<LeftStatus, SettingKey> = {
   merged: 'hideMerged',
@@ -289,6 +292,9 @@ export function App(props: AppProps) {
   const buttonNodes = useRef(new Map<string, DOMElement>());
   const scrollStart = useRef(0);
   const [owners, setOwners] = useState<Map<string, Owner>>(() => new Map());
+  // The rows that show their details: the agent, the reviewers, the checks that fail.
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(() => new Set());
+  const unfoldedRef = useRef(unfolded);
   const ownersRef = useRef(owners);
 
   const coderabbitRetries = () =>
@@ -987,6 +993,7 @@ export function App(props: AppProps) {
     }
     if (panelRef.current !== undefined) return;
     if (id === 'h') return toggleHidden();
+    if (id === 'unfold') return toggleUnfolded();
     if (id === 'r' && modeRef.current === 'main') return refreshAll();
     if (id === ',') return openPanel(0);
     if (id === 'bots') return switchMode('bots');
@@ -999,6 +1006,14 @@ export function App(props: AppProps) {
     if (bot) return switchMode(bot);
     const action = actionForKey(id, modeRef.current);
     if (action) request(action);
+  }
+
+  function toggleUnfolded(key = live().key) {
+    if (!key) return;
+    const next = new Set(unfoldedRef.current);
+    if (!next.delete(key)) next.add(key);
+    unfoldedRef.current = next;
+    setUnfolded(next);
   }
 
   function refreshAll() {
@@ -1021,7 +1036,7 @@ export function App(props: AppProps) {
     if (panelRef.current !== undefined) return typePanelKey(char);
     if (char === 'k') move(-1);
     else if (char === 'j') move(1);
-    else if (char === '\r') press('o');
+    else if (char === '\r') toggleUnfolded();
     else if (char === 'q') exit();
     else if (char === ' ') switchMode(modeRef.current === 'main' ? 'bots' : parentOf(modeRef.current));
     else if (char === '\u001B') switchMode('main');
@@ -1078,8 +1093,15 @@ export function App(props: AppProps) {
     return () => clearTimeout(timer);
   }, [flash]);
 
-  const handlers = useRef({ press, move, select, typeKey, step });
-  handlers.current = { press, move, select, typeKey, step };
+  // A click selects a row. A click on the selected row shows or hides its details.
+  function click(key: string) {
+    if (confirmationRef.current || panelRef.current !== undefined) return;
+    if (key === live().key) toggleUnfolded(key);
+    else select(key);
+  }
+
+  const handlers = useRef({ press, move, select, typeKey, step, click });
+  handlers.current = { press, move, select, typeKey, step, click };
 
   useEffect(() => {
     if (!options.interactive) return;
@@ -1091,7 +1113,7 @@ export function App(props: AppProps) {
       const button = hitTest(buttonNodes.current, event.x, event.y);
       if (button) return handlers.current.press(button);
       const row = hitTest(rowNodes.current, event.x, event.y);
-      if (row) handlers.current.select(row);
+      if (row) handlers.current.click(row);
     });
     const onData = (data: Buffer | string) => {
       const text = data.toString();
@@ -1128,15 +1150,16 @@ export function App(props: AppProps) {
     ]),
   );
   const bots = activeBots(settings);
-  // In a terminal, only the selected row shows its details. A piped run shows them all.
-  const expanded = (row: Row) => !options.interactive || keyOf(row.pr) === selection;
+  // In a terminal, a row shows its details after Enter. A piped run shows them all.
+  const expanded = (row: Row) => !options.interactive || unfolded.has(keyOf(row.pr));
   const layout = layoutFor(columns, settings, options.interactive);
   const heightOf = (row: Row) =>
     rowHeight(
       {
         summary: Boolean(row.summary),
-        agent: Boolean(agentLabel(row, owners, !layout.label)),
-        detail: expanded(row) && Boolean(views.get(row)!.detail),
+        agent: Boolean(agentOf(row, owners)),
+        unfolded: expanded(row),
+        detail: Boolean(views.get(row)!.detail),
         posted: Boolean(row.posted),
       },
       layout,
@@ -1206,7 +1229,7 @@ export function App(props: AppProps) {
               layout={layout}
               place={places.get(keyOf(row.pr))!}
               hint={stackHint(row, places.get(keyOf(row.pr))!, rowsRef.current)}
-              agent={agentLabel(row, owners, !layout.label)}
+              agent={agentOf(row, owners)}
               now={clock}
               expanded={expanded(row)}
               selected={options.interactive && keyOf(row.pr) === selection}
@@ -1458,32 +1481,81 @@ function stackHint(row: Row, place: Placement, rows: Map<string, Row>): string |
   return fetched && fetched.base !== fetched.defaultBranch ? `on ${fetched.base}` : undefined;
 }
 
-interface AgentLabel {
-  text: string;
-  /** A session on this machine works on the pull request: the agent commands can reach it. */
-  local: boolean;
+/** The agent of a row: the agent that the pull request names, and the local session that works on it. */
+interface AgentInfo {
+  name: string;
+  claude: boolean;
+  session?: LocalSession;
+  cloudSession?: string;
 }
 
+function agentOf(row: Row, owners: Map<string, Owner>): AgentInfo | undefined {
+  const session = owners.get(keyOf(row.pr))?.session;
+  const agent = row.fetched?.agent;
+  // A local session is always Claude Code, whatever agent wrote the pull request.
+  if (session) return { name: 'Claude Code', claude: true, session };
+  if (!agent) return undefined;
+  return {
+    name: agent.name,
+    claude: agent.id === 'claude',
+    ...(agent.cloudSession && { cloudSession: agent.cloudSession }),
+  };
+}
+
+// "shell" means that the session runs a command now.
+const isWorking = (session: LocalSession) => session.status === 'busy' || session.status === 'shell';
+
 function sessionState(session: LocalSession): string {
-  // "shell" means that the session runs a command now.
-  if (session.status === 'busy' || session.status === 'shell') return 'working';
+  if (isWorking(session)) return 'working';
   if (session.status === 'waiting') return `waiting: ${session.waitingFor ?? 'an answer'}`;
   return session.status;
 }
 
-/**
- * The agent that works on the pull request. A local session is always Claude Code, so a narrow row
- * shows only the name and the state of the session.
- */
-function agentLabel(row: Row, owners: Map<string, Owner>, short: boolean): AgentLabel | undefined {
-  const owner = owners.get(keyOf(row.pr));
-  const agent = row.fetched?.agent;
-  if (owner) {
-    const session = `${owner.session.name} · ${sessionState(owner.session)}`;
-    return { text: short ? session : `Claude Code · ${session}`, local: true };
-  }
-  if (!agent) return undefined;
-  return { text: agent.cloudSession ? `${agent.name} · cloud session` : agent.name, local: false };
+const agentMark = (agent: AgentInfo) => (agent.claude ? '✻' : '◇');
+
+function badgeName(agent: AgentInfo): string {
+  if (agent.session) return agent.session.name;
+  if (agent.cloudSession) return 'cloud';
+  return agent.claude ? 'Claude' : agent.name;
+}
+
+/** The agent on the line of the pull request: a mark, and the session name if the row has the width. */
+function AgentBadge({ agent, named }: { agent: AgentInfo; named: boolean }) {
+  const { session } = agent;
+  const color = agent.claude ? CLAUDE : 'gray';
+  return (
+    <Text color={color} dimColor={!session && !agent.claude}>
+      {session && isWorking(session) ? <Spinner type="dots" /> : agentMark(agent)}
+      {named && ` ${badgeName(agent)}`}
+      {session?.status === 'waiting' && <Text color="yellow"> ?</Text>}
+    </Text>
+  );
+}
+
+/** The line of the agent in the details of a pull request. */
+function AgentLine({ agent }: { agent: AgentInfo }) {
+  const { session } = agent;
+  return (
+    <Text wrap="truncate-end">
+      <Text color={agent.claude ? CLAUDE : 'gray'} bold>
+        {agentMark(agent)} {agent.name}
+      </Text>
+      {session ? (
+        <>
+          <Text dimColor> · session </Text>
+          <Text color={CLAUDE}>{session.name}</Text>
+          <Text dimColor>
+            {' '}
+            · {sessionState(session)} · {session.cwd.replace(homedir(), '~')} · a sends a command
+          </Text>
+        </>
+      ) : (
+        <Text dimColor>
+          {agent.cloudSession ? ` · cloud session ${agent.cloudSession}` : ' · no session on this machine'}
+        </Text>
+      )}
+    </Text>
+  );
 }
 
 function sessionWarning(session: LocalSession): string | undefined {
@@ -1570,6 +1642,11 @@ function ChecksBadge({ summary, short }: { summary: Summary; short: boolean }) {
   );
 }
 
+function selectionMark(unfolded: boolean, selected: boolean): string {
+  if (unfolded) return '▾';
+  return selected ? '❯' : ' ';
+}
+
 interface RowViewProps {
   ref: (node: DOMElement | null) => void;
   row: Row;
@@ -1578,7 +1655,7 @@ interface RowViewProps {
   layout: Layout;
   place: Placement;
   hint: string | undefined;
-  agent: AgentLabel | undefined;
+  agent: AgentInfo | undefined;
   now: Date;
   expanded: boolean;
   selected: boolean;
@@ -1630,8 +1707,8 @@ function RowView({ ref, row, view, options, layout, place, hint, agent, now, exp
       <Box>
         {options.interactive && (
           <Box width={SELECTION_WIDTH} flexShrink={0}>
-            <Text color={BRAND} bold>
-              {selected ? '❯' : ' '}
+            <Text color={BRAND} bold dimColor={!selected}>
+              {selectionMark(expanded, selected)}
             </Text>
           </Box>
         )}
@@ -1665,27 +1742,28 @@ function RowView({ ref, row, view, options, layout, place, hint, agent, now, exp
             </Text>
           </Box>
         )}
-        {summary && !row.left && (layout.checks || layout.counts) && (
+        {layout.agent && agent && (
           <Box flexShrink={0} marginLeft={2}>
-            {layout.checks && <ChecksBadge summary={summary} short={layout.shortChecks} />}
-            {layout.counts && (
-              <Text dimColor>
-                {layout.checks && '  '}
-                {summary.reviewers.length > 0 && `${summary.onHead}/${summary.reviewers.length} on head · `}
-                {summary.reviews} review{summary.reviews === 1 ? '' : 's'}
-              </Text>
-            )}
+            <AgentBadge agent={agent} named={layout.agentName} />
+          </Box>
+        )}
+        {summary && !row.left && layout.checks && (
+          <Box flexShrink={0} marginLeft={2}>
+            <ChecksBadge summary={summary} short={layout.shortChecks} />
           </Box>
         )}
       </Box>
-      {summary &&
-        (layout.lastReview || layout.marks || (layout.agent && agent)) &&
+      {expanded && layout.agent && agent && under(<AgentLine agent={agent} />)}
+      {expanded &&
+        summary &&
+        (layout.counts || layout.lastReview || layout.marks) &&
         under(
           <>
-            {layout.agent && agent && (
+            {layout.counts && (
               <Box flexShrink={0} marginRight={2}>
-                <Text color={agent.local ? BRAND : undefined} dimColor={!agent.local}>
-                  ⌁ {agent.text}
+                <Text dimColor>
+                  {summary.reviewers.length > 0 && `${summary.onHead}/${summary.reviewers.length} on head · `}
+                  {summary.reviews} review{summary.reviews === 1 ? '' : 's'}
                 </Text>
               </Box>
             )}
@@ -1913,6 +1991,7 @@ function ActionBar({
   }
   return (
     <Box height={1} overflow="hidden">
+      <Button id="unfold" hotkey="⏎" label="details" short={short} register={registerButton} />
       {actionsOf('main').map((action) => button(action, disabledCommands && action.merge))}
       <Button id="r" hotkey="r" label="refresh" short={short} register={registerButton} />
       <Button id="h" hotkey="h" label={hiddenLabel(revealed, hiddenCount)} short={short} register={registerButton} />

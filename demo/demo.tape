@@ -18,10 +18,14 @@ Type "boo --watch"
 Sleep 600ms
 Enter
 Sleep 19s
+Enter
+Sleep 1.8s
+Down@400ms 4
+Sleep 0.6s
+Enter
+Sleep 1.8s
 Right
 Sleep 1.2s
-Down@400ms 4
-Sleep 0.8s
 Type "r"
 Sleep 1.2s
 Type "a"

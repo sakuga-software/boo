@@ -12,7 +12,7 @@ export const SETTINGS = [
   { key: 'lastReview', label: 'Show the last reviewer', fallback: true },
   { key: 'marks', label: 'Show a mark for each reviewer', fallback: true },
   { key: 'agent', label: 'Show the coding agent and the local Claude Code session', fallback: true },
-  { key: 'details', label: 'Show the details of the selected pull request', fallback: true },
+  { key: 'details', label: 'Show the failing checks and the quota times of an unfolded pull request', fallback: true },
   { key: 'compact', label: 'Compact rows: no blank line between the pull requests', fallback: false },
   { key: 'stacks', label: 'Show each stacked pull request under the pull request that it merges into', fallback: true },
 ] as const;
