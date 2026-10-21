@@ -102,13 +102,13 @@ function state(target: PullRequest): Facts {
       return t < 7_000
         ? {
             head: 'a1',
-            reviews: [review('a1', -60_000, 'APPROVED', CLAUDE)],
+            reviews: [review('a1', -60_000, 'APPROVED', CLAUDE, 'Confidence Score: 4/5')],
             comments: [inProgress(-20_000)],
             checks: checks(9, 3),
           }
         : {
             head: 'a1',
-            reviews: [review('a1', -60_000, 'APPROVED', CLAUDE), review('a1', 6_500)],
+            reviews: [review('a1', -60_000, 'APPROVED', CLAUDE, 'Confidence Score: 4/5'), review('a1', 6_500)],
             comments: [],
             checks: checks(12),
           };
@@ -117,7 +117,7 @@ function state(target: PullRequest): Facts {
         head: 'b1',
         reviews: [
           review('b1', -600_000, 'CHANGES_REQUESTED'),
-          review('b1', -500_000, 'COMMENTED', GREPTILE, ''),
+          review('b1', -500_000, 'COMMENTED', GREPTILE, '<h3>Confidence Score: 2/5</h3>'),
           copilotRefusal('b1'),
         ],
         comments: [],
@@ -176,6 +176,11 @@ const fakeGitHub: GitHub = {
       base: parent ? `pr-${parent}` : 'main',
       defaultBranch: 'main',
       status: status(target),
+      changes: {
+        additions: (target.number * 7) % 400,
+        deletions: (target.number * 3) % 120,
+        files: (target.number % 13) + 1,
+      },
       ...(AGENTS[target.number] && { agent: AGENTS[target.number] }),
       ...state(target),
     };

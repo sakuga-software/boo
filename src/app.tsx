@@ -48,7 +48,15 @@ import * as github from './github.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { ICON_WIDTH, layoutFor, LABEL_WIDTH, rowHeight, SELECTION_WIDTH, type Layout } from './layout.js';
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from './mouse.js';
-import { summarize, type Overall, type Reviewer, type ReviewerStatus, type Summary } from './reviewers.js';
+import {
+  confidenceOf,
+  summarize,
+  type Confidence,
+  type Overall,
+  type Reviewer,
+  type ReviewerStatus,
+  type Summary,
+} from './reviewers.js';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
 import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
 import { planSync, type LeftStatus } from './sync.js';
@@ -1001,10 +1009,10 @@ export function App(props: AppProps) {
     }
     if (panelRef.current !== undefined) return;
     if (id === 'h') return toggleHidden();
-    if (id === 'unfold') return toggleUnfolded();
+    if (id === 'unfold' || (id === 'e' && modeRef.current === 'main')) return unfold();
     if (id === 'r' && modeRef.current === 'main') return refreshAll();
     if (id === ',') return openPanel(0);
-    if (id === 'bots') return switchMode('bots');
+    if (id === 'bots' || (id === 'b' && modeRef.current === 'main')) return switchMode('bots');
     if (id === 'agent' || (id === 'a' && modeRef.current === 'main')) return switchMode('agent');
     if (id === 'back') return switchMode(parentOf(modeRef.current));
     const bot =
@@ -1016,10 +1024,12 @@ export function App(props: AppProps) {
     if (action) request(action);
   }
 
-  function toggleUnfolded(key = live().key) {
+  /** Shows or hides the details of a row. Without a value, the row switches. */
+  function unfold(key = live().key, value?: boolean) {
     if (!key) return;
     const next = new Set(unfoldedRef.current);
-    if (!next.delete(key)) next.add(key);
+    if (value ?? !next.has(key)) next.add(key);
+    else next.delete(key);
     unfoldedRef.current = next;
     setUnfolded(next);
   }
@@ -1044,7 +1054,7 @@ export function App(props: AppProps) {
     if (panelRef.current !== undefined) return typePanelKey(char);
     if (char === 'k') move(-1);
     else if (char === 'j') move(1);
-    else if (char === '\r') toggleUnfolded();
+    else if (char === '\r') press('o');
     else if (char === 'q') exit();
     else if (char === ' ') switchMode(modeRef.current === 'main' ? 'bots' : parentOf(modeRef.current));
     else if (char === '\u001B') switchMode('main');
@@ -1062,14 +1072,13 @@ export function App(props: AppProps) {
         if (key.backspace || key.delete) return typeKey(BACKSPACE);
         if (key.ctrl || key.meta || key.tab) return;
       }
-      if (key.rightArrow) {
-        const free = !confirmationRef.current && panelRef.current === undefined;
-        return free && modeRef.current === 'main' ? switchMode('bots') : undefined;
+      // → shows the details of the selected row. ← hides them, or goes back one level in a menu.
+      const free = !confirmationRef.current && panelRef.current === undefined;
+      if (key.rightArrow) return free ? unfold(undefined, true) : undefined;
+      if (key.leftArrow) {
+        if (!free) return undefined;
+        return modeRef.current === 'main' ? unfold(undefined, false) : switchMode(parentOf(modeRef.current));
       }
-      if (key.leftArrow)
-        return confirmationRef.current || panelRef.current !== undefined
-          ? undefined
-          : switchMode(parentOf(modeRef.current));
       if (key.return) return typeKey('\r');
       // A terminal can split a mouse report after its Escape byte, and Ink then reports a lone Escape.
       // Wait a moment: if the rest of a mouse report follows, the Escape was part of it.
@@ -1104,7 +1113,7 @@ export function App(props: AppProps) {
   // A click selects a row. A click on the selected row shows or hides its details.
   function click(key: string) {
     if (confirmationRef.current || panelRef.current !== undefined) return;
-    if (key === live().key) toggleUnfolded(key);
+    if (key === live().key) unfold(key);
     else select(key);
   }
 
@@ -1602,7 +1611,12 @@ function reviewerState(reviewer: Reviewer): string {
   }
 }
 
-function reviewerLines(summary: Summary, layout: Layout, now: Date): ReactNode[] {
+function confidenceColor({ score, total }: Confidence): string {
+  if (score / total >= 0.8) return 'green';
+  return score / total >= 0.6 ? 'yellow' : 'red';
+}
+
+function reviewerLines(summary: Summary, confidence: Map<string, Confidence>, layout: Layout, now: Date): ReactNode[] {
   const header = [
     layout.counts &&
       `${summary.reviewers.length > 0 ? `${summary.onHead}/${summary.reviewers.length} on head · ` : ''}${summary.reviews} review${summary.reviews === 1 ? '' : 's'}`,
@@ -1613,11 +1627,20 @@ function reviewerLines(summary: Summary, layout: Layout, now: Date): ReactNode[]
   const width = Math.min(24, Math.max(0, ...summary.reviewers.map((reviewer) => reviewer.name.length)));
   for (const reviewer of summary.reviewers) {
     const chip = CHIPS[reviewer.status];
+    const score = confidence.get(reviewer.login);
     lines.push(
       <Text wrap="truncate-end">
         <Text color={chip.color}>{chip.icon}</Text> {reviewer.name.padEnd(width)}
         {'  '}
         <Text color={chip.color}>{reviewerState(reviewer)}</Text>
+        {score && (
+          <>
+            <Text dimColor> · confidence </Text>
+            <Text color={confidenceColor(score)}>
+              {score.score}/{score.total}
+            </Text>
+          </>
+        )}
         {reviewer.lastReviewAt && <Text dimColor> · {formatAgo(now, reviewer.lastReviewAt)}</Text>}
       </Text>,
     );
@@ -1648,13 +1671,29 @@ function ChecksLine({ checks }: { checks: Summary['checks'] }) {
 /** The lines of an unfolded row, by section: the agent, the reviewers, the checks, then the notes. */
 function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout: Layout, now: Date): DetailLine[] {
   const lines: DetailLine[] = [];
-  const section = (label: string, contents: ReactNode[]) =>
+  // A blank line separates two sections.
+  const section = (label: string, contents: ReactNode[]) => {
+    if (contents.length === 0) return;
+    if (lines.length > 0) lines.push({ key: `${label}:gap`, content: <Text> </Text> });
     contents.forEach((content, index) =>
       lines.push({ key: `${label}:${index}`, ...(index === 0 && { label }), content }),
     );
+  };
+  const changes = row.fetched?.changes;
+  if (changes)
+    section('changes', [
+      <Text>
+        <Text color="green">+{changes.additions}</Text> <Text color="red">−{changes.deletions}</Text>
+        <Text dimColor>
+          {' '}
+          · {changes.files} file{changes.files === 1 ? '' : 's'}
+        </Text>
+      </Text>,
+    ]);
   if (layout.agent && agent) section('agent', agentLines(agent));
   if (row.summary && !row.left) {
-    section('reviewers', reviewerLines(row.summary, layout, now));
+    const confidence = confidenceOf(row.fetched?.reviews ?? [], row.fetched?.comments ?? []);
+    section('reviewers', reviewerLines(row.summary, confidence, layout, now));
     if (layout.checks) section('checks', [<ChecksLine checks={row.summary.checks} />]);
   }
   if (layout.details && view.notes)
@@ -2069,11 +2108,14 @@ function ActionBar({
   }
   return (
     <Box height={1} overflow="hidden">
-      <Button id="unfold" hotkey="⏎" label="details" short={short} register={registerButton} />
-      {actionsOf('main').map((action) => button(action, disabledCommands && action.merge))}
+      <Button id="o" hotkey="⏎" label="open" short={short} register={registerButton} />
+      <Button id="unfold" hotkey="e" label="expand" short={short} register={registerButton} />
+      {actionsOf('main')
+        .filter((action) => action.merge)
+        .map((action) => button(action, disabledCommands))}
       <Button id="r" hotkey="r" label="refresh" short={short} register={registerButton} />
       <Button id="h" hotkey="h" label={hiddenLabel(revealed, hiddenCount)} short={short} register={registerButton} />
-      <Button id="bots" hotkey="→" label="bots" short={short} register={registerButton} />
+      <Button id="bots" hotkey="b" label="bots" short={short} register={registerButton} />
       <Button
         id="agent"
         hotkey="a"
@@ -2084,7 +2126,7 @@ function ActionBar({
       />
       <Button id="," hotkey="," label="settings" short={short} register={registerButton} />
       <Text dimColor wrap="truncate-end">
-        ↑↓ q
+        ↑↓ ←→ q
       </Text>
     </Box>
   );

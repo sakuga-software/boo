@@ -108,6 +108,8 @@ export interface PullRequestSnapshot {
   requested: string[];
   /** The coding agent that the pull request names. */
   agent?: Agent;
+  /** The size of the change. */
+  changes?: { additions: number; deletions: number; files: number };
 }
 
 const REVIEW_FIELDS =
@@ -126,6 +128,7 @@ const QUERY = `
 query(${VARIABLES}) {
   ${PULL} {
     state isDraft merged mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
+    additions deletions changedFiles
     baseRepository { defaultBranchRef { name } }
     author { login __typename }
     reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
@@ -191,6 +194,9 @@ interface PullRequestNode {
   baseRefName: string;
   isCrossRepository: boolean;
   body: string;
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
   baseRepository: { defaultBranchRef: { name: string } | null } | null;
   author: Actor | null;
   reviewRequests: { nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[] };
@@ -301,6 +307,9 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
       )
       .filter((login): login is string => Boolean(login)),
     ...(agent && { agent }),
+    ...(pull.changedFiles !== undefined && {
+      changes: { additions: pull.additions ?? 0, deletions: pull.deletions ?? 0, files: pull.changedFiles },
+    }),
   };
 }
 

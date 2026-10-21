@@ -353,3 +353,28 @@ export function summarize(facts: PullRequestFacts): Summary {
     ...(last && { lastReview: { name: last.name, at: last.lastReviewAt! } }),
   };
 }
+
+export interface Confidence {
+  score: number;
+  total: number;
+}
+
+// Greptile writes "Confidence Score: 4/5", and Sakuga Review writes "Score de confiance : 4/5".
+const CONFIDENCE = /(?:confidence score|score de confiance)\W{0,6}(\d{1,2})\s*\/\s*(\d{1,2})/i;
+
+/** Reads the confidence score that each reviewer gives in its last review or comment that has one. */
+export function confidenceOf(reviews: readonly Review[], comments: readonly Comment[]): Map<string, Confidence> {
+  const posts = [
+    ...reviews.map((review) => ({ login: review.user?.login, body: review.body ?? '', at: review.submitted_at })),
+    ...comments.map((comment) => ({ login: comment.user?.login, body: comment.body, at: comment.updated_at })),
+  ].sort((a, b) => a.at.localeCompare(b.at));
+  const scores = new Map<string, Confidence>();
+  for (const { login, body } of posts) {
+    const match = login ? CONFIDENCE.exec(body) : null;
+    if (!login || !match) continue;
+    const score = Number(match[1]);
+    const total = Number(match[2]);
+    if (total > 0 && score <= total) scores.set(login, { score, total });
+  }
+  return scores;
+}
