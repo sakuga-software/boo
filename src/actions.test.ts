@@ -152,8 +152,16 @@ test('the agent level sends a command only to a pull request with a local sessio
   assert.equal(refusal(fix, { left: false, dryRun: true, local: true }), 'dry run: the tool sends nothing');
   assert.deepEqual(
     actionsOf('agent').map((action) => action.key),
-    ['b', 'r', 'f', 't'],
+    ['b', 'r', 'f', 't', 'w'],
   );
+});
+
+test('the agent level opens a cloud session online, with no local session and even in a dry run', () => {
+  const open = actionForKey('w', 'agent')!;
+  assert.equal(open.openSession, true);
+  assert.equal(refusal(open, { left: false, dryRun: true, cloudSession: true }), null);
+  assert.equal(refusal(open, { left: true, dryRun: false, cloudSession: true }), null);
+  assert.equal(refusal(open, { left: false, dryRun: false, local: true }), 'this pull request links no cloud session');
 });
 
 test('a prompt takes the values of the pull request', () => {

@@ -37,18 +37,25 @@ boo --help              # options, states and marks
 
 ## What a row shows
 
-Each pull request takes one line. `Enter` unfolds it and shows its details; `Enter` again folds it.
+Each pull request takes one line. `e` or `→` unfolds it and shows its details; `e` or `←` folds it.
+`Enter` opens it in the browser.
 
 ```
 ❯▾✎  changes requested  api#912  fix(auth): refresh the token before it expires   ✻ auth  ✔ 8/8 checks
+                        changes    +384 −96 · 3 files
+
                         agent      ✻ Claude Code · session auth · working
                                    ~/code/api · a sends rebase, review, fix or test
+
                         reviewers  2/3 on head · 2 reviews · last greptile 9 min ago
                                    ✎ coderabbitai  changes requested · 10 min ago
                                    ◷ copilot       out of quota, no return time
-                                   ● greptile      commented · 9 min ago
+                                   ● greptile      commented · confidence 2/5 · 9 min ago
+
                         checks     ✔ 8 passed
+
                         notes      blocked by the branch protection rules
+
   ✔  ready to merge     web#921  feat(search): filter the results by date   ◇ Copilot  ✔ 10/10 checks
 ```
 
@@ -65,13 +72,17 @@ The line of a pull request shows:
   yellow `?` follows a session that waits for an answer. See
   [Agents and local sessions](#agents-and-local-sessions).
 
-An unfolded pull request shows its details in four sections, one fact for each line:
+An unfolded pull request shows its details in sections, one fact for each line, with a blank line
+between two sections:
 
+- **changes**: the lines added and removed, and the count of changed files.
 - **agent**: the agent, then the name, the state and the folder of its local session, or the page
   of its cloud session.
 - **reviewers**: the reviewers that reviewed the last commit out of all the reviewers, the count of
-  reviews and the last reviewer. Then one line for each reviewer, with its mark, its state in words
-  and the age of its last review. The marks: `✔` approved, `✎` changes requested, `●` commented on
+  reviews and the last reviewer. Then one line for each reviewer, with its mark, its state in words,
+  its confidence score and the age of its last review. The confidence score comes from the last
+  review or comment of the reviewer that gives one: `Confidence Score: 4/5` (Greptile) or
+  `Score de confiance : 4/5` (Sakuga Review). It shows green from 80 %, yellow from 60 %, red below. The marks: `✔` approved, `✎` changes requested, `●` commented on
   the last commit; `⟳` reviewing, with `2/3` if the bot shows its progress; `◷` out of quota, with
   the return time if the notice gives one; `↻` CodeRabbit to retry; `○` requested; `◌` reviewed an
   older commit only, with the verdict that still stands; `⊘` skipped; `‖` paused.
@@ -149,7 +160,8 @@ pull request:
 The session reads the prompt after its current turn, as a message from another session named
 `boo`. Claude Code does not run a slash command that comes this way, so a prompt is plain text.
 The commands reach only a session on this machine: a session on another machine or in the cloud
-shows its agent, but the bar dims the commands.
+shows its agent, but the bar dims the commands. If the description of the pull request links a
+cloud session, `w` (`open online`) opens its page in the browser, with no confirmation.
 
 > [!WARNING]
 > The session records, the links and the inbox of a session are internal to Claude Code, not a
@@ -339,9 +351,10 @@ With `--watch` in a terminal, the tool opens in full screen and takes keys and m
 counts and the action bar stay at the bottom of the window. Piped or scheduled runs stay as they are.
 
 The action bar has three levels. The main set shows open, merge, refresh, the hidden pull requests,
-the commands for the agent and the settings. `→` or `Space` shows the list of the review bots. `a`
-shows the commands for the agent. The key of a bot opens the menu of that
-bot, with its commands. `←` or `Space` goes back one level, and `Esc` goes back to the main set.
+the commands for the agent and the settings. `b` or `Space` shows the list of the review bots. `a`
+shows the commands for the agent. The key of a bot opens the menu of that bot, with its commands.
+`←` or `Space` goes back one level, and `Esc` goes back to the main set. In the main set, `→` and
+`←` unfold and fold the selected pull request.
 
 A key of a bot or of a command works only at the level that shows it, so two bots can use the same
 key. The keys of the main set work at every level, except `r`: in the bot levels, `r` belongs to the
@@ -350,15 +363,16 @@ bots.
 | Key                | Action                                                                              |
 | ------------------ | ----------------------------------------------------------------------------------- |
 | `↑` `↓` or `k` `j` | select a pull request (the mouse wheel does it too)                                 |
-| `Enter`            | unfold or fold the selected pull request: its agent, its reviewers and its details  |
-| `o`                | open the pull request in the browser                                                |
+| `Enter` or `o`     | open the pull request in the browser                                                |
+| `e`                | unfold or fold the selected pull request, in the main set only                      |
+| `→`                | unfold the selected pull request                                                    |
+| `←`                | fold the selected pull request; in another level, go back one level                 |
 | `m`                | merge the pull request: squash if the repository allows it, else merge, else rebase |
 | `r`                | read the list and every pull request again now, in the main set only                |
 | `h`                | show or hide the merged, closed and draft pull requests                             |
 | `a`                | show the commands for the agent, in the main set only                               |
 | `,`                | open the settings                                                                   |
-| `→` or `Space`     | show the list of the review bots                                                    |
-| `←` or `Space`     | go back one level                                                                   |
+| `b` or `Space`     | show the list of the review bots; `Space` goes back one level in another level      |
 | `Esc`              | go back to the main set                                                             |
 | `q`                | quit                                                                                |
 
@@ -404,7 +418,7 @@ The GIF uses the real interface and the real decision logic with a fake GitHub
 (`demo/demo.tsx`). The fake GitHub plays a timeline: a CodeRabbit review in progress, a bot that
 shows its progress, a Copilot quota refusal, a CodeRabbit quota that comes back and a retry, a
 merged pull request, a new pull request, then the reviews. At the end, it unfolds the first pull
-request with `Enter`, selects and unfolds another one, shows the list of the review bots with `→`,
+request with `e`, selects another one and unfolds it with `→`, shows the list of the review bots with `b`,
 opens the CodeRabbit menu with `r`, and posts
 `@coderabbitai approve` with `a`, then `Enter`. Then it goes back to the first pull request, which a
 fake local session works on, opens the commands for the agent with `a`, and sends `fix` with `f`,

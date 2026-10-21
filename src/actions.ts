@@ -117,6 +117,8 @@ export interface PromptValues {
 export const fillPrompt = (prompt: string, values: PromptValues) =>
   prompt.replace(/\{(url|branch|base)\}/g, (_, name: keyof PromptValues) => values[name]);
 
+export const OPEN_SESSION: Action = { key: 'w', label: 'open online', openSession: true };
+
 /** The level of the action bar: the main set, the list of bots, the menu of one bot, or the commands for the agent. */
 export type Mode = 'main' | 'bots' | 'agent' | Bot;
 
@@ -128,6 +130,8 @@ export interface Action {
   merge?: true;
   /** The action sends this command to the local session of the pull request. */
   agent?: AgentCommand;
+  /** The action opens the page of the cloud session of the pull request. */
+  openSession?: true;
 }
 
 const MAIN_ACTIONS: readonly Action[] = [
@@ -156,7 +160,8 @@ export function mentionProblem(mention: string): string | undefined {
 export function actionsOf(mode: Mode): readonly Action[] {
   if (mode === 'main') return MAIN_ACTIONS;
   if (mode === 'bots') return [];
-  if (mode === 'agent') return AGENT_COMMANDS.map((agent) => ({ key: agent.key, label: agent.label, agent }));
+  if (mode === 'agent')
+    return [...AGENT_COMMANDS.map((agent) => ({ key: agent.key, label: agent.label, agent })), OPEN_SESSION];
   return mode.commands.map(({ key, command }) => ({ key, label: command, request: { bot: mode, command } }));
 }
 
@@ -213,10 +218,13 @@ export interface Target {
   reviewers?: readonly ReviewerRef[];
   /** A Claude Code session on this machine works on the pull request. */
   local?: boolean;
+  /** The description of the pull request links a Claude Code cloud session. */
+  cloudSession?: boolean;
 }
 
 /** Returns why the action is not available on the target, or null if it is available. */
 export function refusal(action: Action, target: Target): string | null {
+  if (action.openSession) return target.cloudSession ? null : 'this pull request links no cloud session';
   if (!action.request && !action.merge && !action.agent) return null;
   if (target.left) return 'this pull request is no longer open';
   if (target.dryRun) {

@@ -4,6 +4,7 @@ import { BOT_LOGIN, type Comment, type Decision, type Review } from './decide.js
 import { toSnapshot } from './github.js';
 import {
   checkBelongsTo,
+  confidenceOf,
   displayName,
   summarize,
   summarizeChecks,
@@ -366,6 +367,9 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     headRefOid: 'head',
     headRefName: 'mathieu/feature',
     body: 'A change.',
+    additions: 190,
+    deletions: 65,
+    changedFiles: 12,
     author: { login: 'Mheaus', __typename: 'User' },
     reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'Bot', login: 'greptile-apps' } }] },
     reviews: {
@@ -424,6 +428,7 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
   });
   assert.equal(snapshot.mergeState, 'unstable');
   assert.equal(snapshot.agent?.id, 'claude');
+  assert.deepEqual(snapshot.changes, { additions: 190, deletions: 65, files: 12 });
   assert.deepEqual(snapshot.requested, ['greptile-apps[bot]']);
   assert.deepEqual(
     snapshot.comments.map((comment: Comment) => [comment.id, comment.user?.login]),
@@ -446,4 +451,28 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     { name: 'test', state: 'failure' },
     { name: 'CodeRabbit', state: 'success', description: 'Review rate limited' },
   ]);
+});
+
+test('the confidence of a reviewer comes from its last review or comment with a score', () => {
+  const post = (login: string, body: string, at: string) => ({
+    user: { login },
+    body,
+    commit_id: 'head',
+    submitted_at: at,
+    created_at: at,
+    updated_at: at,
+  });
+  const scores = confidenceOf(
+    [
+      post('sakuga-review[bot]', '**Score de confiance : 3/5** · Mergeable', '2026-10-21T08:00:00Z'),
+      post('sakuga-review[bot]', '**Score de confiance : 4/5**', '2026-10-21T09:00:00Z'),
+      post('sakuga-review[bot]', 'A reply with no score.', '2026-10-21T10:00:00Z'),
+      post('octocat', 'Confidence score: 9/5', '2026-10-21T10:00:00Z'),
+    ],
+    [post('greptile-apps[bot]', '<h3>Confidence Score: 2/5</h3>', '2026-10-21T09:30:00Z')],
+  );
+  assert.deepEqual(Object.fromEntries(scores), {
+    'sakuga-review[bot]': { score: 4, total: 5 },
+    'greptile-apps[bot]': { score: 2, total: 5 },
+  });
 });

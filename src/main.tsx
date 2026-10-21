@@ -87,12 +87,15 @@ const cli = meow(
 
   Keys and mouse
     With --watch in a terminal, the list takes keys and mouse clicks. Each
-    pull request takes one line; Enter unfolds it.
+    pull request takes one line; e unfolds it.
     ↑ ↓  or  k j    select a pull request; the mouse wheel does it too
-    Enter           unfold or fold the selected pull request: its agent, its
-                    reviewers, its failing checks and quota times; a click
-                    on the selected row does it too
-    o               open the pull request in the browser
+    Enter  or  o    open the pull request in the browser
+    e               unfold or fold the selected pull request: the size of
+                    the change, its agent, its reviewers with their
+                    confidence, its checks and notes; a click on the
+                    selected row does it too; only in the main set
+    →  ←            unfold, fold the selected pull request; in another
+                    level, ← goes back one level
     m               merge the pull request (squash, else merge, else rebase)
     r               read the list and every pull request again now; only in
                     the main set, because the bots use r
@@ -102,13 +105,14 @@ const cli = meow(
                     b rebase, r review, f fix, t test; each one sends a
                     prompt to the local session of the pull request, which
                     reads it after its current turn; "agentPrompts" in the
-                    settings file changes a prompt ({url}, {branch}, {base})
+                    settings file changes a prompt ({url}, {branch}, {base});
+                    w opens the cloud session that the description links
     ,               open the settings: the hidden pull requests, the parts of
                     a row, the authors and the review bots (on or off,
                     automatic retry, bots of your own); saved in
                     ${settingsPath().replace(homedir(), '~')}
-    →  or  space    show the list of the review bots
-    ←  or  space    go back one level; Esc goes back to the main set
+    b  or  space    show the list of the review bots
+    space           go back one level; Esc goes back to the main set
     In the list of the review bots, a key opens the menu of a bot:
     r  CodeRabbit   r "@coderabbitai review", f "@coderabbitai full review",
                     a "@coderabbitai approve": resolve the threads, then approve,
