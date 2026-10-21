@@ -211,15 +211,18 @@ export async function sendToSession(session: LocalSession, text: string, home = 
   const frames = inboxFrames(session, await inboxToken(session, home), text);
   await new Promise<void>((resolve, reject) => {
     const socket = connect({ path: session.socket });
-    // The timeout covers the connection only. After the write, the session has the message, so a slow
-    // close must not report a failure: a second send would put the prompt twice in the session.
+    // The send succeeds after the write. A later timeout, close or error must not report a failure:
+    // the session has the message, and a second send would put the prompt twice in the session.
     socket.setTimeout(5_000, () => socket.destroy(new Error(`${session.name} did not take the connection in time`)));
-    socket.once('error', reject);
+    socket.on('error', reject);
     socket.once('connect', () => {
       socket.setTimeout(0);
-      socket.write(frames);
-      // Claude Code waits 150 ms before it ends its own sends on macOS. boo does the same.
-      setTimeout(() => socket.end(resolve), 150);
+      socket.write(frames, (error) => {
+        if (error) return reject(error);
+        resolve();
+        // Claude Code waits 150 ms before it ends its own sends on macOS. boo does the same.
+        setTimeout(() => socket.end(), 150);
+      });
     });
   });
 }
