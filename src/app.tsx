@@ -1165,7 +1165,12 @@ export function App(props: AppProps) {
       layout,
     );
   const range = options.interactive
-    ? visibleRange(shownRows.map(heightOf), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
+    ? visibleRange(
+        shownRows.map(heightOf),
+        selectedIndex,
+        Math.max(3, screenRows - CHROME_LINES - promptLines(confirmation, columns)),
+        scrollStart.current,
+      )
     : { start: 0, end: shownRows.length };
   const selectedRow = selection ? rowsRef.current.get(selection) : undefined;
   scrollStart.current = range.start;
@@ -1642,10 +1647,14 @@ function ChecksBadge({ summary, short }: { summary: Summary; short: boolean }) {
   );
 }
 
-function selectionMark(unfolded: boolean, selected: boolean): string {
-  if (unfolded) return '▾';
-  return selected ? '❯' : ' ';
+/** The lines that the prompt of a confirmation adds under the question. The chrome counts one line already. */
+function promptLines(confirmation: Confirmation | undefined, columns: number): number {
+  if (!confirmation?.prompt) return 0;
+  const lines = Math.ceil(confirmation.prompt.length / Math.max(1, columns - 2));
+  return confirmation.warning ? lines : lines - 1;
 }
+
+const selectionMark = (unfolded: boolean, selected: boolean) => `${selected ? '❯' : ' '}${unfolded ? '▾' : ' '}`;
 
 interface RowViewProps {
   ref: (node: DOMElement | null) => void;
@@ -2039,9 +2048,13 @@ function Controls(props: ControlsProps) {
             <Button id="yes" hotkey="y / ⏎" label="yes" register={registerButton} />
             <Button id="no" hotkey="n / esc" label="no" register={registerButton} />
           </Box>
-          <Text color={confirmation.warning ? 'yellow' : 'gray'} wrap="truncate-end">
-            {confirmation.warning ?? confirmation.prompt ?? ' '}
-          </Text>
+          {/* The prompt wraps: the user confirms the complete text that the session gets. */}
+          {confirmation.warning || !confirmation.prompt ? (
+            <Text color="yellow" wrap="truncate-end">
+              {confirmation.warning ?? ' '}
+            </Text>
+          ) : undefined}
+          {confirmation.prompt && <Text dimColor>{confirmation.prompt}</Text>}
         </>
       ) : (
         <>
