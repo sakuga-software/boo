@@ -102,7 +102,8 @@ const cli = meow(
                     b rebase, r review, f fix, t test; each one sends a
                     prompt to the local session of the pull request, which
                     reads it after its current turn; "agentPrompts" in the
-                    settings file changes a prompt ({url}, {branch}, {base})
+                    settings file changes a prompt ({url}, {branch}, {base});
+                    w opens the cloud session that the description links
     ,               open the settings: the hidden pull requests, the parts of
                     a row, the authors and the review bots (on or off,
                     automatic retry, bots of your own); saved in
