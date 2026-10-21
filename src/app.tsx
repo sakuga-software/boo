@@ -837,6 +837,7 @@ export function App(props: AppProps) {
       left: row.left !== undefined,
       dryRun: options.dryRun,
       local: ownersRef.current.has(keyOf(row.pr)),
+      cloudSession: Boolean(row.fetched?.agent?.cloudSession),
       ...(reviewers && { reviewers }),
     };
   }
@@ -874,6 +875,14 @@ export function App(props: AppProps) {
       }
       setFlash(undefined);
       confirm({ key, action, warning: mergeWarning(row), head });
+      return;
+    }
+    if (action.openSession) {
+      const url = row.fetched!.agent!.cloudSession!;
+      gitHub.openInBrowser(url).then(
+        () => setFlash({ text: `Opened the cloud session of ${key} in the browser.`, color: 'green' }),
+        (error) => setFlash({ text: `Could not open the cloud session of ${key}: ${message(error)}`, color: 'red' }),
+      );
       return;
     }
     if (action.agent) {
@@ -1259,6 +1268,7 @@ export function App(props: AppProps) {
           bots={bots}
           reviewers={selectedRow?.summary?.reviewers}
           session={selection ? owners.get(selection)?.session : undefined}
+          cloudSession={selectedRow?.fetched?.agent?.cloudSession}
         />
       )}
     </Box>
@@ -1566,7 +1576,7 @@ function agentLines(agent: AgentInfo): ReactNode[] {
         <Text dimColor> · cloud session</Text>
       </Text>,
       <Text dimColor wrap="truncate-end">
-        {agent.cloudSession}
+        {agent.cloudSession} · a, then w, opens it online
       </Text>,
     ];
   return [
@@ -1953,6 +1963,8 @@ interface ControlsProps {
   bots: readonly Bot[];
   /** The local session that works on the selected pull request. */
   session?: LocalSession | undefined;
+  /** The page of the cloud session of the selected pull request. */
+  cloudSession?: string | undefined;
 }
 
 interface ButtonProps {
@@ -2002,6 +2014,7 @@ function ActionBar({
   reviewers,
   bots,
   session,
+  cloudSession,
 }: ControlsProps) {
   const short = mode === 'main' ? shortMain : shortBots;
   const button = (action: Action, dim?: boolean) => (
@@ -2036,8 +2049,10 @@ function ActionBar({
   if (mode === 'agent') {
     return (
       <Box height={1} overflow="hidden">
-        <Group name={session ? session.name : 'no local session'} />
-        {actionsOf('agent').map((action) => button(action, disabledCommands || !session))}
+        <Group name={session?.name ?? (cloudSession ? 'cloud session' : 'no session')} />
+        {actionsOf('agent').map((action) =>
+          button(action, action.openSession ? !cloudSession : disabledCommands || !session),
+        )}
         <Button id="back" hotkey="←" label="back" short={short} register={registerButton} />
       </Box>
     );
@@ -2059,7 +2074,14 @@ function ActionBar({
       <Button id="r" hotkey="r" label="refresh" short={short} register={registerButton} />
       <Button id="h" hotkey="h" label={hiddenLabel(revealed, hiddenCount)} short={short} register={registerButton} />
       <Button id="bots" hotkey="→" label="bots" short={short} register={registerButton} />
-      <Button id="agent" hotkey="a" label="agent" dim={!session} short={short} register={registerButton} />
+      <Button
+        id="agent"
+        hotkey="a"
+        label="agent"
+        dim={!session && !cloudSession}
+        short={short}
+        register={registerButton}
+      />
       <Button id="," hotkey="," label="settings" short={short} register={registerButton} />
       <Text dimColor wrap="truncate-end">
         ↑↓ q

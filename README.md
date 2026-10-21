@@ -149,7 +149,8 @@ pull request:
 The session reads the prompt after its current turn, as a message from another session named
 `boo`. Claude Code does not run a slash command that comes this way, so a prompt is plain text.
 The commands reach only a session on this machine: a session on another machine or in the cloud
-shows its agent, but the bar dims the commands.
+shows its agent, but the bar dims the commands. If the description of the pull request links a
+cloud session, `w` (`open online`) opens its page in the browser, with no confirmation.
 
 > [!WARNING]
 > The session records, the links and the inbox of a session are internal to Claude Code, not a
