@@ -1,12 +1,14 @@
 import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize, type DOMElement } from 'ink';
 import Spinner from 'ink-spinner';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { homedir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import {
   actionForKey,
   actionsOf,
   botBarWidth,
   CODERABBIT,
+  fillPrompt,
   isAbsent,
   isCodeRabbit,
   moveSelection,
@@ -21,7 +23,6 @@ import {
   type ReviewerRef,
 } from './actions.js';
 import {
-  BOT_LOGIN,
   botReplied,
   decide,
   quotaScope,
@@ -53,6 +54,7 @@ import { parentFinder, placeStacks, type Placement, type StackItem } from './sta
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
+import { LinkIndex, readOwners, sendToSession, type LocalSession, type Owner } from './sessions.js';
 
 export interface Options {
   org: string;
@@ -82,11 +84,24 @@ export type GitHub = Pick<
   'listPullRequests' | 'fetchPullRequest' | 'requestReview' | 'openInBrowser' | 'mergePullRequest'
 >;
 
+/** The Claude Code sessions of this machine. */
+export interface Sessions {
+  /** Returns the local session that works on each pull request, by "owner/repo#number". */
+  readOwners(): Promise<Map<string, Owner>>;
+  send(session: LocalSession, text: string): Promise<void>;
+}
+
+function localSessions(): Sessions {
+  const index = new LinkIndex();
+  return { readOwners: () => readOwners(index), send: (session, text) => sendToSession(session, text) };
+}
+
 export interface Timing {
   replyPollMs: number;
   replyTimeoutMs: number;
   watchPollMs: number;
   listRefreshMs: number;
+  sessionsPollMs: number;
 }
 
 const DEFAULT_TIMING: Timing = {
@@ -94,9 +109,12 @@ const DEFAULT_TIMING: Timing = {
   replyTimeoutMs: 90_000,
   watchPollMs: 30_000,
   listRefreshMs: 60_000,
+  sessionsPollMs: 5_000,
 };
 const REPOST_GUARD_MS = 15 * 60_000;
 const BRAND = '#8B5CF6';
+// The color of Claude Code in its own terminal theme.
+const CLAUDE = '#D77757';
 const isReviewRequest = (request: Request) => request.command === 'review' || request.command === 'full review';
 const HIDING_SETTING: Record<LeftStatus, SettingKey> = {
   merged: 'hideMerged',
@@ -190,6 +208,9 @@ interface Confirmation {
   warning?: string;
   /** The head commit that the warnings describe. A merge fails if the head changes after it. */
   head?: string;
+  /** The session that gets the message of an agent command, and the message. */
+  session?: LocalSession;
+  prompt?: string;
 }
 
 interface PostControls {
@@ -202,6 +223,7 @@ interface PostControls {
 interface AppProps {
   options: Options;
   gitHub?: GitHub;
+  sessions?: Sessions;
   timing?: Timing;
   settings?: Settings;
   /** Stores the settings after a change in the settings panel. */
@@ -211,9 +233,10 @@ interface AppProps {
 export function App(props: AppProps) {
   // The workflow posts comments. If a new prop restarts it, it posts again and loses its repost guard.
   // Thus the component keeps the props of its first render.
-  const [{ options, gitHub, timing, saveSettings }] = useState(() => ({
+  const [{ options, gitHub, sessions, timing, saveSettings }] = useState(() => ({
     options: props.options,
     gitHub: props.gitHub ?? github,
+    sessions: props.sessions ?? localSessions(),
     timing: props.timing ?? DEFAULT_TIMING,
     saveSettings: props.saveSettings,
   }));
@@ -267,6 +290,11 @@ export function App(props: AppProps) {
   const rowNodes = useRef(new Map<string, DOMElement>());
   const buttonNodes = useRef(new Map<string, DOMElement>());
   const scrollStart = useRef(0);
+  const [owners, setOwners] = useState<Map<string, Owner>>(() => new Map());
+  // The rows that show their details: the agent, the reviewers, the checks that fail.
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(() => new Set());
+  const unfoldedRef = useRef(unfolded);
+  const ownersRef = useRef(owners);
 
   const coderabbitRetries = () =>
     isEnabled(settingsRef.current, CODERABBIT) && retriesOn(settingsRef.current, CODERABBIT);
@@ -540,6 +568,36 @@ export function App(props: AppProps) {
   }, [authors]);
 
   useEffect(() => {
+    let stopped = false;
+    let reading = false;
+    const read = async () => {
+      // A read of a large transcript can outlast the poll interval. Two reads must not share an index.
+      if (reading) return;
+      reading = true;
+      try {
+        const next = await sessions.readOwners();
+        if (stopped) return;
+        ownersRef.current = next;
+        setOwners(next);
+      } catch {
+        // The session records are internal to Claude Code. If they are unreadable, the rows show no session.
+        if (stopped) return;
+        ownersRef.current = new Map();
+        setOwners(ownersRef.current);
+      } finally {
+        reading = false;
+      }
+    };
+    void read();
+    if (!options.watch) return () => void (stopped = true);
+    const timer = setInterval(read, timing.sessionsPollMs);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!options.watch) return;
     const timer = setInterval(() => setNow(new Date()), 1_000);
     return () => clearInterval(timer);
@@ -615,7 +673,7 @@ export function App(props: AppProps) {
     setSettings(next);
     // The menu of a bot that the change turns off or deletes closes. Another menu takes the new version of its bot.
     const mode = modeRef.current;
-    if (mode !== 'main' && mode !== 'bots') {
+    if (typeof mode !== 'string') {
       const bot = activeBots(next).find((candidate) => candidate.id === mode.id);
       switchMode(bot ?? 'bots');
     }
@@ -775,7 +833,12 @@ export function App(props: AppProps) {
 
   function targetOf(row: Row) {
     const reviewers = row.summary?.reviewers;
-    return { left: row.left !== undefined, dryRun: options.dryRun, ...(reviewers && { reviewers }) };
+    return {
+      left: row.left !== undefined,
+      dryRun: options.dryRun,
+      local: ownersRef.current.has(keyOf(row.pr)),
+      ...(reviewers && { reviewers }),
+    };
   }
 
   function quotaWarning(row: Row, request: Request): string | undefined {
@@ -813,6 +876,22 @@ export function App(props: AppProps) {
       confirm({ key, action, warning: mergeWarning(row), head });
       return;
     }
+    if (action.agent) {
+      const session = ownersRef.current.get(key)!.session;
+      if (!row.fetched) {
+        setFlash({ text: `Cannot ${action.label} ${key}: its state is not fetched yet.`, color: 'yellow' });
+        return;
+      }
+      const prompt = fillPrompt(settingsRef.current.agentPrompts[action.agent.label] ?? action.agent.prompt, {
+        url: row.pr.url,
+        branch: row.fetched.branch,
+        base: row.fetched.base,
+      });
+      setFlash(undefined);
+      const warning = sessionWarning(session);
+      confirm({ key, action, session, prompt, ...(warning && { warning }) });
+      return;
+    }
     if (!action.request) {
       gitHub.openInBrowser(row.pr.url).then(
         () => setFlash({ text: `Opened ${key} in the browser.`, color: 'green' }),
@@ -827,7 +906,7 @@ export function App(props: AppProps) {
   function answer(yes: boolean) {
     const pending = confirmationRef.current;
     confirm(undefined);
-    if (!pending?.action.request && !pending?.action.merge) return;
+    if (!pending?.action.request && !pending?.action.merge && !pending?.action.agent) return;
     const row = rowsRef.current.get(pending.key);
     if (!yes || !row) {
       setFlash({ text: 'Cancelled.', color: 'gray' });
@@ -837,6 +916,16 @@ export function App(props: AppProps) {
     const refused = refusal(pending.action, targetOf(row));
     if (refused) {
       setFlash({ text: `Cannot ${pending.action.label} ${pending.key}: ${refused}.`, color: 'yellow' });
+      return;
+    }
+    if (pending.action.agent) {
+      const { session, prompt, action } = pending;
+      if (!session || !prompt) return;
+      setFlash({ text: `Sending "${action.label}" to ${session.name}…`, color: 'blue' });
+      sessions.send(session, prompt).then(
+        () => setFlash({ text: `Sent "${action.label}" to ${session.name} for ${pending.key}.`, color: 'green' }),
+        (error) => setFlash({ text: `Could not send to ${session.name}: ${message(error)}`, color: 'red' }),
+      );
       return;
     }
     if (pending.action.merge) {
@@ -903,9 +992,11 @@ export function App(props: AppProps) {
     }
     if (panelRef.current !== undefined) return;
     if (id === 'h') return toggleHidden();
+    if (id === 'unfold') return toggleUnfolded();
     if (id === 'r' && modeRef.current === 'main') return refreshAll();
     if (id === ',') return openPanel(0);
     if (id === 'bots') return switchMode('bots');
+    if (id === 'agent' || (id === 'a' && modeRef.current === 'main')) return switchMode('agent');
     if (id === 'back') return switchMode(parentOf(modeRef.current));
     const bot =
       modeRef.current === 'bots'
@@ -914,6 +1005,14 @@ export function App(props: AppProps) {
     if (bot) return switchMode(bot);
     const action = actionForKey(id, modeRef.current);
     if (action) request(action);
+  }
+
+  function toggleUnfolded(key = live().key) {
+    if (!key) return;
+    const next = new Set(unfoldedRef.current);
+    if (!next.delete(key)) next.add(key);
+    unfoldedRef.current = next;
+    setUnfolded(next);
   }
 
   function refreshAll() {
@@ -936,7 +1035,7 @@ export function App(props: AppProps) {
     if (panelRef.current !== undefined) return typePanelKey(char);
     if (char === 'k') move(-1);
     else if (char === 'j') move(1);
-    else if (char === '\r') press('o');
+    else if (char === '\r') toggleUnfolded();
     else if (char === 'q') exit();
     else if (char === ' ') switchMode(modeRef.current === 'main' ? 'bots' : parentOf(modeRef.current));
     else if (char === '\u001B') switchMode('main');
@@ -993,8 +1092,15 @@ export function App(props: AppProps) {
     return () => clearTimeout(timer);
   }, [flash]);
 
-  const handlers = useRef({ press, move, select, typeKey, step });
-  handlers.current = { press, move, select, typeKey, step };
+  // A click selects a row. A click on the selected row shows or hides its details.
+  function click(key: string) {
+    if (confirmationRef.current || panelRef.current !== undefined) return;
+    if (key === live().key) toggleUnfolded(key);
+    else select(key);
+  }
+
+  const handlers = useRef({ press, move, select, typeKey, step, click });
+  handlers.current = { press, move, select, typeKey, step, click };
 
   useEffect(() => {
     if (!options.interactive) return;
@@ -1006,7 +1112,7 @@ export function App(props: AppProps) {
       const button = hitTest(buttonNodes.current, event.x, event.y);
       if (button) return handlers.current.press(button);
       const row = hitTest(rowNodes.current, event.x, event.y);
-      if (row) handlers.current.select(row);
+      if (row) handlers.current.click(row);
     });
     const onData = (data: Buffer | string) => {
       const text = data.toString();
@@ -1043,20 +1149,21 @@ export function App(props: AppProps) {
     ]),
   );
   const bots = activeBots(settings);
-  // In a terminal, only the selected row shows its details. A piped run shows them all.
-  const expanded = (row: Row) => !options.interactive || keyOf(row.pr) === selection;
+  // In a terminal, a row shows its details after Enter. A piped run shows them all.
+  const expanded = (row: Row) => !options.interactive || unfolded.has(keyOf(row.pr));
   const layout = layoutFor(columns, settings, options.interactive);
+  const lines = new Map(
+    shownRows.map((row) => [row, detailLines(row, views.get(row)!, agentOf(row, owners), layout, clock)]),
+  );
   const heightOf = (row: Row) =>
-    rowHeight(
-      {
-        summary: Boolean(row.summary),
-        detail: expanded(row) && Boolean(views.get(row)!.detail),
-        posted: Boolean(row.posted),
-      },
-      layout,
-    );
+    rowHeight({ details: expanded(row) ? lines.get(row)!.length : 0, posted: Boolean(row.posted) }, layout);
   const range = options.interactive
-    ? visibleRange(shownRows.map(heightOf), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
+    ? visibleRange(
+        shownRows.map(heightOf),
+        selectedIndex,
+        Math.max(3, screenRows - CHROME_LINES - promptLines(confirmation, columns)),
+        scrollStart.current,
+      )
     : { start: 0, end: shownRows.length };
   const selectedRow = selection ? rowsRef.current.get(selection) : undefined;
   scrollStart.current = range.start;
@@ -1120,7 +1227,8 @@ export function App(props: AppProps) {
               layout={layout}
               place={places.get(keyOf(row.pr))!}
               hint={stackHint(row, places.get(keyOf(row.pr))!, rowsRef.current)}
-              now={clock}
+              agent={agentOf(row, owners)}
+              lines={lines.get(row)!}
               expanded={expanded(row)}
               selected={options.interactive && keyOf(row.pr) === selection}
             />
@@ -1150,6 +1258,7 @@ export function App(props: AppProps) {
           shortBots={layout.shortBar || columns - 2 < botBarWidth(bots)}
           bots={bots}
           reviewers={selectedRow?.summary?.reviewers}
+          session={selection ? owners.get(selection)?.session : undefined}
         />
       )}
     </Box>
@@ -1238,7 +1347,8 @@ interface View {
   icon: ReactNode;
   label: string;
   color: string;
-  detail?: string;
+  /** The lines of the notes section of an unfolded row. */
+  notes?: string[];
 }
 
 const spinner = (color: string) => (
@@ -1266,7 +1376,7 @@ const LEFT_VIEWS: Record<LeftStatus, View> = {
     icon: <Text color="gray">◌</Text>,
     label: 'draft',
     color: 'gray',
-    detail: 'watched again when it is ready for review',
+    notes: ['watched again when it is ready for review'],
   },
 };
 
@@ -1311,24 +1421,15 @@ function retryNote(options: Options, retry: boolean | undefined): string {
   return retry ? ', retry queued' : ', automatic retry off';
 }
 
-function details(row: Row, context: DescribeContext): string | undefined {
-  const summary = row.summary;
-  if (!summary) return context.stack;
+/** The notes of a row. The sections of the reviewers and of the checks show the rest. */
+function notesOf(row: Row, context: DescribeContext): string[] {
   const parts = [
     context.stack,
-    summary.checks.failed.length > 0 && `failing: ${summary.checks.failed.join(', ')}`,
-    summary.checks.pending > 0 && `${summary.checks.pending} check${summary.checks.pending === 1 ? '' : 's'} running`,
-    MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
-    ...summary.reviewers
-      .filter((reviewer) => reviewer.login !== BOT_LOGIN && reviewer.status === 'quota')
-      .map(
-        (reviewer) =>
-          `${reviewer.name} quota ${reviewer.until ? `back at ${formatTime(reviewer.until)}` : 'with no return time'}`,
-      ),
+    row.summary && MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
     ...(context.retries ?? []).map(({ bot, at }) => `${bot.name} retry at ${formatTime(at)}`),
-    coderabbitDetail(row.decision, context),
-  ].filter(Boolean);
-  return parts.length > 0 ? parts.join(' · ') : undefined;
+    row.summary && coderabbitDetail(row.decision, context),
+  ];
+  return parts.filter((part): part is string => Boolean(part));
 }
 
 function describe(row: Row, context: DescribeContext): View {
@@ -1339,15 +1440,15 @@ function describe(row: Row, context: DescribeContext): View {
       icon: spinner('blue'),
       label: isCodeRabbit(request) && request.command === 'review' ? 'retrying' : 'posting',
       color: 'blue',
-      detail: `"${requestText(request)}"…`,
+      notes: [`"${requestText(request)}"…`],
     };
   }
   if (row.left) return LEFT_VIEWS[row.left];
-  if (row.error) return { icon: <Text color="red">✖</Text>, label: 'error', color: 'red', detail: row.error };
-  if (!row.summary) return { icon: spinner('gray'), label: 'checking', color: 'gray', ...(stack && { detail: stack }) };
+  if (row.error) return { icon: <Text color="red">✖</Text>, label: 'error', color: 'red', notes: [row.error] };
+  if (!row.summary)
+    return { icon: spinner('gray'), label: 'checking', color: 'gray', ...(stack && { notes: [stack] }) };
   const { icon, ...view } = OVERALL_VIEWS[row.summary.overall];
-  const detail = details(row, context);
-  return { ...view, icon: icon(), ...(detail && { detail }) };
+  return { ...view, icon: icon(), notes: notesOf(row, context) };
 }
 
 const shortName = (pr: PullRequest, options: Options) =>
@@ -1370,6 +1471,201 @@ function stackHint(row: Row, place: Placement, rows: Map<string, Row>): string |
   return fetched && fetched.base !== fetched.defaultBranch ? `on ${fetched.base}` : undefined;
 }
 
+/** The agent of a row: the agent that the pull request names, and the local session that works on it. */
+interface AgentInfo {
+  name: string;
+  claude: boolean;
+  session?: LocalSession;
+  cloudSession?: string;
+}
+
+function agentOf(row: Row, owners: Map<string, Owner>): AgentInfo | undefined {
+  const session = owners.get(keyOf(row.pr))?.session;
+  const agent = row.fetched?.agent;
+  // A local session is always Claude Code, whatever agent wrote the pull request.
+  if (session) return { name: 'Claude Code', claude: true, session };
+  if (!agent) return undefined;
+  return {
+    name: agent.name,
+    claude: agent.id === 'claude',
+    ...(agent.cloudSession && { cloudSession: agent.cloudSession }),
+  };
+}
+
+// "shell" means that the session runs a command now.
+const isWorking = (session: LocalSession) => session.status === 'busy' || session.status === 'shell';
+
+function sessionState(session: LocalSession): string {
+  if (isWorking(session)) return 'working';
+  if (session.status === 'waiting') return `waiting: ${session.waitingFor ?? 'an answer'}`;
+  return session.status;
+}
+
+const agentMark = (agent: AgentInfo) => (agent.claude ? '✻' : '◇');
+
+function badgeName(agent: AgentInfo): string {
+  if (agent.session) return agent.session.name;
+  if (agent.cloudSession) return 'cloud';
+  return agent.claude ? 'Claude' : agent.name;
+}
+
+/** The agent on the line of the pull request: a mark, and the session name if the row has the width. */
+function AgentBadge({ agent, named }: { agent: AgentInfo; named: boolean }) {
+  const { session } = agent;
+  const color = agent.claude ? CLAUDE : 'gray';
+  return (
+    <Text color={color} dimColor={!session && !agent.claude}>
+      {session && isWorking(session) ? <Spinner type="dots" /> : agentMark(agent)}
+      {named && ` ${badgeName(agent)}`}
+      {session?.status === 'waiting' && <Text color="yellow"> ?</Text>}
+    </Text>
+  );
+}
+
+/** One line of an unfolded row. The first line of a section carries the name of the section. */
+interface DetailLine {
+  key: string;
+  label?: string;
+  content: ReactNode;
+}
+
+const SECTION_WIDTH = 11;
+
+function stateColor(session: LocalSession): string | undefined {
+  if (isWorking(session)) return CLAUDE;
+  return session.status === 'waiting' ? 'yellow' : undefined;
+}
+
+function agentLines(agent: AgentInfo): ReactNode[] {
+  const color = agent.claude ? CLAUDE : 'gray';
+  const name = (
+    <Text color={color} bold>
+      {agentMark(agent)} {agent.name}
+    </Text>
+  );
+  const { session } = agent;
+  if (session)
+    return [
+      <Text wrap="truncate-end">
+        {name}
+        <Text dimColor> · session </Text>
+        <Text color={CLAUDE}>{session.name}</Text>
+        <Text dimColor> · </Text>
+        <Text color={stateColor(session)} dimColor={!stateColor(session)}>
+          {sessionState(session)}
+        </Text>
+      </Text>,
+      <Text dimColor wrap="truncate-end">
+        {session.cwd.replace(homedir(), '~')} · a sends rebase, review, fix or test
+      </Text>,
+    ];
+  if (agent.cloudSession)
+    return [
+      <Text wrap="truncate-end">
+        {name}
+        <Text dimColor> · cloud session</Text>
+      </Text>,
+      <Text dimColor wrap="truncate-end">
+        {agent.cloudSession}
+      </Text>,
+    ];
+  return [
+    <Text wrap="truncate-end">
+      {name}
+      <Text dimColor> · no session on this machine</Text>
+    </Text>,
+  ];
+}
+
+function reviewerState(reviewer: Reviewer): string {
+  switch (reviewer.status) {
+    case 'reviewing':
+      return reviewer.progress ? `reviewing ${reviewer.progress.done}/${reviewer.progress.total}` : 'reviewing';
+    case 'quota':
+      return reviewer.until ? `out of quota, back at ${formatTime(reviewer.until)}` : 'out of quota, no return time';
+    case 'stale':
+      return reviewer.verdict && reviewer.verdict !== 'commented'
+        ? `an older commit only, ${reviewer.verdict} still stands`
+        : 'an older commit only';
+    default:
+      return reviewer.status;
+  }
+}
+
+function reviewerLines(summary: Summary, layout: Layout, now: Date): ReactNode[] {
+  const header = [
+    layout.counts &&
+      `${summary.reviewers.length > 0 ? `${summary.onHead}/${summary.reviewers.length} on head · ` : ''}${summary.reviews} review${summary.reviews === 1 ? '' : 's'}`,
+    layout.lastReview && lastReviewText(summary, now),
+  ].filter(Boolean);
+  const lines: ReactNode[] = header.length > 0 ? [<Text dimColor>{header.join(' · ')}</Text>] : [];
+  if (!layout.marks) return lines;
+  const width = Math.min(24, Math.max(0, ...summary.reviewers.map((reviewer) => reviewer.name.length)));
+  for (const reviewer of summary.reviewers) {
+    const chip = CHIPS[reviewer.status];
+    lines.push(
+      <Text wrap="truncate-end">
+        <Text color={chip.color}>{chip.icon}</Text> {reviewer.name.padEnd(width)}
+        {'  '}
+        <Text color={chip.color}>{reviewerState(reviewer)}</Text>
+        {reviewer.lastReviewAt && <Text dimColor> · {formatAgo(now, reviewer.lastReviewAt)}</Text>}
+      </Text>,
+    );
+  }
+  return lines;
+}
+
+function ChecksLine({ checks }: { checks: Summary['checks'] }) {
+  const parts: [string, string][] = [];
+  if (checks.passed > 0) parts.push([`✔ ${checks.passed} passed`, 'green']);
+  if (checks.failed.length > 0) parts.push([`✖ ${checks.failed.length} failing: ${checks.failed.join(', ')}`, 'red']);
+  if (checks.pending > 0) parts.push([`◌ ${checks.pending} running`, 'yellow']);
+  if (checks.skipped > 0) parts.push([`⊘ ${checks.skipped} skipped`, 'gray']);
+  if (checks.quota > 0) parts.push([`◷ ${checks.quota} quota only`, 'gray']);
+  if (parts.length === 0) return <Text dimColor>no checks</Text>;
+  return (
+    <Text wrap="truncate-end">
+      {parts.map(([text, color], index) => (
+        <Text key={text} color={color} dimColor={color === 'gray'}>
+          {index > 0 && '   '}
+          {text}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
+/** The lines of an unfolded row, by section: the agent, the reviewers, the checks, then the notes. */
+function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout: Layout, now: Date): DetailLine[] {
+  const lines: DetailLine[] = [];
+  const section = (label: string, contents: ReactNode[]) =>
+    contents.forEach((content, index) =>
+      lines.push({ key: `${label}:${index}`, ...(index === 0 && { label }), content }),
+    );
+  if (layout.agent && agent) section('agent', agentLines(agent));
+  if (row.summary && !row.left) {
+    section('reviewers', reviewerLines(row.summary, layout, now));
+    if (layout.checks) section('checks', [<ChecksLine checks={row.summary.checks} />]);
+  }
+  if (layout.details && view.notes)
+    section(
+      'notes',
+      view.notes.map((note) => (
+        <Text dimColor wrap="truncate-end">
+          {note}
+        </Text>
+      )),
+    );
+  return lines;
+}
+
+function sessionWarning(session: LocalSession): string | undefined {
+  if (isWorking(session)) return `${session.name} is working: it reads the message after its current turn.`;
+  if (session.status === 'waiting')
+    return `${session.name} waits for ${session.waitingFor ?? 'an answer'}: it reads the message after that.`;
+  return undefined;
+}
+
 const CHIPS: Record<ReviewerStatus, { icon: string; color: string }> = {
   approved: { icon: '✔', color: 'green' },
   'changes requested': { icon: '✎', color: 'red' },
@@ -1382,27 +1678,6 @@ const CHIPS: Record<ReviewerStatus, { icon: string; color: string }> = {
   skipped: { icon: '⊘', color: 'gray' },
   paused: { icon: '‖', color: 'gray' },
 };
-
-function chipSuffix(reviewer: Reviewer): string {
-  if (reviewer.progress) return ` ${reviewer.progress.done}/${reviewer.progress.total}`;
-  if (reviewer.status === 'quota') return reviewer.until ? ` ${formatTime(reviewer.until)}` : '';
-  if (reviewer.status === 'stale' && reviewer.verdict && reviewer.verdict !== 'commented')
-    return ` ${CHIPS[reviewer.verdict].icon} old`;
-  return '';
-}
-
-function ReviewerChip({ reviewer }: { reviewer: Reviewer }) {
-  const chip = CHIPS[reviewer.status];
-  const muted = reviewer.status === 'stale' || reviewer.status === 'skipped' || reviewer.status === 'paused';
-  return (
-    <Box marginRight={2} flexShrink={0}>
-      <Text dimColor={muted}>
-        <Text color={chip.color}>{chip.icon}</Text> {reviewer.name}
-        <Text dimColor>{chipSuffix(reviewer)}</Text>
-      </Text>
-    </Box>
-  );
-}
 
 function ChecksBadge({ summary, short }: { summary: Summary; short: boolean }) {
   const { checks } = summary;
@@ -1447,6 +1722,15 @@ function ChecksBadge({ summary, short }: { summary: Summary; short: boolean }) {
   );
 }
 
+/** The lines that the prompt of a confirmation adds under the question. The chrome counts one line already. */
+function promptLines(confirmation: Confirmation | undefined, columns: number): number {
+  if (!confirmation?.prompt) return 0;
+  const lines = Math.ceil(confirmation.prompt.length / Math.max(1, columns - 2));
+  return confirmation.warning ? lines : lines - 1;
+}
+
+const selectionMark = (unfolded: boolean, selected: boolean) => `${selected ? '❯' : ' '}${unfolded ? '▾' : ' '}`;
+
 interface RowViewProps {
   ref: (node: DOMElement | null) => void;
   row: Row;
@@ -1455,7 +1739,8 @@ interface RowViewProps {
   layout: Layout;
   place: Placement;
   hint: string | undefined;
-  now: Date;
+  agent: AgentInfo | undefined;
+  lines: DetailLine[];
   expanded: boolean;
   selected: boolean;
 }
@@ -1480,7 +1765,9 @@ function Under({
   return (
     <Box>
       <Box width={before} flexShrink={0} />
-      <Text dimColor>{trail}</Text>
+      <Box flexShrink={0}>
+        <Text dimColor>{trail}</Text>
+      </Box>
       <Box paddingLeft={rest} flexShrink={1} overflow="hidden">
         {children}
       </Box>
@@ -1488,7 +1775,7 @@ function Under({
   );
 }
 
-function RowView({ ref, row, view, options, layout, place, hint, now, expanded, selected }: RowViewProps) {
+function RowView({ ref, row, view, options, layout, place, hint, agent, lines, expanded, selected }: RowViewProps) {
   const name = shortName(row.pr, options);
   const before = options.interactive ? SELECTION_WIDTH : 0;
   const rest = layout.indent - before - ICON_WIDTH;
@@ -1504,8 +1791,8 @@ function RowView({ ref, row, view, options, layout, place, hint, now, expanded, 
       <Box>
         {options.interactive && (
           <Box width={SELECTION_WIDTH} flexShrink={0}>
-            <Text color={BRAND} bold>
-              {selected ? '❯' : ' '}
+            <Text color={BRAND} bold dimColor={!selected}>
+              {selectionMark(expanded, selected)}
             </Text>
           </Box>
         )}
@@ -1539,45 +1826,32 @@ function RowView({ ref, row, view, options, layout, place, hint, now, expanded, 
             </Text>
           </Box>
         )}
-        {summary && !row.left && (layout.checks || layout.counts) && (
+        {layout.agent && agent && (
           <Box flexShrink={0} marginLeft={2}>
-            {layout.checks && <ChecksBadge summary={summary} short={layout.shortChecks} />}
-            {layout.counts && (
-              <Text dimColor>
-                {layout.checks && '  '}
-                {summary.reviewers.length > 0 && `${summary.onHead}/${summary.reviewers.length} on head · `}
-                {summary.reviews} review{summary.reviews === 1 ? '' : 's'}
-              </Text>
-            )}
+            <AgentBadge agent={agent} named={layout.agentName} />
+          </Box>
+        )}
+        {summary && !row.left && layout.checks && (
+          <Box flexShrink={0} marginLeft={2}>
+            <ChecksBadge summary={summary} short={layout.shortChecks} />
           </Box>
         )}
       </Box>
-      {summary &&
-        (layout.lastReview || layout.marks) &&
-        under(
-          <>
-            {layout.lastReview && (
-              <Box flexShrink={0} marginRight={2}>
-                <Text dimColor>{lastReviewText(summary, now)}</Text>
-              </Box>
-            )}
-            {layout.marks && (
-              <Box flexShrink={1} overflow="hidden">
-                {summary.reviewers.map((reviewer) => (
-                  <ReviewerChip key={reviewer.login} reviewer={reviewer} />
-                ))}
-              </Box>
-            )}
-          </>,
-        )}
       {expanded &&
-        layout.details &&
-        view.detail &&
-        under(
-          <Text dimColor wrap="truncate-end">
-            {view.detail}
-          </Text>,
-        )}
+        lines.map((line) => (
+          <Fragment key={line.key}>
+            {under(
+              <>
+                <Box width={SECTION_WIDTH} flexShrink={0}>
+                  <Text dimColor>{line.label ?? ''}</Text>
+                </Box>
+                <Box flexShrink={1} overflow="hidden">
+                  {line.content}
+                </Box>
+              </>,
+            )}
+          </Fragment>
+        ))}
       {row.posted &&
         under(
           <Text color="green" wrap="truncate-end">
@@ -1677,6 +1951,8 @@ interface ControlsProps {
   reviewers?: readonly ReviewerRef[] | undefined;
   /** The bots that the settings turn on. */
   bots: readonly Bot[];
+  /** The local session that works on the selected pull request. */
+  session?: LocalSession | undefined;
 }
 
 interface ButtonProps {
@@ -1725,6 +2001,7 @@ function ActionBar({
   shortBots,
   reviewers,
   bots,
+  session,
 }: ControlsProps) {
   const short = mode === 'main' ? shortMain : shortBots;
   const button = (action: Action, dim?: boolean) => (
@@ -1756,6 +2033,15 @@ function ActionBar({
       </Box>
     );
   }
+  if (mode === 'agent') {
+    return (
+      <Box height={1} overflow="hidden">
+        <Group name={session ? session.name : 'no local session'} />
+        {actionsOf('agent').map((action) => button(action, disabledCommands || !session))}
+        <Button id="back" hotkey="←" label="back" short={short} register={registerButton} />
+      </Box>
+    );
+  }
   if (mode !== 'main') {
     const dim = disabledCommands || isAbsent(mode, reviewers);
     return (
@@ -1768,15 +2054,38 @@ function ActionBar({
   }
   return (
     <Box height={1} overflow="hidden">
+      <Button id="unfold" hotkey="⏎" label="details" short={short} register={registerButton} />
       {actionsOf('main').map((action) => button(action, disabledCommands && action.merge))}
       <Button id="r" hotkey="r" label="refresh" short={short} register={registerButton} />
       <Button id="h" hotkey="h" label={hiddenLabel(revealed, hiddenCount)} short={short} register={registerButton} />
       <Button id="bots" hotkey="→" label="bots" short={short} register={registerButton} />
+      <Button id="agent" hotkey="a" label="agent" dim={!session} short={short} register={registerButton} />
       <Button id="," hotkey="," label="settings" short={short} register={registerButton} />
       <Text dimColor wrap="truncate-end">
         ↑↓ q
       </Text>
     </Box>
+  );
+}
+
+function Question({ confirmation }: { confirmation: Confirmation }) {
+  const { action, key, session } = confirmation;
+  if (action.merge)
+    return (
+      <>
+        Merge <Text bold>{key}</Text>?{'  '}
+      </>
+    );
+  if (action.agent)
+    return (
+      <>
+        Send <Text bold>"{action.label}"</Text> to <Text bold>{session?.name}</Text> for {key}?{'  '}
+      </>
+    );
+  return (
+    <>
+      Send <Text bold>"{requestText(action.request!)}"</Text> on <Text bold>{key}</Text>?{'  '}
+    </>
   );
 }
 
@@ -1788,23 +2097,18 @@ function Controls(props: ControlsProps) {
         <>
           <Box>
             <Text wrap="truncate-end">
-              {confirmation.action.merge ? (
-                <>
-                  Merge <Text bold>{confirmation.key}</Text>?{'  '}
-                </>
-              ) : (
-                <>
-                  Send <Text bold>"{requestText(confirmation.action.request!)}"</Text> on{' '}
-                  <Text bold>{confirmation.key}</Text>?{'  '}
-                </>
-              )}
+              <Question confirmation={confirmation} />
             </Text>
             <Button id="yes" hotkey="y / ⏎" label="yes" register={registerButton} />
             <Button id="no" hotkey="n / esc" label="no" register={registerButton} />
           </Box>
-          <Text color="yellow" wrap="truncate-end">
-            {confirmation.warning ?? ' '}
-          </Text>
+          {/* The prompt wraps: the user confirms the complete text that the session gets. */}
+          {confirmation.warning || !confirmation.prompt ? (
+            <Text color="yellow" wrap="truncate-end">
+              {confirmation.warning ?? ' '}
+            </Text>
+          ) : undefined}
+          {confirmation.prompt && <Text dimColor>{confirmation.prompt}</Text>}
         </>
       ) : (
         <>

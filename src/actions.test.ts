@@ -6,6 +6,7 @@ import {
   BOT_BAR_WIDTH,
   BOTS,
   CODERABBIT,
+  fillPrompt,
   COPILOT,
   GREPTILE,
   parentOf,
@@ -140,4 +141,24 @@ test('merge is refused on a pull request that is no longer open, and in a dry ru
   assert.match(refusal(merge, { left: true, dryRun: false })!, /no longer open/);
   assert.match(refusal(merge, { left: false, dryRun: true })!, /dry run/);
   assert.equal(refusal(merge, { left: false, dryRun: false }), null);
+});
+
+test('the agent level sends a command only to a pull request with a local session', () => {
+  const fix = actionForKey('f', 'agent')!;
+  assert.equal(fix.agent?.label, 'fix');
+  assert.equal(parentOf('agent'), 'main');
+  assert.match(refusal(fix, { left: false, dryRun: false })!, /no Claude Code session/);
+  assert.equal(refusal(fix, { left: false, dryRun: false, local: true }), null);
+  assert.equal(refusal(fix, { left: false, dryRun: true, local: true }), 'dry run: the tool sends nothing');
+  assert.deepEqual(
+    actionsOf('agent').map((action) => action.key),
+    ['b', 'r', 'f', 't'],
+  );
+});
+
+test('a prompt takes the values of the pull request', () => {
+  assert.equal(
+    fillPrompt('Rebase {branch} of {url} on {base}, {other}.', { url: 'u', branch: 'feat/x', base: 'main' }),
+    'Rebase feat/x of u on main, {other}.',
+  );
 });

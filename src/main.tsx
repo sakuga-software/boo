@@ -49,6 +49,15 @@ const cli = meow(
     another base shows that base ("on feat/x"). The settings can turn the
     grouping off.
 
+  Agents
+    The line of a pull request shows its coding agent: ✻ for Claude Code,
+    ◇ for Copilot, Codex, Cursor or Devin, read from the author, the branch,
+    the last commit and the description. A Claude Code session on this
+    machine that linked the pull request shows its name; the session with
+    the last link wins. A spinner means that it works, and ? that it waits
+    for an answer. These records are internal to Claude Code: a new version
+    can change them.
+
   Reviewers
     A reviewer is a person or a bot that submitted a review, that GitHub asks
     for a review, CodeRabbit if it commented, or PR-Agent if it posted its
@@ -77,15 +86,23 @@ const cli = meow(
     for about 90 s.
 
   Keys and mouse
-    With --watch in a terminal, the list takes keys and mouse clicks. The
-    selected row shows its details: failing checks, quota times.
+    With --watch in a terminal, the list takes keys and mouse clicks. Each
+    pull request takes one line; Enter unfolds it.
     ↑ ↓  or  k j    select a pull request; the mouse wheel does it too
-    o  or  Enter    open the pull request in the browser
+    Enter           unfold or fold the selected pull request: its agent, its
+                    reviewers, its failing checks and quota times; a click
+                    on the selected row does it too
+    o               open the pull request in the browser
     m               merge the pull request (squash, else merge, else rebase)
     r               read the list and every pull request again now; only in
                     the main set, because the bots use r
     h               show or hide the merged, closed and draft pull requests;
                     they are hidden by default
+    a               show the commands for the agent, in the main set only:
+                    b rebase, r review, f fix, t test; each one sends a
+                    prompt to the local session of the pull request, which
+                    reads it after its current turn; "agentPrompts" in the
+                    settings file changes a prompt ({url}, {branch}, {base})
     ,               open the settings: the hidden pull requests, the parts of
                     a row, the authors and the review bots (on or off,
                     automatic retry, bots of your own); saved in

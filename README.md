@@ -37,23 +37,50 @@ boo --help              # options, states and marks
 
 ## What a row shows
 
+Each pull request takes one line. `Enter` unfolds it and shows its details; `Enter` again folds it.
+
 ```
-✔  ready to merge     web#921  feat(search): filter the results by date   ✔ 10/10 checks  2/2 on head · 2 reviews
-                      last coderabbitai just now  ✔ coderabbitai  ✔ greptile
+❯▾✎  changes requested  api#912  fix(auth): refresh the token before it expires   ✻ auth  ✔ 8/8 checks
+                        agent      ✻ Claude Code · session auth · working
+                                   ~/code/api · a sends rebase, review, fix or test
+                        reviewers  2/3 on head · 2 reviews · last greptile 9 min ago
+                                   ✎ coderabbitai  changes requested · 10 min ago
+                                   ◷ copilot       out of quota, no return time
+                                   ● greptile      commented · 9 min ago
+                        checks     ✔ 8 passed
+                        notes      blocked by the branch protection rules
+  ✔  ready to merge     web#921  feat(search): filter the results by date   ◇ Copilot  ✔ 10/10 checks
 ```
+
+The line of a pull request shows:
 
 - **The state** of the pull request, from the first that applies: `conflicts`,
   `changes requested`, `checks failing`, `ready to merge`, `approved`, `reviewing`, `reviewed`,
   `quota`, `awaiting review`. A pull request that leaves the list shows `merged`, `closed` or
   `draft`. These three are hidden by default: `h` shows them.
 - **The checks** of the last commit: passed, running or failing.
-- **The reviewers** that reviewed the last commit, out of all the reviewers, and the count of reviews.
-- **The last reviewer** and the age of their review.
-- **One mark for each reviewer**: `✔` approved, `✎` changes requested, `●` commented on the last
-  commit; `⟳` reviewing, with `2/3` if the bot shows its progress; `◷` out of quota, with the
-  return time if the notice gives one; `↻` CodeRabbit to retry; `○` requested; `◌` reviewed an
-  older commit only (`✔ old` if its approval still stands); `⊘` skipped; `‖` paused.
 - **The place in the stack**, for a pull request that merges into another listed pull request.
+- **The agent**: `✻` in the orange of Claude Code, with the name of its local session, `cloud` or
+  `Claude`; `◇` and the name of another agent. A spinner replaces `✻` while the session works, and a
+  yellow `?` follows a session that waits for an answer. See
+  [Agents and local sessions](#agents-and-local-sessions).
+
+An unfolded pull request shows its details in four sections, one fact for each line:
+
+- **agent**: the agent, then the name, the state and the folder of its local session, or the page
+  of its cloud session.
+- **reviewers**: the reviewers that reviewed the last commit out of all the reviewers, the count of
+  reviews and the last reviewer. Then one line for each reviewer, with its mark, its state in words
+  and the age of its last review. The marks: `✔` approved, `✎` changes requested, `●` commented on
+  the last commit; `⟳` reviewing, with `2/3` if the bot shows its progress; `◷` out of quota, with
+  the return time if the notice gives one; `↻` CodeRabbit to retry; `○` requested; `◌` reviewed an
+  older commit only, with the verdict that still stands; `⊘` skipped; `‖` paused.
+- **checks**: the checks that passed, the names of the checks that fail, and the checks that run.
+- **notes**: the protection rule that blocks the merge, the state of the pull request under it in
+  a stack, the planned retries and the CodeRabbit quota.
+
+A click on a row selects it, and a click on the selected row unfolds or folds it. A piped run shows
+every pull request unfolded.
 
 ### Stacks
 
@@ -82,17 +109,59 @@ each one comes after the pull request that it merges into:
 The ghost at the top left asks the terminal for its background color (OSC 11, or `COLORFGBG`) and
 picks colors that read on it. A terminal that does not answer gets colors that read on both.
 
-In a terminal, the selected row also shows its details: the names of the failing checks, the
-protection rule that blocks the merge, and the quota return times.
-
 A narrow terminal shows less of each row, from the least useful part:
 
-| Width             | The row drops                                                                           |
-| ----------------- | --------------------------------------------------------------------------------------- |
-| below 120 columns | the reviewers on head and the review count                                              |
-| below 100 columns | the name of the state (the icon stays) and the word "checks"                            |
-| below 80 columns  | the last reviewer, the text of the place in the stack, and the labels of the action bar |
-| below 60 columns  | the checks                                                                              |
+| Width             | The row drops                                                                                                                     |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| below 100 columns | the name of the state (the icon stays), the word "checks", the name after the mark of the agent, and the labels of the action bar |
+| below 80 columns  | the last reviewer and the text of the place in the stack                                                                          |
+| below 60 columns  | the checks                                                                                                                        |
+
+### Agents and local sessions
+
+```
+❯▾✔  ready to merge     web#921  feat(search): filter the results by date   ✻ suricarte-mb-2  ✔ 10/10 checks
+                        agent      ✻ Claude Code · session suricarte-mb-2 · idle
+                                   ~/code/web · a sends rebase, review, fix or test
+```
+
+The tool reads the agent from the pull request: its author, its head branch, the authors and the
+trailers of its last commit, and its description. It knows Claude Code, Copilot, Codex, Cursor and
+Devin. A description that links a Claude Code cloud session shows `cloud session`. A pull request
+that a person writes alone shows no agent.
+
+Claude Code writes a link to each pull request that a session opens or looks at. The tool reads
+these links in the sessions that run on this machine, every 5 seconds with `--watch`. If more than
+one session links a pull request, the session with the last link works on it. The line of the
+pull request then shows the name of the session, and its details show its state: `working` (it
+answers or runs a command), `idle`, or `waiting` with what it waits for.
+
+`a` opens the commands for the agent. Each command sends a prompt to the local session of the
+pull request:
+
+| Key | Command  | Prompt                                                                          |
+| --- | -------- | ------------------------------------------------------------------------------- |
+| `b` | `rebase` | rebase the head branch on its base, resolve the conflicts, and push             |
+| `r` | `review` | read the diff, and report each bug and each risk with its file and line         |
+| `f` | `fix`    | fix the valid review comments and the failing checks, push, and answer each one |
+| `t` | `test`   | test the change from end to end, and report what works and what fails           |
+
+The session reads the prompt after its current turn, as a message from another session named
+`boo`. Claude Code does not run a slash command that comes this way, so a prompt is plain text.
+The commands reach only a session on this machine: a session on another machine or in the cloud
+shows its agent, but the bar dims the commands.
+
+> [!WARNING]
+> The session records, the links and the inbox of a session are internal to Claude Code, not a
+> public interface. A new version of Claude Code can change them. Then the rows show no local
+> session, or a command fails with an error in the bar.
+
+The settings file can replace the prompt of a command, by its name. `{url}`, `{branch}` and
+`{base}` take the values of the pull request:
+
+```json
+{ "agentPrompts": { "fix": "Apply the review comments of {url}, then push." } }
+```
 
 ## Settings
 
@@ -102,7 +171,8 @@ closes the panel. The tool saves them in `~/.config/boo/settings.json` (or under
 
 - Hide the merged, the closed and the draft pull requests, each on its own. All three are on.
 - Show the checks, the reviewers on head and the review count, the last reviewer, the mark of each
-  reviewer, and the details of the selected pull request. A narrow terminal can still hide them.
+  reviewer, the agent and the local session, and the other details of an unfolded pull request. A
+  narrow terminal can still hide them.
 - Compact rows: no blank line between the pull requests.
 - Show each stacked pull request under the pull request that it merges into. It is on. Off, the list
   keeps its order, but the details and the merge confirmation still name the pull request under it.
@@ -268,8 +338,9 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
 With `--watch` in a terminal, the tool opens in full screen and takes keys and mouse clicks. The
 counts and the action bar stay at the bottom of the window. Piped or scheduled runs stay as they are.
 
-The action bar has three levels. The main set shows open, merge, refresh, the hidden pull requests
-and the settings. `→` or `Space` shows the list of the review bots. The key of a bot opens the menu of that
+The action bar has three levels. The main set shows open, merge, refresh, the hidden pull requests,
+the commands for the agent and the settings. `→` or `Space` shows the list of the review bots. `a`
+shows the commands for the agent. The key of a bot opens the menu of that
 bot, with its commands. `←` or `Space` goes back one level, and `Esc` goes back to the main set.
 
 A key of a bot or of a command works only at the level that shows it, so two bots can use the same
@@ -279,10 +350,12 @@ bots.
 | Key                | Action                                                                              |
 | ------------------ | ----------------------------------------------------------------------------------- |
 | `↑` `↓` or `k` `j` | select a pull request (the mouse wheel does it too)                                 |
-| `o` or `Enter`     | open the pull request in the browser                                                |
+| `Enter`            | unfold or fold the selected pull request: its agent, its reviewers and its details  |
+| `o`                | open the pull request in the browser                                                |
 | `m`                | merge the pull request: squash if the repository allows it, else merge, else rebase |
 | `r`                | read the list and every pull request again now, in the main set only                |
 | `h`                | show or hide the merged, closed and draft pull requests                             |
+| `a`                | show the commands for the agent, in the main set only                               |
 | `,`                | open the settings                                                                   |
 | `→` or `Space`     | show the list of the review bots                                                    |
 | `←` or `Space`     | go back one level                                                                   |
@@ -306,14 +379,14 @@ known command. A CodeRabbit post goes through the queue
 of the automatic retries. A post to another bot goes at once, because it does not spend the
 CodeRabbit quota.
 
-Each post and each merge asks for a confirmation: `y` or `Enter` confirms, `n` or `Esc` cancels. Before a merge,
+Each post, each command for the agent and each merge asks for a confirmation: `y` or `Enter` confirms, `n` or `Esc` cancels. Before a merge,
 the confirmation warns about a request for changes, a missing approval, a failing or running check,
 a conflict, a protection rule, a branch behind its base, or a base that is not the default branch
 (a stacked pull request). You can still merge: GitHub enforces the
 protection rules anyway. The repository settings decide if GitHub deletes the branch. A click
 selects a row, presses a button of the bar, or changes a line of the settings. The mouse mode takes over text selection: hold Shift or Option, depending on the terminal, to
-select text. A merged or closed pull request accepts only `o`, and `--dry-run` disables every post
-and every merge.
+select text. A merged or closed pull request accepts only `o`, and `--dry-run` disables every post,
+every command for the agent and every merge.
 
 ## Development
 
@@ -330,9 +403,12 @@ pnpm format             # oxfmt --check; pnpm format:fix writes the files
 The GIF uses the real interface and the real decision logic with a fake GitHub
 (`demo/demo.tsx`). The fake GitHub plays a timeline: a CodeRabbit review in progress, a bot that
 shows its progress, a Copilot quota refusal, a CodeRabbit quota that comes back and a retry, a
-merged pull request, a new pull request, then the reviews. At the end, it shows the list of the review bots
-with `→`, selects a pull request with the arrow keys, opens the CodeRabbit menu with `r`, and posts
-`@coderabbitai approve` with `a`, then `Enter`. To see it live, run `pnpm demo`. To record the GIF again (requires vhs, ttyd and ffmpeg):
+merged pull request, a new pull request, then the reviews. At the end, it unfolds the first pull
+request with `Enter`, selects and unfolds another one, shows the list of the review bots with `→`,
+opens the CodeRabbit menu with `r`, and posts
+`@coderabbitai approve` with `a`, then `Enter`. Then it goes back to the first pull request, which a
+fake local session works on, opens the commands for the agent with `a`, and sends `fix` with `f`,
+then `Enter`. To see it live, run `pnpm demo`. To record the GIF again (requires vhs, ttyd and ffmpeg):
 
 ```sh
 demo/record.sh

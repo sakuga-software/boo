@@ -13,9 +13,12 @@ test('a wide terminal shows every part', () => {
 });
 
 test('a narrow terminal drops the parts from the least useful', () => {
-  assert.equal(layoutFor(119, DEFAULT_SETTINGS, true).counts, false);
+  assert.equal(layoutFor(100, DEFAULT_SETTINGS, true).shortBar, false);
   const medium = layoutFor(99, DEFAULT_SETTINGS, true);
-  assert.deepEqual([medium.label, medium.shortChecks, medium.lastReview, medium.indent], [false, true, true, 5]);
+  assert.deepEqual(
+    [medium.label, medium.shortChecks, medium.agentName, medium.shortBar, medium.lastReview, medium.indent],
+    [false, true, false, true, true, 5],
+  );
   const small = layoutFor(79, DEFAULT_SETTINGS, true);
   assert.deepEqual([small.lastReview, small.stack, small.shortBar, small.checks], [false, false, true, true]);
   assert.equal(layoutFor(59, DEFAULT_SETTINGS, true).checks, false);
@@ -26,10 +29,12 @@ test('a piped run ignores the width but keeps the settings', () => {
   assert.deepEqual([layout.label, layout.checks, layout.counts, layout.indent], [true, true, false, 22]);
 });
 
-test('the row height follows the lines that the row shows', () => {
-  const row = { summary: true, detail: true, posted: false };
-  assert.equal(rowHeight(row, layoutFor(160, DEFAULT_SETTINGS, true)), 4);
-  assert.equal(rowHeight(row, layoutFor(160, { ...DEFAULT_SETTINGS, compact: true, details: false }, true)), 2);
-  assert.equal(rowHeight(row, layoutFor(70, { ...DEFAULT_SETTINGS, marks: false }, true)), 3);
-  assert.equal(rowHeight({ summary: false, detail: false, posted: true }, layoutFor(160, DEFAULT_SETTINGS, true)), 3);
+test('a row takes one line, its details, its last post and the gap', () => {
+  const wide = layoutFor(160, DEFAULT_SETTINGS, true);
+  assert.equal(rowHeight({ details: 0, posted: false }, wide), 2);
+  assert.equal(rowHeight({ details: 6, posted: true }, wide), 9);
+  assert.equal(
+    rowHeight({ details: 0, posted: false }, layoutFor(160, { ...DEFAULT_SETTINGS, compact: true }, true)),
+    1,
+  );
 });

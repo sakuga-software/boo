@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { requestText, type Request } from './actions.js';
+import { detectAgent, type Agent } from './agents.js';
 import type { Comment, Review } from './decide.js';
 import type { Check, CheckState } from './reviewers.js';
 
@@ -105,6 +106,8 @@ export interface PullRequestSnapshot {
   checks: Check[];
   /** The logins that GitHub still asks for a review. */
   requested: string[];
+  /** The coding agent that the pull request names. */
+  agent?: Agent;
 }
 
 const REVIEW_FIELDS =
@@ -122,13 +125,14 @@ const VARIABLES = '$owner: String!, $name: String!, $number: Int!';
 const QUERY = `
 query(${VARIABLES}) {
   ${PULL} {
-    state isDraft merged mergeStateStatus headRefOid headRefName baseRefName isCrossRepository
+    state isDraft merged mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
     baseRepository { defaultBranchRef { name } }
     author { login __typename }
     reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
     reviews(last: 100) { ${OLDER} nodes { ${REVIEW_FIELDS} } }
     comments(last: 100) { ${OLDER} nodes { ${COMMENT_FIELDS} } }
-    commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
+    commits(last: 1) { nodes { commit { message authors(first: 10) { nodes { user { login } } }
+      statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
   } }
 }`;
 
@@ -186,12 +190,21 @@ interface PullRequestNode {
   headRefName: string;
   baseRefName: string;
   isCrossRepository: boolean;
+  body: string;
   baseRepository: { defaultBranchRef: { name: string } | null } | null;
   author: Actor | null;
   reviewRequests: { nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[] };
   reviews: Page<ReviewNode>;
   comments: Page<CommentNode>;
-  commits: { nodes: { commit: { statusCheckRollup: { contexts: Page<ContextNode> } | null } }[] };
+  commits: {
+    nodes: {
+      commit: {
+        message?: string;
+        authors?: { nodes: { user: { login: string } | null }[] };
+        statusCheckRollup: { contexts: Page<ContextNode> } | null;
+      };
+    }[];
+  };
 }
 
 /** GraphQL drops the "[bot]" suffix of a bot login. The REST API and the decision rules keep it. */
@@ -260,6 +273,14 @@ function statusOf(pull: PullRequestNode): PullRequestStatus {
 }
 
 export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
+  const commit = pull.commits.nodes[0]?.commit;
+  const agent = detectAgent({
+    author: loginOf(pull.author) ?? '',
+    branch: pull.headRefName,
+    body: pull.body,
+    commitMessage: commit?.message ?? '',
+    commitAuthors: (commit?.authors?.nodes ?? []).flatMap(({ user }) => (user ? [user.login] : [])),
+  });
   return {
     status: statusOf(pull),
     head: pull.headRefOid,
@@ -279,6 +300,7 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
           : reviewer?.login && loginOf({ login: reviewer.login, __typename: reviewer.__typename }),
       )
       .filter((login): login is string => Boolean(login)),
+    ...(agent && { agent }),
   };
 }
 
@@ -350,7 +372,16 @@ export async function fetchPullRequest(pr: PullRequest): Promise<PullRequestSnap
     ...pull,
     reviews: { nodes: reviews },
     comments: { nodes: comments },
-    commits: { nodes: [{ commit: { statusCheckRollup: rollup ? { contexts: { nodes: contexts } } : null } }] },
+    commits: {
+      nodes: [
+        {
+          commit: {
+            ...pull.commits.nodes[0]?.commit,
+            statusCheckRollup: rollup ? { contexts: { nodes: contexts } } : null,
+          },
+        },
+      ],
+    },
   });
 }
 

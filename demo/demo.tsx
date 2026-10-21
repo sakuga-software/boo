@@ -1,7 +1,7 @@
 import { render } from 'ink';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isCodeRabbit } from '../src/actions.js';
-import { App, type GitHub } from '../src/app.js';
+import { App, type GitHub, type Sessions } from '../src/app.js';
 import { BOT_LOGIN, REQUEST_BODY, type Comment, type Review } from '../src/decide.js';
 import type { PullRequest, PullRequestSnapshot, PullRequestStatus } from '../src/github.js';
 import type { Check } from '../src/reviewers.js';
@@ -80,7 +80,7 @@ const prs = [
 ];
 const lateArrival = pr('web', 921, 'feat(search): filter the results by date');
 const CHANGE_AT = 8_000;
-const DEMO_LENGTH_MS = 32_000;
+const DEMO_LENGTH_MS = 47_000;
 
 let requestedAt: number | undefined;
 
@@ -176,6 +176,7 @@ const fakeGitHub: GitHub = {
       base: parent ? `pr-${parent}` : 'main',
       defaultBranch: 'main',
       status: status(target),
+      ...(AGENTS[target.number] && { agent: AGENTS[target.number] }),
       ...state(target),
     };
   },
@@ -191,13 +192,44 @@ const fakeGitHub: GitHub = {
   },
 };
 
+const AGENTS: Record<number, PullRequestSnapshot['agent']> = {
+  517: { id: 'claude', name: 'Claude Code' },
+  911: { id: 'copilot', name: 'Copilot' },
+  899: { id: 'claude', name: 'Claude Code', cloudSession: 'https://claude.ai/code/session_demo' },
+};
+
+const checkoutSession = {
+  pid: 4242,
+  sessionId: '00000000-0000-4000-8000-000000000517',
+  name: 'checkout',
+  status: 'idle',
+  cwd: '/work/web',
+  socket: '/tmp/demo.sock',
+};
+
+const fakeSessions: Sessions = {
+  async readOwners() {
+    return new Map([['acme/web#517', { session: checkoutSession, linkedAt: new Date(start) }]]);
+  },
+  async send() {
+    await sleep(300);
+  },
+};
+
 const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 const background = interactive ? await detectBackground(process.stdin, process.stdout, process.env) : 'unknown';
 const app = render(
   <App
     options={{ org: 'acme', authors: ['@me'], watch: true, dryRun: false, interactive, background }}
     gitHub={fakeGitHub}
-    timing={{ replyPollMs: 1_500, replyTimeoutMs: 30_000, watchPollMs: 3_000, listRefreshMs: 4_000 }}
+    sessions={fakeSessions}
+    timing={{
+      replyPollMs: 1_500,
+      replyTimeoutMs: 30_000,
+      watchPollMs: 3_000,
+      listRefreshMs: 4_000,
+      sessionsPollMs: 3_000,
+    }}
   />,
   { alternateScreen: interactive },
 );
