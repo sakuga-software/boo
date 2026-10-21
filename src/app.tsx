@@ -1564,7 +1564,7 @@ function AgentLine({ agent }: { agent: AgentInfo }) {
 }
 
 function sessionWarning(session: LocalSession): string | undefined {
-  if (session.status === 'busy') return `${session.name} is working: it reads the message after its current turn.`;
+  if (isWorking(session)) return `${session.name} is working: it reads the message after its current turn.`;
   if (session.status === 'waiting')
     return `${session.name} waits for ${session.waitingFor ?? 'an answer'}: it reads the message after that.`;
   return undefined;
