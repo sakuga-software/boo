@@ -40,7 +40,7 @@ boo --help              # options, states and marks
 Each pull request takes one line. `Enter` unfolds it and shows its details; `Enter` again folds it.
 
 ```
-▾ ✔  ready to merge     web#921  feat(search): filter the results by date   ✻ checkout  ✔ 10/10 checks
+❯▾✔  ready to merge     web#921  feat(search): filter the results by date   ✻ checkout  ✔ 10/10 checks
                         ✻ Claude Code · session checkout · idle · ~/code/web · a sends a command
                         2/2 on head · 2 reviews  last coderabbitai just now  ✔ coderabbitai  ✔ greptile
                         2 checks running
@@ -114,7 +114,7 @@ A narrow terminal shows less of each row, from the least useful part:
 ### Agents and local sessions
 
 ```
-▾ ✔  ready to merge     web#921  feat(search): filter the results by date   ✻ suricarte-mb-2  ✔ 10/10 checks
+❯▾✔  ready to merge     web#921  feat(search): filter the results by date   ✻ suricarte-mb-2  ✔ 10/10 checks
                         ✻ Claude Code · session suricarte-mb-2 · idle · ~/code/web · a sends a command
 ```
 
