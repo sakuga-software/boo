@@ -84,6 +84,8 @@ test('the index reads only the complete lines, then the new ones', async () => {
   const links = await index.linksOf(id);
   assert.deepEqual([...links.keys()], ['acme/web#1', 'acme/web#2']);
   assert.deepEqual(links.get('acme/web#1'), new Date('2026-10-20T12:00:00Z'));
+  await writeFile(path, `${link(3, '2026-10-20T13:00:00Z')}\n`);
+  assert.deepEqual([...(await index.linksOf(id)).keys()], ['acme/web#3']);
   assert.equal((await index.linksOf('missing')).size, 0);
 });
 

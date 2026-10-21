@@ -139,7 +139,11 @@ export class LinkIndex {
     const file = await open(transcript.path);
     try {
       const { size } = await file.stat();
-      if (size < transcript.offset) transcript.offset = 0;
+      // A shorter file is a new file: the links of the old one no longer count.
+      if (size < transcript.offset) {
+        transcript.offset = 0;
+        transcript.links.clear();
+      }
       const length = size - transcript.offset;
       if (length === 0) return;
       const buffer = Buffer.alloc(length);
