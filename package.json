@@ -1,8 +1,26 @@
 {
-  "name": "boo",
+  "name": "@sakuga-software/boo",
   "version": "1.0.0",
-  "private": true,
   "description": "Watches your open pull requests: the approval, the reviewers of every provider, the checks, and the review quotas",
+  "keywords": [
+    "claude-code",
+    "cli",
+    "code-review",
+    "coderabbit",
+    "github",
+    "pull-requests",
+    "tui"
+  ],
+  "homepage": "https://github.com/sakuga-software/boo#readme",
+  "bugs": {
+    "url": "https://github.com/sakuga-software/boo/issues"
+  },
+  "license": "MIT",
+  "author": "Sakuga",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sakuga-software/boo.git"
+  },
   "bin": {
     "boo": "dist/cli.js"
   },
@@ -10,6 +28,10 @@
     "dist"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js",
     "prepare": "pnpm build",
