@@ -73,3 +73,8 @@ test('the authors line of the panel gives a list: one author between two commas'
   assert.deepEqual(parseAuthors(' octocat, app/my-agent ,,'.split(',')), ['octocat', 'app/my-agent']);
   assert.equal(parseAuthors(' , '.split(',')), undefined);
 });
+
+test('a stored prompt replaces the prompt of a known agent command only', () => {
+  const settings = parseSettings({ agentPrompts: { fix: 'Run /ar on {url}.', deploy: 'no', test: 3, review: ' ' } });
+  assert.deepEqual(settings.agentPrompts, { fix: 'Run /ar on {url}.' });
+});

@@ -364,6 +364,8 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     merged: false,
     mergeStateStatus: 'UNSTABLE',
     headRefOid: 'head',
+    headRefName: 'mathieu/feature',
+    body: 'A change.',
     author: { login: 'Mheaus', __typename: 'User' },
     reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'Bot', login: 'greptile-apps' } }] },
     reviews: {
@@ -399,6 +401,8 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
       nodes: [
         {
           commit: {
+            message: 'feat: x\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>',
+            authors: { nodes: [{ user: { login: 'Mheaus' } }] },
             statusCheckRollup: {
               contexts: {
                 nodes: [
@@ -419,6 +423,7 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     },
   });
   assert.equal(snapshot.mergeState, 'unstable');
+  assert.equal(snapshot.agent?.id, 'claude');
   assert.deepEqual(snapshot.requested, ['greptile-apps[bot]']);
   assert.deepEqual(
     snapshot.comments.map((comment: Comment) => [comment.id, comment.user?.login]),

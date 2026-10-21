@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { BOTS, mentionProblem, RESERVED_KEYS } from './actions.js';
+import { AGENT_COMMANDS, BOTS, mentionProblem, RESERVED_KEYS } from './actions.js';
 
 export const SETTINGS = [
   { key: 'hideMerged', label: 'Hide the merged pull requests', fallback: true },
@@ -11,6 +11,7 @@ export const SETTINGS = [
   { key: 'counts', label: 'Show the reviewers on head and the review count', fallback: true },
   { key: 'lastReview', label: 'Show the last reviewer', fallback: true },
   { key: 'marks', label: 'Show a mark for each reviewer', fallback: true },
+  { key: 'agent', label: 'Show the coding agent and the local Claude Code session', fallback: true },
   { key: 'details', label: 'Show the details of the selected pull request', fallback: true },
   { key: 'compact', label: 'Compact rows: no blank line between the pull requests', fallback: false },
   { key: 'stacks', label: 'Show each stacked pull request under the pull request that it merges into', fallback: true },
@@ -43,6 +44,8 @@ export type Settings = Record<SettingKey, boolean> & {
   /** The switches of each review bot, by the id of the bot. */
   bots: Record<string, BotSwitches>;
   customBots: CustomBot[];
+  /** The prompts that replace the default prompts of the agent commands, by the label of the command. */
+  agentPrompts: Record<string, string>;
 };
 
 export const DEFAULT_AUTHORS: readonly string[] = ['@me'];
@@ -52,6 +55,7 @@ export const DEFAULT_SETTINGS: Settings = {
   authors: [...DEFAULT_AUTHORS],
   bots: {},
   customBots: [],
+  agentPrompts: {},
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -93,6 +97,17 @@ export function parseCustomBot(value: unknown): CustomBot | undefined {
   return { name, key, logins, ...(mention && { mention }), ...(reviewer && { reviewer }), commands };
 }
 
+function parsePrompts(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const labels = new Set(AGENT_COMMANDS.map((command) => command.label));
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] =>
+        labels.has(entry[0]) && typeof entry[1] === 'string' && Boolean(entry[1].trim()),
+    ),
+  );
+}
+
 /** Reads a list of authors from any JSON value. Returns undefined if the value is not a list with one author or more. */
 export function parseAuthors(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -109,7 +124,13 @@ export function parseAuthors(value: unknown): string[] | undefined {
 
 /** Reads the settings from any JSON value. A missing or invalid value keeps its default. */
 export function parseSettings(value: unknown): Settings {
-  const settings: Settings = { ...DEFAULT_SETTINGS, authors: [...DEFAULT_AUTHORS], bots: {}, customBots: [] };
+  const settings: Settings = {
+    ...DEFAULT_SETTINGS,
+    authors: [...DEFAULT_AUTHORS],
+    bots: {},
+    customBots: [],
+    agentPrompts: {},
+  };
   if (typeof value !== 'object' || value === null) return settings;
   for (const { key } of SETTINGS) {
     const stored = (value as Record<string, unknown>)[key];
@@ -117,6 +138,7 @@ export function parseSettings(value: unknown): Settings {
   }
   settings.authors = parseAuthors((value as Record<string, unknown>).authors) ?? settings.authors;
   settings.bots = parseSwitches((value as Record<string, unknown>).bots);
+  settings.agentPrompts = parsePrompts((value as Record<string, unknown>).agentPrompts);
   const custom = (value as Record<string, unknown>).customBots;
   // The id of a custom bot comes from its name, and the bar opens the first bot of a key.
   // Thus a bot with the name or the key of an earlier bot is dropped.

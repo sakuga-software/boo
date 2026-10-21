@@ -73,8 +73,52 @@ export interface Request {
   command: Command;
 }
 
-/** The level of the action bar: the main set, the list of bots, or the menu of one bot. */
-export type Mode = 'main' | 'bots' | Bot;
+/** A message that the action bar sends to the local session that works on a pull request. */
+export interface AgentCommand {
+  key: string;
+  label: string;
+  /** The text of the message. {url}, {branch} and {base} take the values of the pull request. */
+  prompt: string;
+}
+
+/** The commands for the agent. The settings file can change the prompt of each one, by its label. */
+export const AGENT_COMMANDS: readonly AgentCommand[] = [
+  {
+    key: 'b',
+    label: 'rebase',
+    prompt:
+      'Rebase the branch {branch} of {url} on {base}. Resolve the conflicts, run the checks, and push with --force-with-lease.',
+  },
+  {
+    key: 'r',
+    label: 'review',
+    prompt: 'Review the pull request {url}. Read the diff, and report each bug and each risk with its file and line.',
+  },
+  {
+    key: 'f',
+    label: 'fix',
+    prompt:
+      'Read the review comments and the failing checks of {url}. Fix what is valid, push, and answer each comment.',
+  },
+  {
+    key: 't',
+    label: 'test',
+    prompt:
+      'Test the change of {url} from end to end, in the running app if there is one. Report what works and what fails.',
+  },
+];
+
+export interface PromptValues {
+  url: string;
+  branch: string;
+  base: string;
+}
+
+export const fillPrompt = (prompt: string, values: PromptValues) =>
+  prompt.replace(/\{(url|branch|base)\}/g, (_, name: keyof PromptValues) => values[name]);
+
+/** The level of the action bar: the main set, the list of bots, the menu of one bot, or the commands for the agent. */
+export type Mode = 'main' | 'bots' | 'agent' | Bot;
 
 export interface Action {
   key: string;
@@ -82,6 +126,8 @@ export interface Action {
   request?: Request;
   /** The action merges the pull request. It always asks for a confirmation. */
   merge?: true;
+  /** The action sends this command to the local session of the pull request. */
+  agent?: AgentCommand;
 }
 
 const MAIN_ACTIONS: readonly Action[] = [
@@ -110,11 +156,12 @@ export function mentionProblem(mention: string): string | undefined {
 export function actionsOf(mode: Mode): readonly Action[] {
   if (mode === 'main') return MAIN_ACTIONS;
   if (mode === 'bots') return [];
+  if (mode === 'agent') return AGENT_COMMANDS.map((agent) => ({ key: agent.key, label: agent.label, agent }));
   return mode.commands.map(({ key, command }) => ({ key, label: command, request: { bot: mode, command } }));
 }
 
 /** Returns the level above a level. The main set is the top. */
-export const parentOf = (mode: Mode): Mode => (mode === 'main' || mode === 'bots' ? 'main' : 'bots');
+export const parentOf = (mode: Mode): Mode => (typeof mode === 'string' ? 'main' : 'bots');
 
 const BACK_WIDTH = '← back'.length + 2;
 const buttonWidth = (key: string, label: string) => key.length + label.length + 3;
@@ -164,13 +211,19 @@ export interface Target {
   dryRun: boolean;
   /** The reviewers of the pull request, if the tool read them. */
   reviewers?: readonly ReviewerRef[];
+  /** A Claude Code session on this machine works on the pull request. */
+  local?: boolean;
 }
 
 /** Returns why the action is not available on the target, or null if it is available. */
 export function refusal(action: Action, target: Target): string | null {
-  if (!action.request && !action.merge) return null;
+  if (!action.request && !action.merge && !action.agent) return null;
   if (target.left) return 'this pull request is no longer open';
-  if (target.dryRun) return action.merge ? 'dry run: the tool merges nothing' : 'dry run: the tool posts nothing';
+  if (target.dryRun) {
+    if (action.merge) return 'dry run: the tool merges nothing';
+    return action.agent ? 'dry run: the tool sends nothing' : 'dry run: the tool posts nothing';
+  }
+  if (action.agent && !target.local) return 'no Claude Code session on this machine works on this pull request';
   // A bot that reviews through a comment answers only on a repository where it is installed.
   // GitHub adds a requested reviewer to any pull request, so a review request needs no earlier review.
   const bot = action.request?.bot;

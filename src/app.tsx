@@ -7,6 +7,7 @@ import {
   actionsOf,
   botBarWidth,
   CODERABBIT,
+  fillPrompt,
   isAbsent,
   isCodeRabbit,
   moveSelection,
@@ -53,6 +54,7 @@ import { parentFinder, placeStacks, type Placement, type StackItem } from './sta
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
+import { LinkIndex, readOwners, sendToSession, type LocalSession, type Owner } from './sessions.js';
 
 export interface Options {
   org: string;
@@ -82,11 +84,24 @@ export type GitHub = Pick<
   'listPullRequests' | 'fetchPullRequest' | 'requestReview' | 'openInBrowser' | 'mergePullRequest'
 >;
 
+/** The Claude Code sessions of this machine. */
+export interface Sessions {
+  /** Returns the local session that works on each pull request, by "owner/repo#number". */
+  readOwners(): Promise<Map<string, Owner>>;
+  send(session: LocalSession, text: string): Promise<void>;
+}
+
+function localSessions(): Sessions {
+  const index = new LinkIndex();
+  return { readOwners: () => readOwners(index), send: (session, text) => sendToSession(session, text) };
+}
+
 export interface Timing {
   replyPollMs: number;
   replyTimeoutMs: number;
   watchPollMs: number;
   listRefreshMs: number;
+  sessionsPollMs: number;
 }
 
 const DEFAULT_TIMING: Timing = {
@@ -94,6 +109,7 @@ const DEFAULT_TIMING: Timing = {
   replyTimeoutMs: 90_000,
   watchPollMs: 30_000,
   listRefreshMs: 60_000,
+  sessionsPollMs: 5_000,
 };
 const REPOST_GUARD_MS = 15 * 60_000;
 const BRAND = '#8B5CF6';
@@ -190,6 +206,9 @@ interface Confirmation {
   warning?: string;
   /** The head commit that the warnings describe. A merge fails if the head changes after it. */
   head?: string;
+  /** The session that gets the message of an agent command, and the message. */
+  session?: LocalSession;
+  prompt?: string;
 }
 
 interface PostControls {
@@ -202,6 +221,7 @@ interface PostControls {
 interface AppProps {
   options: Options;
   gitHub?: GitHub;
+  sessions?: Sessions;
   timing?: Timing;
   settings?: Settings;
   /** Stores the settings after a change in the settings panel. */
@@ -211,9 +231,10 @@ interface AppProps {
 export function App(props: AppProps) {
   // The workflow posts comments. If a new prop restarts it, it posts again and loses its repost guard.
   // Thus the component keeps the props of its first render.
-  const [{ options, gitHub, timing, saveSettings }] = useState(() => ({
+  const [{ options, gitHub, sessions, timing, saveSettings }] = useState(() => ({
     options: props.options,
     gitHub: props.gitHub ?? github,
+    sessions: props.sessions ?? localSessions(),
     timing: props.timing ?? DEFAULT_TIMING,
     saveSettings: props.saveSettings,
   }));
@@ -267,6 +288,8 @@ export function App(props: AppProps) {
   const rowNodes = useRef(new Map<string, DOMElement>());
   const buttonNodes = useRef(new Map<string, DOMElement>());
   const scrollStart = useRef(0);
+  const [owners, setOwners] = useState<Map<string, Owner>>(() => new Map());
+  const ownersRef = useRef(owners);
 
   const coderabbitRetries = () =>
     isEnabled(settingsRef.current, CODERABBIT) && retriesOn(settingsRef.current, CODERABBIT);
@@ -540,6 +563,33 @@ export function App(props: AppProps) {
   }, [authors]);
 
   useEffect(() => {
+    let stopped = false;
+    let reading = false;
+    const read = async () => {
+      // A read of a large transcript can outlast the poll interval. Two reads must not share an index.
+      if (reading) return;
+      reading = true;
+      try {
+        const next = await sessions.readOwners();
+        if (stopped) return;
+        ownersRef.current = next;
+        setOwners(next);
+      } catch {
+        // The session records are internal to Claude Code. If they are unreadable, the rows show no session.
+      } finally {
+        reading = false;
+      }
+    };
+    void read();
+    if (!options.watch) return () => void (stopped = true);
+    const timer = setInterval(read, timing.sessionsPollMs);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!options.watch) return;
     const timer = setInterval(() => setNow(new Date()), 1_000);
     return () => clearInterval(timer);
@@ -615,7 +665,7 @@ export function App(props: AppProps) {
     setSettings(next);
     // The menu of a bot that the change turns off or deletes closes. Another menu takes the new version of its bot.
     const mode = modeRef.current;
-    if (mode !== 'main' && mode !== 'bots') {
+    if (typeof mode !== 'string') {
       const bot = activeBots(next).find((candidate) => candidate.id === mode.id);
       switchMode(bot ?? 'bots');
     }
@@ -775,7 +825,12 @@ export function App(props: AppProps) {
 
   function targetOf(row: Row) {
     const reviewers = row.summary?.reviewers;
-    return { left: row.left !== undefined, dryRun: options.dryRun, ...(reviewers && { reviewers }) };
+    return {
+      left: row.left !== undefined,
+      dryRun: options.dryRun,
+      local: ownersRef.current.has(keyOf(row.pr)),
+      ...(reviewers && { reviewers }),
+    };
   }
 
   function quotaWarning(row: Row, request: Request): string | undefined {
@@ -813,6 +868,22 @@ export function App(props: AppProps) {
       confirm({ key, action, warning: mergeWarning(row), head });
       return;
     }
+    if (action.agent) {
+      const session = ownersRef.current.get(key)!.session;
+      if (!row.fetched) {
+        setFlash({ text: `Cannot ${action.label} ${key}: its state is not fetched yet.`, color: 'yellow' });
+        return;
+      }
+      const prompt = fillPrompt(settingsRef.current.agentPrompts[action.agent.label] ?? action.agent.prompt, {
+        url: row.pr.url,
+        branch: row.fetched.branch,
+        base: row.fetched.base,
+      });
+      setFlash(undefined);
+      const warning = sessionWarning(session);
+      confirm({ key, action, session, prompt, ...(warning && { warning }) });
+      return;
+    }
     if (!action.request) {
       gitHub.openInBrowser(row.pr.url).then(
         () => setFlash({ text: `Opened ${key} in the browser.`, color: 'green' }),
@@ -827,7 +898,7 @@ export function App(props: AppProps) {
   function answer(yes: boolean) {
     const pending = confirmationRef.current;
     confirm(undefined);
-    if (!pending?.action.request && !pending?.action.merge) return;
+    if (!pending?.action.request && !pending?.action.merge && !pending?.action.agent) return;
     const row = rowsRef.current.get(pending.key);
     if (!yes || !row) {
       setFlash({ text: 'Cancelled.', color: 'gray' });
@@ -837,6 +908,16 @@ export function App(props: AppProps) {
     const refused = refusal(pending.action, targetOf(row));
     if (refused) {
       setFlash({ text: `Cannot ${pending.action.label} ${pending.key}: ${refused}.`, color: 'yellow' });
+      return;
+    }
+    if (pending.action.agent) {
+      const { session, prompt, action } = pending;
+      if (!session || !prompt) return;
+      setFlash({ text: `Sending "${action.label}" to ${session.name}…`, color: 'blue' });
+      sessions.send(session, prompt).then(
+        () => setFlash({ text: `Sent "${action.label}" to ${session.name} for ${pending.key}.`, color: 'green' }),
+        (error) => setFlash({ text: `Could not send to ${session.name}: ${message(error)}`, color: 'red' }),
+      );
       return;
     }
     if (pending.action.merge) {
@@ -906,6 +987,7 @@ export function App(props: AppProps) {
     if (id === 'r' && modeRef.current === 'main') return refreshAll();
     if (id === ',') return openPanel(0);
     if (id === 'bots') return switchMode('bots');
+    if (id === 'agent' || (id === 'a' && modeRef.current === 'main')) return switchMode('agent');
     if (id === 'back') return switchMode(parentOf(modeRef.current));
     const bot =
       modeRef.current === 'bots'
@@ -1050,6 +1132,7 @@ export function App(props: AppProps) {
     rowHeight(
       {
         summary: Boolean(row.summary),
+        agent: Boolean(agentLabel(row, owners, !layout.label)),
         detail: expanded(row) && Boolean(views.get(row)!.detail),
         posted: Boolean(row.posted),
       },
@@ -1120,6 +1203,7 @@ export function App(props: AppProps) {
               layout={layout}
               place={places.get(keyOf(row.pr))!}
               hint={stackHint(row, places.get(keyOf(row.pr))!, rowsRef.current)}
+              agent={agentLabel(row, owners, !layout.label)}
               now={clock}
               expanded={expanded(row)}
               selected={options.interactive && keyOf(row.pr) === selection}
@@ -1150,6 +1234,7 @@ export function App(props: AppProps) {
           shortBots={layout.shortBar || columns - 2 < botBarWidth(bots)}
           bots={bots}
           reviewers={selectedRow?.summary?.reviewers}
+          session={selection ? owners.get(selection)?.session : undefined}
         />
       )}
     </Box>
@@ -1370,6 +1455,41 @@ function stackHint(row: Row, place: Placement, rows: Map<string, Row>): string |
   return fetched && fetched.base !== fetched.defaultBranch ? `on ${fetched.base}` : undefined;
 }
 
+interface AgentLabel {
+  text: string;
+  /** A session on this machine works on the pull request: the agent commands can reach it. */
+  local: boolean;
+}
+
+function sessionState(session: LocalSession): string {
+  // "shell" means that the session runs a command now.
+  if (session.status === 'busy' || session.status === 'shell') return 'working';
+  if (session.status === 'waiting') return `waiting: ${session.waitingFor ?? 'an answer'}`;
+  return session.status;
+}
+
+/**
+ * The agent that works on the pull request. A local session is always Claude Code, so a narrow row
+ * shows only the name and the state of the session.
+ */
+function agentLabel(row: Row, owners: Map<string, Owner>, short: boolean): AgentLabel | undefined {
+  const owner = owners.get(keyOf(row.pr));
+  const agent = row.fetched?.agent;
+  if (owner) {
+    const session = `${owner.session.name} · ${sessionState(owner.session)}`;
+    return { text: short ? session : `Claude Code · ${session}`, local: true };
+  }
+  if (!agent) return undefined;
+  return { text: agent.cloudSession ? `${agent.name} · cloud session` : agent.name, local: false };
+}
+
+function sessionWarning(session: LocalSession): string | undefined {
+  if (session.status === 'busy') return `${session.name} is working: it reads the message after its current turn.`;
+  if (session.status === 'waiting')
+    return `${session.name} waits for ${session.waitingFor ?? 'an answer'}: it reads the message after that.`;
+  return undefined;
+}
+
 const CHIPS: Record<ReviewerStatus, { icon: string; color: string }> = {
   approved: { icon: '✔', color: 'green' },
   'changes requested': { icon: '✎', color: 'red' },
@@ -1455,6 +1575,7 @@ interface RowViewProps {
   layout: Layout;
   place: Placement;
   hint: string | undefined;
+  agent: AgentLabel | undefined;
   now: Date;
   expanded: boolean;
   selected: boolean;
@@ -1480,7 +1601,9 @@ function Under({
   return (
     <Box>
       <Box width={before} flexShrink={0} />
-      <Text dimColor>{trail}</Text>
+      <Box flexShrink={0}>
+        <Text dimColor>{trail}</Text>
+      </Box>
       <Box paddingLeft={rest} flexShrink={1} overflow="hidden">
         {children}
       </Box>
@@ -1488,7 +1611,7 @@ function Under({
   );
 }
 
-function RowView({ ref, row, view, options, layout, place, hint, now, expanded, selected }: RowViewProps) {
+function RowView({ ref, row, view, options, layout, place, hint, agent, now, expanded, selected }: RowViewProps) {
   const name = shortName(row.pr, options);
   const before = options.interactive ? SELECTION_WIDTH : 0;
   const rest = layout.indent - before - ICON_WIDTH;
@@ -1553,16 +1676,23 @@ function RowView({ ref, row, view, options, layout, place, hint, now, expanded, 
         )}
       </Box>
       {summary &&
-        (layout.lastReview || layout.marks) &&
+        (layout.lastReview || layout.marks || (layout.agent && agent)) &&
         under(
           <>
+            {layout.agent && agent && (
+              <Box flexShrink={0} marginRight={2}>
+                <Text color={agent.local ? BRAND : undefined} dimColor={!agent.local}>
+                  ⌁ {agent.text}
+                </Text>
+              </Box>
+            )}
             {layout.lastReview && (
               <Box flexShrink={0} marginRight={2}>
                 <Text dimColor>{lastReviewText(summary, now)}</Text>
               </Box>
             )}
             {layout.marks && (
-              <Box flexShrink={1} overflow="hidden">
+              <Box flexShrink={1} overflow="hidden" height={1}>
                 {summary.reviewers.map((reviewer) => (
                   <ReviewerChip key={reviewer.login} reviewer={reviewer} />
                 ))}
@@ -1677,6 +1807,8 @@ interface ControlsProps {
   reviewers?: readonly ReviewerRef[] | undefined;
   /** The bots that the settings turn on. */
   bots: readonly Bot[];
+  /** The local session that works on the selected pull request. */
+  session?: LocalSession | undefined;
 }
 
 interface ButtonProps {
@@ -1725,6 +1857,7 @@ function ActionBar({
   shortBots,
   reviewers,
   bots,
+  session,
 }: ControlsProps) {
   const short = mode === 'main' ? shortMain : shortBots;
   const button = (action: Action, dim?: boolean) => (
@@ -1756,6 +1889,15 @@ function ActionBar({
       </Box>
     );
   }
+  if (mode === 'agent') {
+    return (
+      <Box height={1} overflow="hidden">
+        <Group name={session ? session.name : 'no local session'} />
+        {actionsOf('agent').map((action) => button(action, disabledCommands || !session))}
+        <Button id="back" hotkey="←" label="back" short={short} register={registerButton} />
+      </Box>
+    );
+  }
   if (mode !== 'main') {
     const dim = disabledCommands || isAbsent(mode, reviewers);
     return (
@@ -1772,11 +1914,33 @@ function ActionBar({
       <Button id="r" hotkey="r" label="refresh" short={short} register={registerButton} />
       <Button id="h" hotkey="h" label={hiddenLabel(revealed, hiddenCount)} short={short} register={registerButton} />
       <Button id="bots" hotkey="→" label="bots" short={short} register={registerButton} />
+      <Button id="agent" hotkey="a" label="agent" dim={!session} short={short} register={registerButton} />
       <Button id="," hotkey="," label="settings" short={short} register={registerButton} />
       <Text dimColor wrap="truncate-end">
         ↑↓ q
       </Text>
     </Box>
+  );
+}
+
+function Question({ confirmation }: { confirmation: Confirmation }) {
+  const { action, key, session } = confirmation;
+  if (action.merge)
+    return (
+      <>
+        Merge <Text bold>{key}</Text>?{'  '}
+      </>
+    );
+  if (action.agent)
+    return (
+      <>
+        Send <Text bold>"{action.label}"</Text> to <Text bold>{session?.name}</Text> for {key}?{'  '}
+      </>
+    );
+  return (
+    <>
+      Send <Text bold>"{requestText(action.request!)}"</Text> on <Text bold>{key}</Text>?{'  '}
+    </>
   );
 }
 
@@ -1788,22 +1952,13 @@ function Controls(props: ControlsProps) {
         <>
           <Box>
             <Text wrap="truncate-end">
-              {confirmation.action.merge ? (
-                <>
-                  Merge <Text bold>{confirmation.key}</Text>?{'  '}
-                </>
-              ) : (
-                <>
-                  Send <Text bold>"{requestText(confirmation.action.request!)}"</Text> on{' '}
-                  <Text bold>{confirmation.key}</Text>?{'  '}
-                </>
-              )}
+              <Question confirmation={confirmation} />
             </Text>
             <Button id="yes" hotkey="y / ⏎" label="yes" register={registerButton} />
             <Button id="no" hotkey="n / esc" label="no" register={registerButton} />
           </Box>
-          <Text color="yellow" wrap="truncate-end">
-            {confirmation.warning ?? ' '}
+          <Text color={confirmation.warning ? 'yellow' : 'gray'} wrap="truncate-end">
+            {confirmation.warning ?? confirmation.prompt ?? ' '}
           </Text>
         </>
       ) : (

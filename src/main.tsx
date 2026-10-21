@@ -49,6 +49,14 @@ const cli = meow(
     another base shows that base ("on feat/x"). The settings can turn the
     grouping off.
 
+  Agents
+    The line of the reviewers starts with the coding agent of the pull
+    request: Claude Code, Copilot, Codex, Cursor or Devin, read from the
+    author, the branch, the last commit and the description. A Claude Code
+    session on this machine that linked the pull request shows its name and
+    its state; the session with the last link wins. These records are
+    internal to Claude Code: a new version can change them.
+
   Reviewers
     A reviewer is a person or a bot that submitted a review, that GitHub asks
     for a review, CodeRabbit if it commented, or PR-Agent if it posted its
@@ -86,6 +94,11 @@ const cli = meow(
                     the main set, because the bots use r
     h               show or hide the merged, closed and draft pull requests;
                     they are hidden by default
+    a               show the commands for the agent, in the main set only:
+                    b rebase, r review, f fix, t test; each one sends a
+                    prompt to the local session of the pull request, which
+                    reads it after its current turn; "agentPrompts" in the
+                    settings file changes a prompt ({url}, {branch}, {base})
     ,               open the settings: the hidden pull requests, the parts of
                     a row, the authors and the review bots (on or off,
                     automatic retry, bots of your own); saved in

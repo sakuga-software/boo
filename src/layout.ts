@@ -9,6 +9,8 @@ export interface Layout {
   counts: boolean;
   lastReview: boolean;
   marks: boolean;
+  /** The coding agent and the local session, on the line of the reviewers. */
+  agent: boolean;
   details: boolean;
   /** The place of the pull request in its stack, such as "on #921 · 2/3". */
   stack: boolean;
@@ -28,8 +30,9 @@ export const LABEL_WIDTH = 19;
  * Picks the parts of a row that fit in the terminal width. The settings can turn a part off at any
  * width. A narrow terminal also drops parts, from the least useful:
  * - below 120 columns: the reviewers on head and the review count;
- * - below 100 columns: the name of the state, and the word "checks";
- * - below 80 columns: the last reviewer, the place in the stack, and the labels of the action bar;
+ * - below 100 columns: the name of the state, the word "checks", and the agent name of a local session;
+ * - below 90 columns: the labels of the action bar;
+ * - below 80 columns: the last reviewer and the place in the stack;
  * - below 60 columns: the checks.
  * A piped run has no width, so it shows every part that the settings allow.
  */
@@ -43,22 +46,25 @@ export function layoutFor(columns: number, settings: Settings, interactive: bool
     counts: settings.counts && width >= 120,
     lastReview: settings.lastReview && width >= 80,
     marks: settings.marks,
+    agent: settings.agent,
     details: settings.details,
     stack: width >= 80,
     gap: settings.compact ? 0 : 1,
     indent: (interactive ? SELECTION_WIDTH : 0) + ICON_WIDTH + (label ? LABEL_WIDTH : 0),
-    shortBar: width < 80,
+    shortBar: width < 90,
   };
 }
 
 export interface RowShape {
   summary: boolean;
+  /** The row knows an agent or a local session. */
+  agent?: boolean;
   detail: boolean;
   posted: boolean;
 }
 
 /** The height of a row, in lines. The scroll range needs the same height as the rendered row. */
 export function rowHeight(row: RowShape, layout: Layout): number {
-  const reviewers = row.summary && (layout.lastReview || layout.marks);
+  const reviewers = row.summary && (layout.lastReview || layout.marks || (layout.agent && row.agent));
   return 1 + (reviewers ? 1 : 0) + (row.detail && layout.details ? 1 : 0) + (row.posted ? 1 : 0) + layout.gap;
 }
