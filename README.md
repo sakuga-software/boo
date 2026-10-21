@@ -3,15 +3,21 @@
 A terminal dashboard of your open pull requests: the approval, each reviewer (bot or person),
 the checks, and the review quotas. It also retries CodeRabbit by itself after its quota comes back.
 
-![boo --watch on simulated data](docs/demo.gif)
+![boo --watch on simulated data](https://raw.githubusercontent.com/sakuga-software/boo/main/docs/demo.gif)
 
 The pull requests that your agents open collect reviews from several bots. Some bots are out of
 quota, some review in several passes, and some leave a red check that tells nothing about the code.
-`boo` reads all of it for each pull request, and shows one line of state, one line of reviewers,
-and the checks. It is the page <https://github.com/pulls/authored>, with the review state in it,
+`boo` reads all of it for each pull request, and shows one line for each pull request, with its
+details one key away. It is the page <https://github.com/pulls/authored>, with the review state in it,
 for you and for the GitHub Apps that open pull requests for you.
 
 ## Installation
+
+```sh
+npm install --global @sakuga-software/boo
+```
+
+The package installs the `boo` command. To run the sources of a clone instead:
 
 ```sh
 git clone https://github.com/sakuga-software/boo.git
@@ -411,6 +417,18 @@ pnpm typecheck
 pnpm lint               # oxlint
 pnpm format             # oxfmt --check; pnpm format:fix writes the files
 ```
+
+### Release
+
+A GitHub release publishes the package on npm (`.github/workflows/publish.yml`):
+
+1. In a pull request, change `version` in `package.json` (`npm version minor --no-git-tag-version`),
+   then merge it.
+2. Create a release on `main` with the tag `v` + that version, for example `v1.2.0`.
+
+The workflow refuses a tag that does not match the version. It runs the lint, the format check, the
+typecheck and the tests, then publishes with npm trusted publishing: npm trusts the OIDC token of
+the workflow, so the repository keeps no npm token, and the package gets a signed provenance.
 
 ## Demo
 
