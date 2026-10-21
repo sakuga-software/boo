@@ -80,7 +80,7 @@ const prs = [
 ];
 const lateArrival = pr('web', 921, 'feat(search): filter the results by date');
 const CHANGE_AT = 8_000;
-const DEMO_LENGTH_MS = 32_000;
+const DEMO_LENGTH_MS = 44_000;
 
 let requestedAt: number | undefined;
 

@@ -28,4 +28,13 @@ Type "a"
 Sleep 1.2s
 Enter
 Sleep 4s
+Escape
+Sleep 0.8s
+Up@400ms 4
+Sleep 0.8s
+Type "a"
+Sleep 1.5s
+Type "f"
+Sleep 2.5s
+Enter
 Sleep 3s

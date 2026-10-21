@@ -382,7 +382,9 @@ The GIF uses the real interface and the real decision logic with a fake GitHub
 shows its progress, a Copilot quota refusal, a CodeRabbit quota that comes back and a retry, a
 merged pull request, a new pull request, then the reviews. At the end, it shows the list of the review bots
 with `→`, selects a pull request with the arrow keys, opens the CodeRabbit menu with `r`, and posts
-`@coderabbitai approve` with `a`, then `Enter`. To see it live, run `pnpm demo`. To record the GIF again (requires vhs, ttyd and ffmpeg):
+`@coderabbitai approve` with `a`, then `Enter`. Then it goes back to the first pull request, which a
+fake local session works on, opens the commands for the agent with `a`, and sends `fix` with `f`,
+then `Enter`. To see it live, run `pnpm demo`. To record the GIF again (requires vhs, ttyd and ffmpeg):
 
 ```sh
 demo/record.sh
