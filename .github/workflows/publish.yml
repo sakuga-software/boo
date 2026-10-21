@@ -65,12 +65,18 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # Trusted publishing needs npm 11.5.1 or later.
-      - name: Check the npm version
+      # Trusted publishing needs npm 11.5.1 or later. The npm of the Node version in .nvmrc can be older.
+      - name: Update npm if it is too old
         run: |
+          recent() {
+            node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$(npm --version)"
+          }
+          if ! recent; then
+            echo "npm $(npm --version) is too old for trusted publishing: installing npm 11."
+            npm install --global npm@^11.5.1
+          fi
+          recent || { echo "::error::Trusted publishing needs npm 11.5.1 or later, and npm is $(npm --version)."; exit 1; }
           npm --version
-          node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$(npm --version)" \
-            || { echo "::error::Trusted publishing needs npm 11.5.1 or later."; exit 1; }
 
       - name: Publish
         run: npm publish
