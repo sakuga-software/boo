@@ -29,17 +29,12 @@ test('a piped run ignores the width but keeps the settings', () => {
   assert.deepEqual([layout.label, layout.checks, layout.counts, layout.indent], [true, true, false, 22]);
 });
 
-test('a folded row takes one line, and an unfolded row adds its details', () => {
+test('a row takes one line, its details, its last post and the gap', () => {
   const wide = layoutFor(160, DEFAULT_SETTINGS, true);
-  const row = { summary: true, agent: true, unfolded: false, detail: true, posted: false };
-  assert.equal(rowHeight(row, wide), 2);
-  assert.equal(rowHeight({ ...row, unfolded: true }, wide), 5);
-  assert.equal(rowHeight({ ...row, unfolded: true, agent: false }, wide), 4);
+  assert.equal(rowHeight({ details: 0, posted: false }, wide), 2);
+  assert.equal(rowHeight({ details: 6, posted: true }, wide), 9);
   assert.equal(
-    rowHeight({ ...row, unfolded: true }, layoutFor(160, { ...DEFAULT_SETTINGS, compact: true, details: false }, true)),
-    3,
+    rowHeight({ details: 0, posted: false }, layoutFor(160, { ...DEFAULT_SETTINGS, compact: true }, true)),
+    1,
   );
-  assert.equal(rowHeight({ ...row, posted: true }, wide), 3);
-  const noReviewers = { ...DEFAULT_SETTINGS, counts: false, lastReview: false, marks: false, agent: false };
-  assert.equal(rowHeight({ ...row, unfolded: true }, layoutFor(160, noReviewers, true)), 3);
 });

@@ -59,21 +59,12 @@ export function layoutFor(columns: number, settings: Settings, interactive: bool
 }
 
 export interface RowShape {
-  summary: boolean;
-  /** The row knows an agent or a local session. */
-  agent: boolean;
-  /** The row shows its details. */
-  unfolded: boolean;
-  /** The row has a line of details: the checks that fail, the quotas, the stack. */
-  detail: boolean;
+  /** The lines of the details that the row shows: none for a folded row. */
+  details: number;
   posted: boolean;
 }
 
 /** The height of a row, in lines. The scroll range needs the same height as the rendered row. */
 export function rowHeight(row: RowShape, layout: Layout): number {
-  const reviewers = row.summary && (layout.counts || layout.lastReview || layout.marks);
-  const details = row.unfolded
-    ? (row.agent && layout.agent ? 1 : 0) + (reviewers ? 1 : 0) + (row.detail && layout.details ? 1 : 0)
-    : 0;
-  return 1 + details + (row.posted ? 1 : 0) + layout.gap;
+  return 1 + row.details + (row.posted ? 1 : 0) + layout.gap;
 }

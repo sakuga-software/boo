@@ -40,11 +40,16 @@ boo --help              # options, states and marks
 Each pull request takes one line. `Enter` unfolds it and shows its details; `Enter` again folds it.
 
 ```
-❯▾✔  ready to merge     web#921  feat(search): filter the results by date   ✻ checkout  ✔ 10/10 checks
-                        ✻ Claude Code · session checkout · idle · ~/code/web · a sends a command
-                        2/2 on head · 2 reviews  last coderabbitai just now  ✔ coderabbitai  ✔ greptile
-                        2 checks running
-  ✎  changes requested  api#912  fix(auth): refresh the token before it expires   ◇ Copilot  ✔ 8/8 checks
+❯▾✎  changes requested  api#912  fix(auth): refresh the token before it expires   ✻ auth  ✔ 8/8 checks
+                        agent      ✻ Claude Code · session auth · working
+                                   ~/code/api · a sends rebase, review, fix or test
+                        reviewers  2/3 on head · 2 reviews · last greptile 9 min ago
+                                   ✎ coderabbitai  changes requested · 10 min ago
+                                   ◷ copilot       out of quota, no return time
+                                   ● greptile      commented · 9 min ago
+                        checks     ✔ 8 passed
+                        notes      blocked by the branch protection rules
+  ✔  ready to merge     web#921  feat(search): filter the results by date   ◇ Copilot  ✔ 10/10 checks
 ```
 
 The line of a pull request shows:
@@ -60,18 +65,19 @@ The line of a pull request shows:
   yellow `?` follows a session that waits for an answer. See
   [Agents and local sessions](#agents-and-local-sessions).
 
-The details of an unfolded pull request show:
+An unfolded pull request shows its details in four sections, one fact for each line:
 
-- **The agent**, with the name, the state and the folder of its local session, or the page of its
-  cloud session.
-- **The reviewers** that reviewed the last commit, out of all the reviewers, and the count of reviews.
-- **The last reviewer** and the age of their review.
-- **One mark for each reviewer**: `✔` approved, `✎` changes requested, `●` commented on the last
-  commit; `⟳` reviewing, with `2/3` if the bot shows its progress; `◷` out of quota, with the
-  return time if the notice gives one; `↻` CodeRabbit to retry; `○` requested; `◌` reviewed an
-  older commit only (`✔ old` if its approval still stands); `⊘` skipped; `‖` paused.
-- **The rest**: the names of the failing checks, the protection rule that blocks the merge, the
-  quota return times, and the state of the pull request under it in a stack.
+- **agent**: the agent, then the name, the state and the folder of its local session, or the page
+  of its cloud session.
+- **reviewers**: the reviewers that reviewed the last commit out of all the reviewers, the count of
+  reviews and the last reviewer. Then one line for each reviewer, with its mark, its state in words
+  and the age of its last review. The marks: `✔` approved, `✎` changes requested, `●` commented on
+  the last commit; `⟳` reviewing, with `2/3` if the bot shows its progress; `◷` out of quota, with
+  the return time if the notice gives one; `↻` CodeRabbit to retry; `○` requested; `◌` reviewed an
+  older commit only, with the verdict that still stands; `⊘` skipped; `‖` paused.
+- **checks**: the checks that passed, the names of the checks that fail, and the checks that run.
+- **notes**: the protection rule that blocks the merge, the state of the pull request under it in
+  a stack, the planned retries and the CodeRabbit quota.
 
 A click on a row selects it, and a click on the selected row unfolds or folds it. A piped run shows
 every pull request unfolded.
@@ -115,7 +121,8 @@ A narrow terminal shows less of each row, from the least useful part:
 
 ```
 ❯▾✔  ready to merge     web#921  feat(search): filter the results by date   ✻ suricarte-mb-2  ✔ 10/10 checks
-                        ✻ Claude Code · session suricarte-mb-2 · idle · ~/code/web · a sends a command
+                        agent      ✻ Claude Code · session suricarte-mb-2 · idle
+                                   ~/code/web · a sends rebase, review, fix or test
 ```
 
 The tool reads the agent from the pull request: its author, its head branch, the authors and the

@@ -1,6 +1,6 @@
 import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize, type DOMElement } from 'ink';
 import Spinner from 'ink-spinner';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { homedir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import {
@@ -23,7 +23,6 @@ import {
   type ReviewerRef,
 } from './actions.js';
 import {
-  BOT_LOGIN,
   botReplied,
   decide,
   quotaScope,
@@ -1153,17 +1152,11 @@ export function App(props: AppProps) {
   // In a terminal, a row shows its details after Enter. A piped run shows them all.
   const expanded = (row: Row) => !options.interactive || unfolded.has(keyOf(row.pr));
   const layout = layoutFor(columns, settings, options.interactive);
+  const lines = new Map(
+    shownRows.map((row) => [row, detailLines(row, views.get(row)!, agentOf(row, owners), layout, clock)]),
+  );
   const heightOf = (row: Row) =>
-    rowHeight(
-      {
-        summary: Boolean(row.summary),
-        agent: Boolean(agentOf(row, owners)),
-        unfolded: expanded(row),
-        detail: Boolean(views.get(row)!.detail),
-        posted: Boolean(row.posted),
-      },
-      layout,
-    );
+    rowHeight({ details: expanded(row) ? lines.get(row)!.length : 0, posted: Boolean(row.posted) }, layout);
   const range = options.interactive
     ? visibleRange(
         shownRows.map(heightOf),
@@ -1235,7 +1228,7 @@ export function App(props: AppProps) {
               place={places.get(keyOf(row.pr))!}
               hint={stackHint(row, places.get(keyOf(row.pr))!, rowsRef.current)}
               agent={agentOf(row, owners)}
-              now={clock}
+              lines={lines.get(row)!}
               expanded={expanded(row)}
               selected={options.interactive && keyOf(row.pr) === selection}
             />
@@ -1354,7 +1347,8 @@ interface View {
   icon: ReactNode;
   label: string;
   color: string;
-  detail?: string;
+  /** The lines of the notes section of an unfolded row. */
+  notes?: string[];
 }
 
 const spinner = (color: string) => (
@@ -1382,7 +1376,7 @@ const LEFT_VIEWS: Record<LeftStatus, View> = {
     icon: <Text color="gray">◌</Text>,
     label: 'draft',
     color: 'gray',
-    detail: 'watched again when it is ready for review',
+    notes: ['watched again when it is ready for review'],
   },
 };
 
@@ -1427,24 +1421,15 @@ function retryNote(options: Options, retry: boolean | undefined): string {
   return retry ? ', retry queued' : ', automatic retry off';
 }
 
-function details(row: Row, context: DescribeContext): string | undefined {
-  const summary = row.summary;
-  if (!summary) return context.stack;
+/** The notes of a row. The sections of the reviewers and of the checks show the rest. */
+function notesOf(row: Row, context: DescribeContext): string[] {
   const parts = [
     context.stack,
-    summary.checks.failed.length > 0 && `failing: ${summary.checks.failed.join(', ')}`,
-    summary.checks.pending > 0 && `${summary.checks.pending} check${summary.checks.pending === 1 ? '' : 's'} running`,
-    MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
-    ...summary.reviewers
-      .filter((reviewer) => reviewer.login !== BOT_LOGIN && reviewer.status === 'quota')
-      .map(
-        (reviewer) =>
-          `${reviewer.name} quota ${reviewer.until ? `back at ${formatTime(reviewer.until)}` : 'with no return time'}`,
-      ),
+    row.summary && MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
     ...(context.retries ?? []).map(({ bot, at }) => `${bot.name} retry at ${formatTime(at)}`),
-    coderabbitDetail(row.decision, context),
-  ].filter(Boolean);
-  return parts.length > 0 ? parts.join(' · ') : undefined;
+    row.summary && coderabbitDetail(row.decision, context),
+  ];
+  return parts.filter((part): part is string => Boolean(part));
 }
 
 function describe(row: Row, context: DescribeContext): View {
@@ -1455,15 +1440,15 @@ function describe(row: Row, context: DescribeContext): View {
       icon: spinner('blue'),
       label: isCodeRabbit(request) && request.command === 'review' ? 'retrying' : 'posting',
       color: 'blue',
-      detail: `"${requestText(request)}"…`,
+      notes: [`"${requestText(request)}"…`],
     };
   }
   if (row.left) return LEFT_VIEWS[row.left];
-  if (row.error) return { icon: <Text color="red">✖</Text>, label: 'error', color: 'red', detail: row.error };
-  if (!row.summary) return { icon: spinner('gray'), label: 'checking', color: 'gray', ...(stack && { detail: stack }) };
+  if (row.error) return { icon: <Text color="red">✖</Text>, label: 'error', color: 'red', notes: [row.error] };
+  if (!row.summary)
+    return { icon: spinner('gray'), label: 'checking', color: 'gray', ...(stack && { notes: [stack] }) };
   const { icon, ...view } = OVERALL_VIEWS[row.summary.overall];
-  const detail = details(row, context);
-  return { ...view, icon: icon(), ...(detail && { detail }) };
+  return { ...view, icon: icon(), notes: notesOf(row, context) };
 }
 
 const shortName = (pr: PullRequest, options: Options) =>
@@ -1537,30 +1522,141 @@ function AgentBadge({ agent, named }: { agent: AgentInfo; named: boolean }) {
   );
 }
 
-/** The line of the agent in the details of a pull request. */
-function AgentLine({ agent }: { agent: AgentInfo }) {
-  const { session } = agent;
-  return (
-    <Text wrap="truncate-end">
-      <Text color={agent.claude ? CLAUDE : 'gray'} bold>
-        {agentMark(agent)} {agent.name}
-      </Text>
-      {session ? (
-        <>
-          <Text dimColor> · session </Text>
-          <Text color={CLAUDE}>{session.name}</Text>
-          <Text dimColor>
-            {' '}
-            · {sessionState(session)} · {session.cwd.replace(homedir(), '~')} · a sends a command
-          </Text>
-        </>
-      ) : (
-        <Text dimColor>
-          {agent.cloudSession ? ` · cloud session ${agent.cloudSession}` : ' · no session on this machine'}
-        </Text>
-      )}
+/** One line of an unfolded row. The first line of a section carries the name of the section. */
+interface DetailLine {
+  key: string;
+  label?: string;
+  content: ReactNode;
+}
+
+const SECTION_WIDTH = 11;
+
+function stateColor(session: LocalSession): string | undefined {
+  if (isWorking(session)) return CLAUDE;
+  return session.status === 'waiting' ? 'yellow' : undefined;
+}
+
+function agentLines(agent: AgentInfo): ReactNode[] {
+  const color = agent.claude ? CLAUDE : 'gray';
+  const name = (
+    <Text color={color} bold>
+      {agentMark(agent)} {agent.name}
     </Text>
   );
+  const { session } = agent;
+  if (session)
+    return [
+      <Text wrap="truncate-end">
+        {name}
+        <Text dimColor> · session </Text>
+        <Text color={CLAUDE}>{session.name}</Text>
+        <Text dimColor> · </Text>
+        <Text color={stateColor(session)} dimColor={!stateColor(session)}>
+          {sessionState(session)}
+        </Text>
+      </Text>,
+      <Text dimColor wrap="truncate-end">
+        {session.cwd.replace(homedir(), '~')} · a sends rebase, review, fix or test
+      </Text>,
+    ];
+  if (agent.cloudSession)
+    return [
+      <Text wrap="truncate-end">
+        {name}
+        <Text dimColor> · cloud session</Text>
+      </Text>,
+      <Text dimColor wrap="truncate-end">
+        {agent.cloudSession}
+      </Text>,
+    ];
+  return [
+    <Text wrap="truncate-end">
+      {name}
+      <Text dimColor> · no session on this machine</Text>
+    </Text>,
+  ];
+}
+
+function reviewerState(reviewer: Reviewer): string {
+  switch (reviewer.status) {
+    case 'reviewing':
+      return reviewer.progress ? `reviewing ${reviewer.progress.done}/${reviewer.progress.total}` : 'reviewing';
+    case 'quota':
+      return reviewer.until ? `out of quota, back at ${formatTime(reviewer.until)}` : 'out of quota, no return time';
+    case 'stale':
+      return reviewer.verdict && reviewer.verdict !== 'commented'
+        ? `an older commit only, ${reviewer.verdict} still stands`
+        : 'an older commit only';
+    default:
+      return reviewer.status;
+  }
+}
+
+function reviewerLines(summary: Summary, layout: Layout, now: Date): ReactNode[] {
+  const header = [
+    layout.counts &&
+      `${summary.reviewers.length > 0 ? `${summary.onHead}/${summary.reviewers.length} on head · ` : ''}${summary.reviews} review${summary.reviews === 1 ? '' : 's'}`,
+    layout.lastReview && lastReviewText(summary, now),
+  ].filter(Boolean);
+  const lines: ReactNode[] = header.length > 0 ? [<Text dimColor>{header.join(' · ')}</Text>] : [];
+  if (!layout.marks) return lines;
+  const width = Math.min(24, Math.max(0, ...summary.reviewers.map((reviewer) => reviewer.name.length)));
+  for (const reviewer of summary.reviewers) {
+    const chip = CHIPS[reviewer.status];
+    lines.push(
+      <Text wrap="truncate-end">
+        <Text color={chip.color}>{chip.icon}</Text> {reviewer.name.padEnd(width)}
+        {'  '}
+        <Text color={chip.color}>{reviewerState(reviewer)}</Text>
+        {reviewer.lastReviewAt && <Text dimColor> · {formatAgo(now, reviewer.lastReviewAt)}</Text>}
+      </Text>,
+    );
+  }
+  return lines;
+}
+
+function ChecksLine({ checks }: { checks: Summary['checks'] }) {
+  const parts: [string, string][] = [];
+  if (checks.passed > 0) parts.push([`✔ ${checks.passed} passed`, 'green']);
+  if (checks.failed.length > 0) parts.push([`✖ ${checks.failed.length} failing: ${checks.failed.join(', ')}`, 'red']);
+  if (checks.pending > 0) parts.push([`◌ ${checks.pending} running`, 'yellow']);
+  if (checks.skipped > 0) parts.push([`⊘ ${checks.skipped} skipped`, 'gray']);
+  if (checks.quota > 0) parts.push([`◷ ${checks.quota} quota only`, 'gray']);
+  if (parts.length === 0) return <Text dimColor>no checks</Text>;
+  return (
+    <Text wrap="truncate-end">
+      {parts.map(([text, color], index) => (
+        <Text key={text} color={color} dimColor={color === 'gray'}>
+          {index > 0 && '   '}
+          {text}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
+/** The lines of an unfolded row, by section: the agent, the reviewers, the checks, then the notes. */
+function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout: Layout, now: Date): DetailLine[] {
+  const lines: DetailLine[] = [];
+  const section = (label: string, contents: ReactNode[]) =>
+    contents.forEach((content, index) =>
+      lines.push({ key: `${label}:${index}`, ...(index === 0 && { label }), content }),
+    );
+  if (layout.agent && agent) section('agent', agentLines(agent));
+  if (row.summary && !row.left) {
+    section('reviewers', reviewerLines(row.summary, layout, now));
+    if (layout.checks) section('checks', [<ChecksLine checks={row.summary.checks} />]);
+  }
+  if (layout.details && view.notes)
+    section(
+      'notes',
+      view.notes.map((note) => (
+        <Text dimColor wrap="truncate-end">
+          {note}
+        </Text>
+      )),
+    );
+  return lines;
 }
 
 function sessionWarning(session: LocalSession): string | undefined {
@@ -1582,27 +1678,6 @@ const CHIPS: Record<ReviewerStatus, { icon: string; color: string }> = {
   skipped: { icon: '⊘', color: 'gray' },
   paused: { icon: '‖', color: 'gray' },
 };
-
-function chipSuffix(reviewer: Reviewer): string {
-  if (reviewer.progress) return ` ${reviewer.progress.done}/${reviewer.progress.total}`;
-  if (reviewer.status === 'quota') return reviewer.until ? ` ${formatTime(reviewer.until)}` : '';
-  if (reviewer.status === 'stale' && reviewer.verdict && reviewer.verdict !== 'commented')
-    return ` ${CHIPS[reviewer.verdict].icon} old`;
-  return '';
-}
-
-function ReviewerChip({ reviewer }: { reviewer: Reviewer }) {
-  const chip = CHIPS[reviewer.status];
-  const muted = reviewer.status === 'stale' || reviewer.status === 'skipped' || reviewer.status === 'paused';
-  return (
-    <Box marginRight={2} flexShrink={0}>
-      <Text dimColor={muted}>
-        <Text color={chip.color}>{chip.icon}</Text> {reviewer.name}
-        <Text dimColor>{chipSuffix(reviewer)}</Text>
-      </Text>
-    </Box>
-  );
-}
 
 function ChecksBadge({ summary, short }: { summary: Summary; short: boolean }) {
   const { checks } = summary;
@@ -1665,7 +1740,7 @@ interface RowViewProps {
   place: Placement;
   hint: string | undefined;
   agent: AgentInfo | undefined;
-  now: Date;
+  lines: DetailLine[];
   expanded: boolean;
   selected: boolean;
 }
@@ -1700,7 +1775,7 @@ function Under({
   );
 }
 
-function RowView({ ref, row, view, options, layout, place, hint, agent, now, expanded, selected }: RowViewProps) {
+function RowView({ ref, row, view, options, layout, place, hint, agent, lines, expanded, selected }: RowViewProps) {
   const name = shortName(row.pr, options);
   const before = options.interactive ? SELECTION_WIDTH : 0;
   const rest = layout.indent - before - ICON_WIDTH;
@@ -1762,42 +1837,21 @@ function RowView({ ref, row, view, options, layout, place, hint, agent, now, exp
           </Box>
         )}
       </Box>
-      {expanded && layout.agent && agent && under(<AgentLine agent={agent} />)}
       {expanded &&
-        summary &&
-        (layout.counts || layout.lastReview || layout.marks) &&
-        under(
-          <>
-            {layout.counts && (
-              <Box flexShrink={0} marginRight={2}>
-                <Text dimColor>
-                  {summary.reviewers.length > 0 && `${summary.onHead}/${summary.reviewers.length} on head · `}
-                  {summary.reviews} review{summary.reviews === 1 ? '' : 's'}
-                </Text>
-              </Box>
+        lines.map((line) => (
+          <Fragment key={line.key}>
+            {under(
+              <>
+                <Box width={SECTION_WIDTH} flexShrink={0}>
+                  <Text dimColor>{line.label ?? ''}</Text>
+                </Box>
+                <Box flexShrink={1} overflow="hidden">
+                  {line.content}
+                </Box>
+              </>,
             )}
-            {layout.lastReview && (
-              <Box flexShrink={0} marginRight={2}>
-                <Text dimColor>{lastReviewText(summary, now)}</Text>
-              </Box>
-            )}
-            {layout.marks && (
-              <Box flexShrink={1} overflow="hidden" height={1}>
-                {summary.reviewers.map((reviewer) => (
-                  <ReviewerChip key={reviewer.login} reviewer={reviewer} />
-                ))}
-              </Box>
-            )}
-          </>,
-        )}
-      {expanded &&
-        layout.details &&
-        view.detail &&
-        under(
-          <Text dimColor wrap="truncate-end">
-            {view.detail}
-          </Text>,
-        )}
+          </Fragment>
+        ))}
       {row.posted &&
         under(
           <Text color="green" wrap="truncate-end">

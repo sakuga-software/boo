@@ -4,7 +4,7 @@ Output demo/frames/
 Set Shell zsh
 Set FontSize 16
 Set Width 1260
-Set Height 760
+Set Height 960
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 45ms
 
