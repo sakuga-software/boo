@@ -215,3 +215,17 @@ test('a waiting session does not keep a pull request from stalling, and a busy o
   assert.equal(report([failing], owned('busy'))[0]!.stalled, false);
   assert.equal(report([failing])[0]!.idleMinutes, 60);
 });
+
+test('a merged or closed pull request is never stalled', () => {
+  const left = (status: 'merged' | 'closed', number: number): ReportInput => ({
+    pr: pr(number),
+    snapshot: snapshot({
+      status,
+      branch: `b${number}`,
+      headAt: HOUR_AGO,
+      checks: [{ name: 'Migrations', state: 'failure' }],
+    }),
+  });
+  for (const report of buildReport([left('merged', 1), left('closed', 2)], new Map(), DEFAULT_SETTINGS, now))
+    assert.equal(report.stalled, false);
+});
