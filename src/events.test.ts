@@ -202,3 +202,24 @@ test('the watch keeps the last data through a failed read', async () => {
     ['snapshot', 'state awaiting review → error', 'state error → ready to merge', 'review'],
   );
 });
+
+test('an abort during a read stops the watch at once, not after the interval', async () => {
+  const abort = new AbortController();
+  const sources: WatchSources = {
+    listPullRequests: async () => {
+      abort.abort();
+      return [];
+    },
+    fetchPullRequest: async () => snapshot(),
+    readOwners: async () => new Map(),
+  };
+  const started = Date.now();
+  await watchEvents(
+    sources,
+    DEFAULT_SETTINGS,
+    { intervalMs: 60_000, signal: abort.signal },
+    async () => {},
+    () => {},
+  );
+  assert.ok(Date.now() - started < 1_000);
+});

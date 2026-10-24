@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { buildReport, keyOf, type PullRequestReport, type ReportInput } from './report.js';
 import type { Owner } from './sessions.js';
@@ -146,9 +147,7 @@ export async function watchEvents(
     } catch (error) {
       onListError(error);
     }
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, intervalMs);
-      signal.addEventListener('abort', () => (clearTimeout(timer), resolve()), { once: true });
-    });
+    // A signal that aborts during a read stops the wait at once: sleep() rejects if the signal is already aborted.
+    await sleep(intervalMs, undefined, { signal }).catch(() => {});
   }
 }
