@@ -104,6 +104,8 @@ export interface PullRequestSnapshot {
   reviews: Review[];
   comments: Comment[];
   checks: Check[];
+  /** The checks of the last commit of the base branch: the first 100. */
+  baseChecks?: Check[];
   /** The logins that GitHub still asks for a review. */
   requested: string[];
   /** The coding agent that the pull request names. */
@@ -116,7 +118,7 @@ const REVIEW_FIELDS =
   'author { login __typename } state submittedAt body commit { oid } comments(first: 10) { totalCount nodes { replyTo { id } } }';
 const COMMENT_FIELDS = 'databaseId author { login __typename } body createdAt updatedAt';
 const CONTEXT_FIELDS =
-  '__typename ... on CheckRun { name status conclusion } ... on StatusContext { context state description }';
+  '__typename ... on CheckRun { name status conclusion checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state description }';
 const OLDER = 'pageInfo { hasPreviousPage startCursor }';
 const NEWER = 'pageInfo { hasNextPage endCursor }';
 const PULL = 'repository(owner: $owner, name: $name) { pullRequest(number: $number)';
@@ -130,6 +132,7 @@ query(${VARIABLES}) {
     state isDraft merged mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
     additions deletions changedFiles
     baseRepository { defaultBranchRef { name } }
+    baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { ${CONTEXT_FIELDS} } } } } } }
     author { login __typename }
     reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
     reviews(last: 100) { ${OLDER} nodes { ${REVIEW_FIELDS} } }
@@ -181,7 +184,13 @@ interface Page<T> {
 }
 
 type ContextNode =
-  | { __typename: 'CheckRun'; name: string; status: string; conclusion: string | null }
+  | {
+      __typename: 'CheckRun';
+      name: string;
+      status: string;
+      conclusion: string | null;
+      checkSuite?: { workflowRun: { databaseId: number; workflow: { name: string } } | null } | null;
+    }
   | { __typename: 'StatusContext'; context: string; state: string; description: string | null };
 
 interface PullRequestNode {
@@ -198,6 +207,7 @@ interface PullRequestNode {
   deletions?: number;
   changedFiles?: number;
   baseRepository: { defaultBranchRef: { name: string } | null } | null;
+  baseRef?: { target: { statusCheckRollup?: { contexts: Page<ContextNode> } | null } | null } | null;
   author: Actor | null;
   reviewRequests: { nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[] };
   reviews: Page<ReviewNode>;
@@ -269,7 +279,13 @@ function toCheck(node: ContextNode): Check {
   if (node.__typename === 'StatusContext') {
     return { name: node.context, state: checkState(node), ...(node.description && { description: node.description }) };
   }
-  return { name: node.name, state: checkState(node) };
+  const run = node.checkSuite?.workflowRun;
+  return {
+    name: node.name,
+    state: checkState(node),
+    ...(run && { workflow: run.workflow.name, run: run.databaseId }),
+    ...(node.conclusion === 'CANCELLED' && { cancelled: true }),
+  };
 }
 
 function statusOf(pull: PullRequestNode): PullRequestStatus {
@@ -299,6 +315,7 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
     reviews: pull.reviews.nodes.map(toReview).filter((review) => review !== null),
     comments: pull.comments.nodes.map(toComment),
     checks: (pull.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []).map(toCheck),
+    baseChecks: (pull.baseRef?.target?.statusCheckRollup?.contexts.nodes ?? []).map(toCheck),
     requested: pull.reviewRequests.nodes
       .map(({ requestedReviewer: reviewer }) =>
         reviewer?.__typename === 'Team'

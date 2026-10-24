@@ -126,7 +126,7 @@ function state(target: PullRequest): Facts {
       };
     case 911: {
       const vortex = progress('c1', Math.min(4, 1 + Math.floor(t / 5_000)), 4);
-      const base = { head: 'c1', checks: checks(10, 0, ['e2e']) };
+      const base = { head: 'c1', checks: checks(10, 0, ['e2e']), baseChecks: checks(0, 0, ['e2e']) };
       if (requestedAt === undefined)
         return { ...base, reviews: [vortex], comments: [rateLimited(-70_000, '50 seconds')] };
       const request = comment('octocat', REQUEST_BODY, requestedAt);
@@ -154,7 +154,12 @@ function state(target: PullRequest): Facts {
         head: 'e1',
         reviews: [review('e1', -1_200_000, 'COMMENTED'), review('e0', -2_400_000, 'COMMENTED', CLAUDE)],
         comments: [],
-        checks: checks(5),
+        // A push and a change of base started CI twice, and its concurrency rule cancelled the first run.
+        checks: [
+          ...checks(5),
+          { name: 'lint', state: 'failure', workflow: 'CI', run: 1, cancelled: true },
+          { name: 'lint', state: 'success', workflow: 'CI', run: 2 },
+        ],
       };
   }
 }
