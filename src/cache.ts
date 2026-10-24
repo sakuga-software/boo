@@ -33,8 +33,9 @@ export class DiskCache {
     const path = join(this.dir, fileName(key));
     const temporary = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     try {
-      await mkdir(this.dir, { recursive: true });
-      await writeFile(temporary, JSON.stringify({ at: now, value }));
+      // The entries hold the data of private repositories: only the owner of the files reads them.
+      await mkdir(this.dir, { recursive: true, mode: 0o700 });
+      await writeFile(temporary, JSON.stringify({ at: now, value }), { mode: 0o600 });
       await rename(temporary, path);
     } catch {
       await rm(temporary, { force: true }).catch(() => {});

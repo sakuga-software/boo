@@ -464,9 +464,13 @@ export function App(props: AppProps) {
       if (options.dryRun || !coderabbitRetries()) return;
       for (const pr of prs) {
         await exclusive(async () => {
-          const row = rowOf(pr);
           // A row whose last fetch failed shows old data: its head and its status are not checked.
-          if (row.left || row.error || row.decision?.kind !== 'trigger') return;
+          const due = (row: Row) => !row.left && !row.error && row.decision?.kind === 'trigger';
+          if (!due(rowOf(pr))) return;
+          // A read from the cache can miss a request that another run of boo just posted. A fresh read sees it.
+          await refresh(pr, true);
+          const row = rowOf(pr);
+          if (!due(row)) return;
           if (unanswered(row, lastPosts.current.get(keyOf(pr)))) return;
           if (await post(pr, { bot: CODERABBIT, command: 'review' })) setTriggered((count) => count + 1);
         });
@@ -477,7 +481,11 @@ export function App(props: AppProps) {
     async function retryOthers(prs: PullRequest[]) {
       await Promise.all(
         prs.map(async (pr) => {
-          for (const retry of retriesOf(rowOf(pr)).filter(({ at }) => at.getTime() <= Date.now())) {
+          const dueRetries = () => retriesOf(rowOf(pr)).filter(({ at }) => at.getTime() <= Date.now());
+          if (dueRetries().length === 0) return;
+          // A read from the cache can miss a review that another run of boo just asked for.
+          await refresh(pr, true);
+          for (const retry of dueRetries()) {
             retried.current.start(keyOf(pr), retry);
             if (await send(pr, { bot: retry.bot, command: retry.bot.commands[0]!.command })) {
               setTriggered((count) => count + 1);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -45,4 +45,11 @@ test('the watch slows down below 20 % of the GraphQL points', () => {
   assert.equal(lowOnPoints(rate(999)), true);
   assert.equal(lowOnPoints(rate(1000)), false);
   assert.equal(lowOnPoints(undefined), false);
+});
+
+test('only the owner reads the cache folder and its entries', async () => {
+  const dir = join(await mkdtemp(join(tmpdir(), 'boo-cache-')), 'boo');
+  await new DiskCache(dir).set('pr-acme/web#1', { head: 'abc' }, now);
+  assert.equal((await stat(dir)).mode & 0o777, 0o700);
+  assert.equal((await stat(join(dir, 'pr-acme_web_1.json'))).mode & 0o777, 0o600);
 });
