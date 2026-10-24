@@ -1,8 +1,10 @@
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { requestText, type Request } from './actions.js';
 import { detectAgent, type Agent } from './agents.js';
-import { DiskCache } from './cache.js';
+import { cacheDir, DiskCache } from './cache.js';
 import type { Comment, Review } from './decide.js';
 import type { Check, CheckState } from './reviewers.js';
 
@@ -327,7 +329,27 @@ export interface RateLimit {
 /** True if less than 20 % of the GraphQL points remain. The watch then slows down until the reset. */
 export const lowOnPoints = (rate: RateLimit | undefined) => Boolean(rate && rate.remaining < rate.limit * 0.2);
 
-const cache = new DiskCache();
+let accountCache: Promise<DiskCache | undefined> | undefined;
+
+/**
+ * The cache of the account of `gh`. Two accounts on one machine (a person and a GitHub App, for
+ * example) can read different repositories, so each account has its own folder, named by a hash of its
+ * token. With no token, the runs share nothing.
+ */
+function cacheOfAccount(): Promise<DiskCache | undefined> {
+  accountCache ??= (async () => {
+    const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || (await gh(['auth', 'token']).catch(() => ''));
+    if (!token.trim()) return undefined;
+    const account = createHash('sha256').update(token.trim()).digest('hex').slice(0, 16);
+    return new DiskCache(join(cacheDir(), account));
+  })();
+  return accountCache;
+}
+
+const cache = {
+  get: async <T>(key: string, maxAgeMs: number, now?: number) => (await cacheOfAccount())?.get<T>(key, maxAgeMs, now),
+  set: async (key: string, value: unknown) => (await cacheOfAccount())?.set(key, value),
+};
 const RATE_KEY = 'graphql-rate-limit';
 // GitHub gives a new count at each query. A count older than its reset time is a full count again.
 const RATE_MAX_AGE_MS = 60 * 60_000;
