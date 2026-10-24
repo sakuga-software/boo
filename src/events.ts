@@ -30,7 +30,7 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
   if (before.state !== after.state)
     events.push({ at, pr, event: 'state', from: before.state, to: after.state, failing: after.checks.failing });
   // A read that failed has no data. Its other differences are not changes of the pull request.
-  if (before.error || after.error) return events;
+  if (after.error) return events;
   if (before.headSha !== after.headSha) events.push({ at, pr, event: 'head', from: before.headSha, to: after.headSha });
   const reviewersBefore = new Map(before.reviewers.map((reviewer) => [reviewer.login, reviewer]));
   for (const reviewer of after.reviewers) {
@@ -52,7 +52,7 @@ const LEFT_STATES = new Set(['merged', 'closed', 'draft']);
 
 /**
  * Returns the events between two reads of the list. `previous` is undefined at the first read: each
- * pull request then gives one `snapshot` line. A pull request that left the list gives `left`, with
+ * pull request then gives one `snapshot` line, also a merged one. A pull request that left the list gives `left`, with
  * the state that its last read gave (`merged`, `closed`, `draft`), or `unlisted` if it is still open.
  */
 export function diffReports(
@@ -64,16 +64,25 @@ export function diffReports(
   for (const report of next) {
     const pr = `${report.repo}#${report.number}`;
     const before = previous?.get(pr);
-    if (LEFT_STATES.has(report.state)) {
-      if (!previous || before) events.push({ at, pr, event: 'left', reason: report.state });
-    } else if (!previous) events.push({ at, pr, event: 'snapshot', ...report });
-    else if (!before) events.push({ at, pr, event: 'entered', ...report });
+    if (!previous) events.push({ at, pr, event: 'snapshot', ...report });
+    else if (LEFT_STATES.has(report.state)) {
+      if (before) events.push({ at, pr, event: 'left', reason: report.state });
+    } else if (!before) events.push({ at, pr, event: 'entered', ...report });
     else events.push(...changesOf(before, report, at));
   }
   const listed = new Set(next.map((report) => `${report.repo}#${report.number}`));
   for (const pr of previous?.keys() ?? [])
     if (!listed.has(pr)) events.push({ at, pr, event: 'left', reason: 'unlisted' });
   return events;
+}
+
+/**
+ * A failed read keeps the data of the last read that worked, with the error. The next read that works
+ * then gives the changes since that last data: a review or a check of the time of the error is not lost.
+ */
+function keepLastData(previous: ReadonlyMap<string, PullRequestReport> | undefined, report: PullRequestReport) {
+  const last = previous?.get(`${report.repo}#${report.number}`);
+  return report.error && last ? { ...last, state: report.state, error: report.error } : report;
 }
 
 export interface WatchSources {
@@ -128,8 +137,11 @@ export async function watchEvents(
         (report) => !goneKeys.has(`${report.repo}#${report.number}`) || LEFT_STATES.has(report.state),
       );
       for (const event of diffReports(previous, reports, now.toISOString())) await emit(event);
-      const open = reports.filter((report) => !LEFT_STATES.has(report.state));
-      previous = new Map(open.map((report) => [`${report.repo}#${report.number}`, report]));
+      previous = new Map(
+        reports
+          .filter((report) => !LEFT_STATES.has(report.state))
+          .map((report) => [`${report.repo}#${report.number}`, keepLastData(previous, report)]),
+      );
       tracked = new Map(listed.map((pr) => [keyOf(pr), pr]));
     } catch (error) {
       onListError(error);

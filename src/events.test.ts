@@ -87,6 +87,26 @@ test('a pull request enters the list, and others leave it merged or unlisted', (
   );
 });
 
+test('the first read gives a snapshot line also for a pull request that merged since the list', () => {
+  assert.deepEqual(
+    diffReports(undefined, [report(1, { state: 'merged' })], AT).map(({ event }) => event),
+    ['snapshot'],
+  );
+});
+
+test('the read after an error gives the changes since the last data that worked', () => {
+  const kept = report(1, {
+    state: 'error',
+    error: 'HTTP 502',
+    reviewers: [review({ verdict: 'commented', mark: 'commented' })],
+  });
+  const events = diffReports(byKey(kept), [report(1, { reviewers: [review()] })], AT);
+  assert.deepEqual(
+    events.map(({ event }) => event),
+    ['state', 'review'],
+  );
+});
+
 test('a read that failed gives only the change of state, not changes of data', () => {
   const failed = report(1, { state: 'error', error: 'HTTP 502', headSha: null, reviewers: [] });
   assert.deepEqual(diffReports(byKey(report(1, { reviewers: [review()] })), [failed], AT), [
@@ -151,4 +171,34 @@ test('the watch reads a pull request that left the search once more, to give the
     ],
   );
   assert.deepEqual(fetched, [1, 2, 1, 2]);
+});
+
+test('the watch keeps the last data through a failed read', async () => {
+  const reads = ['open', 'fail', 'approved'];
+  const abort = new AbortController();
+  const approval = { user: { login: 'alice' }, commit_id: 'abc', submitted_at: AT, state: 'APPROVED' };
+  const sources: WatchSources = {
+    listPullRequests: async () => [pr(1)],
+    fetchPullRequest: async () => {
+      const read = reads.shift();
+      if (read === 'fail') throw new Error('HTTP 502');
+      return snapshot(read === 'approved' ? { reviews: [approval] } : {});
+    },
+    readOwners: async () => new Map(),
+  };
+  const events: WatchEvent[] = [];
+  await watchEvents(
+    sources,
+    DEFAULT_SETTINGS,
+    { intervalMs: 0, signal: abort.signal },
+    async (event) => {
+      events.push(event);
+      if (reads.length === 0) abort.abort();
+    },
+    (error) => assert.fail(String(error)),
+  );
+  assert.deepEqual(
+    events.map((event) => (event.event === 'state' ? `state ${event.from} → ${event.to}` : event.event)),
+    ['snapshot', 'state awaiting review → error', 'state error → ready to merge', 'review'],
+  );
 });
