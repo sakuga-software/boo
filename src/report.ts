@@ -151,10 +151,10 @@ function coderabbitNote(decision: Decision): CoderabbitNote | null {
 }
 
 // Claude Code reports "shell" while the session runs a command.
-export const isWorking = (status: string) => status === 'busy' || status === 'shell';
+export const isWorkingStatus = (status: string) => status === 'busy' || status === 'shell';
 
 function sessionStateOf(status: string): SessionState {
-  if (isWorking(status)) return 'working';
+  if (isWorkingStatus(status)) return 'working';
   return status === 'waiting' ? 'waiting' : 'idle';
 }
 
@@ -212,7 +212,7 @@ export function buildReport(
       ...stallOf({
         overall: summary?.overall,
         headAt: snapshot?.headAt,
-        working: Boolean(session && isWorking(session.status)),
+        working: Boolean(session && isWorkingStatus(session.status)),
         afterMinutes: settings.stalledAfterMinutes,
         now,
       }),
