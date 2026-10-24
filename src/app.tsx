@@ -589,6 +589,7 @@ export function App(props: AppProps) {
         setDone(true);
       });
     return () => abort.abort();
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- The loop starts once for each list of authors: the other props of App do not change during a run.
   }, [authors]);
 
   useEffect(() => {
@@ -619,16 +620,19 @@ export function App(props: AppProps) {
       stopped = true;
       clearInterval(timer);
     };
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- The poll starts once: the props of App do not change during a run.
   }, []);
 
   useEffect(() => {
     if (!options.watch) return;
     const timer = setInterval(() => setNow(new Date()), 1_000);
     return () => clearInterval(timer);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- The clock starts once: the props of App do not change during a run.
   }, []);
 
   useEffect(() => {
     if (done) exit(fatal ? new Error(fatal) : undefined);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- Only `done` stops the app. `fatal` is set before `done`.
   }, [done]);
 
   const allKeys = rows?.map((row) => keyOf(row.pr)) ?? [];
@@ -1175,6 +1179,7 @@ export function App(props: AppProps) {
       process.off('exit', disable);
       disable();
     };
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- The input starts once: the props of App do not change during a run.
   }, []);
 
   const clock = options.watch ? now : new Date();
@@ -1623,7 +1628,7 @@ function agentLines(agent: AgentInfo): ReactNode[] {
   const { session } = agent;
   if (session)
     return [
-      <Text wrap="truncate-end">
+      <Text key="name" wrap="truncate-end">
         {name}
         <Text dimColor> · session </Text>
         <Text color={CLAUDE}>{session.name}</Text>
@@ -1632,22 +1637,22 @@ function agentLines(agent: AgentInfo): ReactNode[] {
           {sessionState(session)}
         </Text>
       </Text>,
-      <Text dimColor wrap="truncate-end">
+      <Text key="cwd" dimColor wrap="truncate-end">
         {session.cwd.replace(homedir(), '~')} · a sends rebase, review, fix or test
       </Text>,
     ];
   if (agent.cloudSession)
     return [
-      <Text wrap="truncate-end">
+      <Text key="name" wrap="truncate-end">
         {name}
         <Text dimColor> · cloud session</Text>
       </Text>,
-      <Text dimColor wrap="truncate-end">
+      <Text key="cloud" dimColor wrap="truncate-end">
         {agent.cloudSession} · a, then w, opens it online
       </Text>,
     ];
   return [
-    <Text wrap="truncate-end">
+    <Text key="name" wrap="truncate-end">
       {name}
       <Text dimColor> · no session on this machine</Text>
     </Text>,
@@ -1680,7 +1685,14 @@ function reviewerLines(summary: Summary, confidence: Map<string, Confidence>, la
       `${summary.reviewers.length > 0 ? `${summary.onHead}/${summary.reviewers.length} on head · ` : ''}${summary.reviews} review${summary.reviews === 1 ? '' : 's'}`,
     layout.lastReview && lastReviewText(summary, now),
   ].filter(Boolean);
-  const lines: ReactNode[] = header.length > 0 ? [<Text dimColor>{header.join(' · ')}</Text>] : [];
+  const lines: ReactNode[] =
+    header.length > 0
+      ? [
+          <Text key="header" dimColor>
+            {header.join(' · ')}
+          </Text>,
+        ]
+      : [];
   if (!layout.marks) return lines;
   const width = Math.min(24, Math.max(0, ...summary.reviewers.map((reviewer) => reviewer.name.length)));
   for (const reviewer of summary.reviewers) {
@@ -1714,7 +1726,12 @@ function checkLines(checks: Summary['checks'], base: string | undefined): ReactN
   if (checks.pending > 0) parts.push([`◌ ${checks.pending} running`, 'yellow']);
   if (checks.skipped > 0) parts.push([`⊘ ${checks.skipped} skipped`, 'gray']);
   if (checks.quota > 0) parts.push([`◷ ${checks.quota} quota only`, 'gray']);
-  if (parts.length === 0 && checks.cancelled.length === 0) return [<Text dimColor>no checks</Text>];
+  if (parts.length === 0 && checks.cancelled.length === 0)
+    return [
+      <Text key="none" dimColor>
+        no checks
+      </Text>,
+    ];
   const counts = parts.length > 0 && (
     <Text wrap="truncate-end">
       {parts.map(([text, color], index) => (
@@ -1726,7 +1743,7 @@ function checkLines(checks: Summary['checks'], base: string | undefined): ReactN
     </Text>
   );
   const failing = checks.failed.map((name) => (
-    <Text wrap="truncate-end">
+    <Text key={name} wrap="truncate-end">
       <Text color="red">✖ {name}</Text>
       <Text dimColor>
         {' '}
@@ -1735,7 +1752,7 @@ function checkLines(checks: Summary['checks'], base: string | undefined): ReactN
     </Text>
   ));
   const cancelled = checks.cancelled.map((name) => (
-    <Text dimColor wrap="truncate-end">
+    <Text key={name} dimColor wrap="truncate-end">
       ⊘ {name} · cancelled by a newer run
     </Text>
   ));
@@ -1757,7 +1774,7 @@ function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout:
   const headAt = row.fetched?.headAt;
   if (changes)
     section('changes', [
-      <Text>
+      <Text key="size">
         <Text color="green">+{changes.additions}</Text> <Text color="red">−{changes.deletions}</Text>
         <Text dimColor>
           {' '}
@@ -1776,7 +1793,7 @@ function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout:
     section(
       'notes',
       view.notes.map((note) => (
-        <Text dimColor wrap="truncate-end">
+        <Text key={note} dimColor wrap="truncate-end">
           {note}
         </Text>
       )),
