@@ -8,3 +8,9 @@ test('--json refuses --watch before it reads GitHub', () => {
   assert.match(run.stderr, /--json prints the state once/);
   assert.equal(run.stdout, '');
 });
+
+test('--events refuses to run without --watch', () => {
+  const run = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--events'], { encoding: 'utf8' });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /--events streams the changes: it needs --watch/);
+});
