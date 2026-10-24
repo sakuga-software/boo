@@ -71,3 +71,11 @@ test('a failed read caches nothing', async () => {
   await assert.rejects(cachedRead(cache, 'pr-acme/web#1', 30_000, async () => Promise.reject(new Error('HTTP 502'))));
   assert.equal(await cache.get('pr-acme/web#1', 30_000), undefined);
 });
+
+test('one run gets a claim, the others do not until it expires', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  const claims = await Promise.all([1, 2, 3, 4].map(() => cache.claim('post-acme/web#1-coderabbit', 120_000)));
+  assert.deepEqual(claims.filter(Boolean).length, 1);
+  assert.equal(await cache.claim('post-acme/web#2-coderabbit', 120_000), true);
+  assert.equal(await cache.claim('post-acme/web#1-coderabbit', 120_000, Date.now() + 121_000), true);
+});

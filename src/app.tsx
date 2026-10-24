@@ -91,7 +91,7 @@ export type GitHub = Pick<
   typeof github,
   'listPullRequests' | 'fetchPullRequest' | 'requestReview' | 'openInBrowser' | 'mergePullRequest'
 > &
-  Partial<Pick<typeof github, 'readRateLimit'>>;
+  Partial<Pick<typeof github, 'readRateLimit' | 'claimPost'>>;
 
 /** The Claude Code sessions of this machine. */
 export interface Sessions {
@@ -472,6 +472,7 @@ export function App(props: AppProps) {
           const row = rowOf(pr);
           if (!due(row)) return;
           if (unanswered(row, lastPosts.current.get(keyOf(pr)))) return;
+          if (gitHub.claimPost && !(await gitHub.claimPost(pr, CODERABBIT.id))) return;
           if (await post(pr, { bot: CODERABBIT, command: 'review' })) setTriggered((count) => count + 1);
         });
       }
@@ -486,6 +487,7 @@ export function App(props: AppProps) {
           // A read from the cache can miss a review that another run of boo just asked for.
           await refresh(pr, true);
           for (const retry of dueRetries()) {
+            if (gitHub.claimPost && !(await gitHub.claimPost(pr, retry.bot.id))) continue;
             retried.current.start(keyOf(pr), retry);
             if (await send(pr, { bot: retry.bot, command: retry.bot.commands[0]!.command })) {
               setTriggered((count) => count + 1);

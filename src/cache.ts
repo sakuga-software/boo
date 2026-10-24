@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,6 +26,35 @@ export class DiskCache {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Takes a claim that only one run gets, for `ttlMs`: the first run that creates the file wins. An
+   * older claim expires. If the cache folder is not usable, every run gets the claim.
+   */
+  async claim(key: string, ttlMs: number, now = Date.now()): Promise<boolean> {
+    const path = join(this.dir, `${fileName(key)}.claim`);
+    try {
+      await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    } catch {
+      return true;
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        // "wx" fails if the file exists, so two runs cannot both create it.
+        await (await open(path, 'wx', 0o600)).close();
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return true;
+        const age = await stat(path).then(
+          (stats) => now - stats.mtimeMs,
+          () => Infinity,
+        );
+        if (age < ttlMs) return false;
+        await rm(path, { force: true });
+      }
+    }
+    return false;
   }
 
   // Two runs can write one key at the same time. A rename replaces the file in one step, so a reader never sees half a file.

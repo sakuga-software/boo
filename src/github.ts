@@ -407,6 +407,18 @@ async function allNodes<T>(
   }
 }
 
+// A post appears on GitHub within seconds. After this time, a fresh read of the other run sees it.
+const POST_CLAIM_MS = 2 * 60_000;
+
+/**
+ * Returns true if this run may post `what` on the pull request now. Two runs of boo that read the same
+ * pull request at the same time would both post: only the first that claims the post does.
+ */
+export async function claimPost(pr: PullRequest, what: string): Promise<boolean> {
+  const cache = await cacheOfAccount();
+  return cache ? cache.claim(`post-${pr.repo}#${pr.number}-${what}`, POST_CLAIM_MS) : true;
+}
+
 /**
  * The age of a cached pull request that a read takes. It is the poll interval of the watch: a watch
  * never reads its own last read again, but a second run within this time reads no GitHub.
