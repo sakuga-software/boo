@@ -39,6 +39,7 @@ boo --since 2026-09-15  # only the pull requests created on or after this date
 boo --author @me --author app/my-agent  # the pull requests of these authors, for this run
 boo --dry-run           # post and merge nothing
 boo --json              # print the state as JSON for a script, and post nothing
+boo --watch --events    # print each change as one JSON line, and post nothing
 boo --help              # options, states and marks
 ```
 
@@ -46,7 +47,7 @@ boo --help              # options, states and marks
 
 `boo --json` prints one JSON array, with one object for each pull request, in the order of the list.
 It posts nothing and merges nothing. It has no colors, no spinner and no width limit, so a script
-needs no `COLUMNS` and no clean-up. It does not work with `--watch`.
+needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --events`.
 
 ```json
 {
@@ -98,6 +99,33 @@ needs no `COLUMNS` and no clean-up. It does not work with `--watch`.
 | `notes.coderabbit`    | The CodeRabbit quota: `wait` with `availableAt`, `trigger`, `pending`, `skipped`, `paused`, `idle`, or `null`.                                                                                                                                                                                      |
 
 The keys stay the same from one version to the next. A test fixes them.
+
+### Events
+
+`boo --watch --events` reads the list once a minute and prints each change as one JSON line
+(NDJSON), so a script follows all the pull requests with no diff of its own. It posts nothing and
+merges nothing. Each line has `at`, `pr` (`owner/repo#number`) and `event`:
+
+```json
+{"at":"…","pr":"acme/web#480","event":"state","from":"approved","to":"checks failing","failing":["Migrations"]}
+{"at":"…","pr":"acme/web#480","event":"check","check":"Migrations","to":"failing"}
+{"at":"…","pr":"acme/web#480","event":"review","reviewer":"sakuga-review[bot]","mark":"approved","onHead":true,"verdict":"approved","score":{"score":4,"total":5},"reviewedAt":"…"}
+{"at":"…","pr":"acme/web#480","event":"left","reason":"merged"}
+```
+
+| `event`    | When                                                           | Other keys                                                                         |
+| ---------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `snapshot` | The first read, one line for each pull request                 | The keys of `--json`                                                               |
+| `entered`  | A pull request enters the list                                 | The keys of `--json`                                                               |
+| `state`    | The state changes                                              | `from`, `to`, `failing`                                                            |
+| `head`     | A new head commit                                              | `from`, `to`                                                                       |
+| `review`   | A reviewer has a new mark, verdict, score or review            | `reviewer`, then the keys of `reviewers[]` in `--json`, with `reviewedAt` for `at` |
+| `check`    | A check starts to fail, or stops (it passed, or it runs again) | `check`, `to`: `failing` or `not failing`                                          |
+| `left`     | A pull request leaves the list                                 | `reason`: `merged`, `closed`, `draft`, or `unlisted` if it is still open           |
+
+If GitHub does not give a pull request, its line says `"to":"error"`, and the next read that works
+says `"from":"error"`. A list that GitHub does not give writes an error on stderr, and the watch
+goes on.
 
 ## What a row shows
 
