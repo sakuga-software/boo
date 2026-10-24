@@ -244,3 +244,33 @@ test('an abort during the read of the pull requests writes no event of that read
   );
   assert.deepEqual(events, []);
 });
+
+test('a pull request that left the search and that GitHub did not give is read again, not called unlisted', async () => {
+  const lists = [[pr(1)], [], [], []];
+  const statuses: (PullRequestSnapshot['status'] | 'fail')[] = ['open', 'fail', 'merged'];
+  const abort = new AbortController();
+  const sources: WatchSources = {
+    listPullRequests: async () => lists.shift() ?? [],
+    fetchPullRequest: async () => {
+      const status = statuses.shift();
+      if (status === 'fail') throw new Error('HTTP 502');
+      return snapshot({ status: status ?? 'merged' });
+    },
+    readOwners: async () => new Map(),
+  };
+  const events: WatchEvent[] = [];
+  await watchEvents(
+    sources,
+    DEFAULT_SETTINGS,
+    { intervalMs: 0, signal: abort.signal },
+    async (event) => {
+      events.push(event);
+      if (event.event === 'left') abort.abort();
+    },
+    (error) => assert.fail(String(error)),
+  );
+  assert.deepEqual(
+    events.map((event) => (event.event === 'left' ? `left ${event.reason}` : event.event)),
+    ['snapshot', 'left merged'],
+  );
+});

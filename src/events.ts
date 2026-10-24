@@ -132,23 +132,30 @@ export async function watchEvents(
       const listedKeys = new Set(listed.map(keyOf));
       const gone = [...tracked.values()].filter((pr) => !listedKeys.has(keyOf(pr)));
       const now = new Date();
+      const read = await readReport([...listed, ...gone], sources, settings, now);
+      const keyOfReport = (report: PullRequestReport) => `${report.repo}#${report.number}`;
       const goneKeys = new Set(gone.map(keyOf));
-      // A pull request that left the search result but is still open gives `left` with "unlisted".
-      const reports = (await readReport([...listed, ...gone], sources, settings, now)).filter(
-        (report) => !goneKeys.has(`${report.repo}#${report.number}`) || LEFT_STATES.has(report.state),
+      // A pull request that left the search result and that GitHub did not give is read again at the
+      // next read. Until then it keeps its last data, and gives no event: it can be merged or closed.
+      const unread = new Set(
+        read.filter((report) => goneKeys.has(keyOfReport(report)) && report.error).map(keyOfReport),
       );
+      // A pull request that left the search result but is still open gives `left` with "unlisted".
+      const reports = read.filter((report) => !goneKeys.has(keyOfReport(report)) || LEFT_STATES.has(report.state));
+      const before = previous && new Map([...previous].filter(([key]) => !unread.has(key)));
       // A stop during the read must not write the events of that read.
       if (signal.aborted) return;
-      for (const event of diffReports(previous, reports, now.toISOString())) {
+      for (const event of diffReports(before, reports, now.toISOString())) {
         if (signal.aborted) return;
         await emit(event);
       }
-      previous = new Map(
-        reports
+      previous = new Map([
+        ...reports
           .filter((report) => !LEFT_STATES.has(report.state))
-          .map((report) => [`${report.repo}#${report.number}`, keepLastData(previous, report)]),
-      );
-      tracked = new Map(listed.map((pr) => [keyOf(pr), pr]));
+          .map((report) => [keyOfReport(report), keepLastData(previous, report)] as const),
+        ...[...(previous ?? [])].filter(([key]) => unread.has(key)),
+      ]);
+      tracked = new Map([...listed, ...gone.filter((pr) => unread.has(keyOf(pr)))].map((pr) => [keyOf(pr), pr]));
     } catch (error) {
       onListError(error);
     }
