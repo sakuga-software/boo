@@ -58,6 +58,8 @@ needs no `COLUMNS` and no clean-up. It does not work with `--watch`.
   "base": "main",
   "isDraft": false,
   "state": "checks failing",
+  "stalled": false,
+  "idleMinutes": 12,
   "error": null,
   "checks": { "passed": 8, "failing": ["Migrations"], "running": 0, "skipped": 1, "quota": 0 },
   "reviewers": [
