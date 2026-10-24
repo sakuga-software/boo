@@ -836,6 +836,17 @@ export function App(props: AppProps) {
     return `The ${request.bot.name} quota ${back}: ${request.bot.name} will likely refuse.`;
   }
 
+  /** Shows why the merge policy refuses the merge. Returns true if it refuses. */
+  function refusePolicy(row: Row, key: string): boolean {
+    const misses = row.summary?.policy ?? [];
+    if (misses.length === 0) return false;
+    setFlash({
+      text: `Cannot merge ${key}, it misses the merge policy: ${misses.map(({ note }) => note).join(', ')}.`,
+      color: 'yellow',
+    });
+    return true;
+  }
+
   function request(action: Action, key = live().key) {
     const row = key ? rowsRef.current.get(key) : undefined;
     if (!row || !key) return;
@@ -845,14 +856,7 @@ export function App(props: AppProps) {
       return;
     }
     if (action.merge) {
-      const misses = row.summary?.policy ?? [];
-      if (misses.length > 0) {
-        setFlash({
-          text: `Cannot merge ${key}, it misses the merge policy: ${misses.map(({ note }) => note).join(', ')}.`,
-          color: 'yellow',
-        });
-        return;
-      }
+      if (refusePolicy(row, key)) return;
       const head = row.fetched?.head;
       if (!head) {
         setFlash({ text: `Cannot merge ${key}: its state is not fetched yet.`, color: 'yellow' });
@@ -927,6 +931,8 @@ export function App(props: AppProps) {
       return;
     }
     if (pending.action.merge) {
+      // A refresh while the prompt waits can bring a new miss, such as a lower score on a new head.
+      if (refusePolicy(row, pending.key)) return;
       const head = pending.head;
       if (!head || merging.current.has(pending.key)) return;
       merging.current.add(pending.key);
@@ -1630,15 +1636,16 @@ function reviewerLines(summary: Summary, confidence: Map<string, Confidence>, la
   return lines;
 }
 
-function ChecksLine({ checks }: { checks: Summary['checks'] }) {
+/** The counts of the checks, then one line for each check that fails or that a newer run replaces, with its cause. */
+function checkLines(checks: Summary['checks'], base: string | undefined): ReactNode[] {
   const parts: [string, string][] = [];
   if (checks.passed > 0) parts.push([`✔ ${checks.passed} passed`, 'green']);
-  if (checks.failed.length > 0) parts.push([`✖ ${checks.failed.length} failing: ${checks.failed.join(', ')}`, 'red']);
+  if (checks.failed.length > 0) parts.push([`✖ ${checks.failed.length} failing`, 'red']);
   if (checks.pending > 0) parts.push([`◌ ${checks.pending} running`, 'yellow']);
   if (checks.skipped > 0) parts.push([`⊘ ${checks.skipped} skipped`, 'gray']);
   if (checks.quota > 0) parts.push([`◷ ${checks.quota} quota only`, 'gray']);
-  if (parts.length === 0) return <Text dimColor>no checks</Text>;
-  return (
+  if (parts.length === 0 && checks.cancelled.length === 0) return [<Text dimColor>no checks</Text>];
+  const counts = parts.length > 0 && (
     <Text wrap="truncate-end">
       {parts.map(([text, color], index) => (
         <Text key={text} color={color} dimColor={color === 'gray'}>
@@ -1648,6 +1655,21 @@ function ChecksLine({ checks }: { checks: Summary['checks'] }) {
       ))}
     </Text>
   );
+  const failing = checks.failed.map((name) => (
+    <Text wrap="truncate-end">
+      <Text color="red">✖ {name}</Text>
+      <Text dimColor>
+        {' '}
+        · {checks.failedOnBase.includes(name) ? `fails on ${base ?? 'the base branch'} too` : 'fails here only'}
+      </Text>
+    </Text>
+  ));
+  const cancelled = checks.cancelled.map((name) => (
+    <Text dimColor wrap="truncate-end">
+      ⊘ {name} · cancelled by a newer run
+    </Text>
+  ));
+  return [...(counts ? [counts] : []), ...failing, ...cancelled];
 }
 
 /** The lines of an unfolded row, by section: the agent, the reviewers, the checks, then the notes. */
@@ -1676,7 +1698,7 @@ function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout:
   if (row.summary && !row.left) {
     const confidence = confidenceOf(row.fetched?.reviews ?? [], row.fetched?.comments ?? []);
     section('reviewers', reviewerLines(row.summary, confidence, layout, now));
-    if (layout.checks) section('checks', [<ChecksLine checks={row.summary.checks} />]);
+    if (layout.checks) section('checks', checkLines(row.summary.checks, row.fetched?.base));
   }
   if (layout.details && view.notes)
     section(
