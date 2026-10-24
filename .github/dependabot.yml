@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # open-pull-requests-limit 0 stops the version updates. The security updates still open, grouped in one pull request.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - '*'
