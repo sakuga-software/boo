@@ -465,6 +465,13 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
 - It reads each pull request with one GraphQL query of cost 1. Ten pull requests cost about
   600 points an hour, out of the 5,000 of the GraphQL limit. The REST limit, which `gh` commands
   of your agents use, stays free.
+- All the runs of boo on this machine share a cache in `~/.cache/boo/` (or under
+  `$XDG_CACHE_HOME`): a terminal watch, a scheduled run, the watch of an agent. A pull request that
+  another run read less than 30 s ago costs no query. `r`, and the reads after a post or a merge,
+  read GitHub, not the cache.
+- If less than 20 % of the GraphQL points of the account remain, the header shows them
+  (`GraphQL 312/5000 left, refresh every 5 min`), and the watch reads the list and each pull
+  request every 5 minutes until GitHub resets the points. The runs share the count of points too.
 
 ## Keys and mouse
 

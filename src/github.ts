@@ -1,7 +1,10 @@
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { requestText, type Request } from './actions.js';
 import { detectAgent, type Agent } from './agents.js';
+import { cachedRead, cacheDir, DiskCache } from './cache.js';
 import type { Comment, Review } from './decide.js';
 import type { Check, CheckState } from './reviewers.js';
 
@@ -130,6 +133,7 @@ const VARIABLES = '$owner: String!, $name: String!, $number: Int!';
 // needs more pages: the decisions depend on old verdicts and on the first CodeRabbit comment.
 const QUERY = `
 query(${VARIABLES}) {
+  rateLimit { limit remaining resetAt }
   ${PULL} {
     state isDraft merged mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
     additions deletions changedFiles
@@ -336,15 +340,57 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
 
 type Variables = Record<string, string | number>;
 
+/** The GraphQL points of the account: GitHub gives `limit` points each hour, and resets them at `resetAt`. */
+export interface RateLimit {
+  limit: number;
+  remaining: number;
+  resetAt: string;
+}
+
+/** True if less than 20 % of the GraphQL points remain. The watch then slows down until the reset. */
+export const lowOnPoints = (rate: RateLimit | undefined) => Boolean(rate && rate.remaining < rate.limit * 0.2);
+
+let accountCache: Promise<DiskCache | undefined> | undefined;
+
+/**
+ * The cache of the account of `gh`. Two accounts on one machine (a person and a GitHub App, for
+ * example) can read different repositories, so each account has its own folder, named by a hash of its
+ * token. With no token, the runs share nothing.
+ */
+function cacheOfAccount(): Promise<DiskCache | undefined> {
+  accountCache ??= (async () => {
+    const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || (await gh(['auth', 'token']).catch(() => ''));
+    if (!token.trim()) return undefined;
+    const account = createHash('sha256').update(token.trim()).digest('hex').slice(0, 16);
+    return new DiskCache(join(cacheDir(), account));
+  })();
+  return accountCache;
+}
+
+const cache = {
+  get: async <T>(key: string, maxAgeMs: number, now?: number) => (await cacheOfAccount())?.get<T>(key, maxAgeMs, now),
+  set: async (key: string, value: unknown) => (await cacheOfAccount())?.set(key, value),
+};
+const RATE_KEY = 'graphql-rate-limit';
+// GitHub gives a new count at each query. A count older than its reset time is a full count again.
+const RATE_MAX_AGE_MS = 60 * 60_000;
+
+/** Returns the last GraphQL points that a run of boo on this machine read, if their reset time is not past. */
+export async function readRateLimit(now = new Date()): Promise<RateLimit | undefined> {
+  const stored = await cache.get<RateLimit>(RATE_KEY, RATE_MAX_AGE_MS, now.getTime());
+  return stored && new Date(stored.value.resetAt) > now ? stored.value : undefined;
+}
+
 async function graphql(query: string, variables: Variables): Promise<PullRequestNode> {
   const args = Object.entries(variables).flatMap(([key, value]) => [
     typeof value === 'number' ? '-F' : '-f',
     `${key}=${value}`,
   ]);
   const response = JSON.parse(await gh(['api', 'graphql', ...args, '-f', `query=${query}`])) as {
-    data?: { repository: { pullRequest: PullRequestNode | null } | null };
+    data?: { rateLimit?: RateLimit; repository: { pullRequest: PullRequestNode | null } | null };
     errors?: { message: string }[];
   };
+  if (response.data?.rateLimit) await cache.set(RATE_KEY, response.data.rateLimit);
   if (response.errors?.length)
     throw new Error(`GitHub GraphQL: ${response.errors.map((error) => error.message).join('; ')}`);
   const pull = response.data?.repository?.pullRequest;
@@ -382,7 +428,46 @@ async function allNodes<T>(
   }
 }
 
-export async function fetchPullRequest(pr: PullRequest): Promise<PullRequestSnapshot> {
+// A post appears on GitHub within seconds. After this time, a fresh read of the other run sees it.
+const POST_CLAIM_MS = 2 * 60_000;
+
+/**
+ * Returns true if this run may post `what` on the pull request now. Two runs of boo that read the same
+ * pull request at the same time would both post: only the first that claims the post does.
+ */
+export async function claimPost(pr: PullRequest, what: string): Promise<boolean> {
+  const cache = await cacheOfAccount();
+  return cache ? cache.claim(postKey(pr, what), POST_CLAIM_MS) : true;
+}
+
+/** Gives back the claim of a post that failed, so that a run can try it again at once. */
+export async function releasePost(pr: PullRequest, what: string): Promise<void> {
+  await (await cacheOfAccount())?.release(postKey(pr, what));
+}
+
+/** The time that a run waits for the post of another run that holds the claim. */
+export const POST_WAIT_MS = POST_CLAIM_MS;
+
+const postKey = (pr: PullRequest, what: string) => `post-${pr.repo}#${pr.number}-${what}`;
+
+/**
+ * The age of a cached pull request that a read takes. It is the poll interval of the watch: a watch
+ * never reads its own last read again, but a second run within this time reads no GitHub.
+ */
+export const CACHE_TTL_MS = 30_000;
+
+/**
+ * Reads a pull request. A read by another run of boo, younger than `maxAgeMs`, answers with no query.
+ * Pass 0 to read GitHub, for example after a post that waits for a reply.
+ */
+export async function fetchPullRequest(
+  pr: PullRequest,
+  { maxAgeMs = CACHE_TTL_MS }: { maxAgeMs?: number } = {},
+): Promise<PullRequestSnapshot> {
+  return cachedRead(cache, `pr-${pr.repo}#${pr.number}`, maxAgeMs, () => readPullRequest(pr));
+}
+
+async function readPullRequest(pr: PullRequest): Promise<PullRequestSnapshot> {
   const [owner = '', name = ''] = pr.repo.split('/');
   const variables = { owner, name, number: pr.number };
   const pull = await graphql(QUERY, variables);
