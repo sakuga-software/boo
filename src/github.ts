@@ -108,6 +108,8 @@ export interface PullRequestSnapshot {
   requested: string[];
   /** The coding agent that the pull request names. */
   agent?: Agent;
+  /** The commit time of the head commit. A rebase or an amend gives a new time. */
+  headAt?: string;
   /** The size of the change. */
   changes?: { additions: number; deletions: number; files: number };
 }
@@ -134,7 +136,7 @@ query(${VARIABLES}) {
     reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
     reviews(last: 100) { ${OLDER} nodes { ${REVIEW_FIELDS} } }
     comments(last: 100) { ${OLDER} nodes { ${COMMENT_FIELDS} } }
-    commits(last: 1) { nodes { commit { message authors(first: 10) { nodes { user { login } } }
+    commits(last: 1) { nodes { commit { message committedDate authors(first: 10) { nodes { user { login } } }
       statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
   } }
 }`;
@@ -206,6 +208,7 @@ interface PullRequestNode {
     nodes: {
       commit: {
         message?: string;
+        committedDate?: string;
         authors?: { nodes: { user: { login: string } | null }[] };
         statusCheckRollup: { contexts: Page<ContextNode> } | null;
       };
@@ -307,6 +310,7 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
       )
       .filter((login): login is string => Boolean(login)),
     ...(agent && { agent }),
+    ...(commit?.committedDate && { headAt: commit.committedDate }),
     ...(pull.changedFiles !== undefined && {
       changes: { additions: pull.additions ?? 0, deletions: pull.deletions ?? 0, files: pull.changedFiles },
     }),

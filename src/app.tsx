@@ -49,7 +49,7 @@ import {
 } from './reviewers.js';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
 import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
-import { assess, keyOf, MERGE_STATE_WARNINGS } from './report.js';
+import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from './report.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
@@ -1120,6 +1120,16 @@ export function App(props: AppProps) {
     const parent = stackParent(row, rowsRef.current.values());
     return parent && stackDetail(row, parent, describe(parent, { now: clock, options }), options);
   };
+  const stallOfRow = (row: Row) => {
+    const session = owners.get(keyOf(row.pr))?.session;
+    return stallOf({
+      overall: row.left || row.error ? undefined : row.summary?.overall,
+      headAt: row.fetched?.headAt,
+      working: Boolean(session && isWorking(session)),
+      afterMinutes: settings.stalledAfterMinutes,
+      now: clock,
+    }).stalled;
+  };
   const views = new Map(
     shownRows.map((row) => [
       row,
@@ -1127,6 +1137,7 @@ export function App(props: AppProps) {
         now: clock,
         options,
         stack: stackNote(row),
+        stalled: stallOfRow(row),
         coderabbitRetry: coderabbitRetries(),
         // Without --watch, the tool stops before a retry that is due later.
         retries: options.watch ? retriesOf(row) : [],
@@ -1213,6 +1224,7 @@ export function App(props: AppProps) {
               place={places.get(keyOf(row.pr))!}
               hint={stackHint(row, places.get(keyOf(row.pr))!, rowsRef.current)}
               agent={agentOf(row, owners)}
+              stalled={stallOfRow(row)}
               lines={lines.get(row)!}
               expanded={expanded(row)}
               selected={options.interactive && keyOf(row.pr) === selection}
@@ -1375,6 +1387,8 @@ interface DescribeContext {
   coderabbitRetry?: boolean;
   /** The retries of the other bots that the tool plans. */
   retries?: readonly Retry[];
+  /** The pull request needs work, and nobody works on it. */
+  stalled?: boolean;
 }
 
 function coderabbitDetail(decision: Decision | undefined, { now, options, coderabbitRetry }: DescribeContext) {
@@ -1409,7 +1423,11 @@ function retryNote(options: Options, retry: boolean | undefined): string {
 
 /** The notes of a row. The sections of the reviewers and of the checks show the rest. */
 function notesOf(row: Row, context: DescribeContext): string[] {
+  const headAt = row.fetched?.headAt;
   const parts = [
+    context.stalled &&
+      headAt &&
+      `stalled: no session works on it, and the last commit is ${formatAgo(context.now, new Date(headAt))}`,
     context.stack,
     row.summary && MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
     ...(context.retries ?? []).map(({ bot, at }) => `${bot.name} retry at ${formatTime(at)}`),
@@ -1647,6 +1665,7 @@ function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout:
     );
   };
   const changes = row.fetched?.changes;
+  const headAt = row.fetched?.headAt;
   if (changes)
     section('changes', [
       <Text>
@@ -1654,6 +1673,7 @@ function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout:
         <Text dimColor>
           {' '}
           · {changes.files} file{changes.files === 1 ? '' : 's'}
+          {headAt && ` · last commit ${formatAgo(now, new Date(headAt))}`}
         </Text>
       </Text>,
     ]);
@@ -1756,6 +1776,7 @@ interface RowViewProps {
   place: Placement;
   hint: string | undefined;
   agent: AgentInfo | undefined;
+  stalled: boolean;
   lines: DetailLine[];
   expanded: boolean;
   selected: boolean;
@@ -1791,7 +1812,20 @@ function Under({
   );
 }
 
-function RowView({ ref, row, view, options, layout, place, hint, agent, lines, expanded, selected }: RowViewProps) {
+function RowView({
+  ref,
+  row,
+  view,
+  options,
+  layout,
+  place,
+  hint,
+  agent,
+  stalled,
+  lines,
+  expanded,
+  selected,
+}: RowViewProps) {
   const name = shortName(row.pr, options);
   const before = options.interactive ? SELECTION_WIDTH : 0;
   const rest = layout.indent - before - ICON_WIDTH;
@@ -1845,6 +1879,11 @@ function RowView({ ref, row, view, options, layout, place, hint, agent, lines, e
         {layout.agent && agent && (
           <Box flexShrink={0} marginLeft={2}>
             <AgentBadge agent={agent} named={layout.agentName} />
+          </Box>
+        )}
+        {stalled && (
+          <Box flexShrink={0} marginLeft={2}>
+            <Text color="yellow">zZ{layout.agentName && ' stalled'}</Text>
           </Box>
         )}
         {summary && !row.left && layout.checks && (

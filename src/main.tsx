@@ -54,6 +54,11 @@ const cli = meow(
     another base shows that base ("on feat/x"). The settings can turn the
     grouping off.
 
+  Stalled
+    zZ marks a pull request that is conflicts, changes requested or checks
+    failing, with no local session that works on it, and no new commit for
+    "stalledAfterMinutes" in the settings file (30 by default).
+
   Agents
     The line of a pull request shows its coding agent: ✻ for Claude Code,
     ◇ for Copilot, Codex, Cursor or Devin, read from the author, the branch,

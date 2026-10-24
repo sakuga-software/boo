@@ -68,6 +68,33 @@ export interface ReportInput {
 
 export type SessionState = 'working' | 'idle' | 'waiting' | 'none';
 
+// The states that need somebody to act on the pull request.
+const STALLING: ReadonlySet<Overall> = new Set(['conflicts', 'checks failing', 'changes requested']);
+
+/**
+ * A pull request is stalled if it needs work (conflicts, checks failing or changes requested), no local
+ * session works on it, and its head commit is older than `afterMinutes`. A session that waits for an
+ * answer does not work. `idleMinutes` is the age of the head commit.
+ */
+export function stallOf({
+  overall,
+  headAt,
+  working,
+  afterMinutes,
+  now,
+}: {
+  overall: Overall | undefined;
+  headAt: string | undefined;
+  working: boolean;
+  afterMinutes: number;
+  now: Date;
+}): { stalled: boolean; idleMinutes: number | null } {
+  if (!headAt) return { stalled: false, idleMinutes: null };
+  const idleMinutes = Math.max(0, Math.floor((now.getTime() - new Date(headAt).getTime()) / 60_000));
+  const stalled = overall !== undefined && STALLING.has(overall) && !working && idleMinutes >= afterMinutes;
+  return { stalled, idleMinutes };
+}
+
 /** One pull request in the output of `boo --json`. The keys are stable: a script can rely on them. */
 export interface PullRequestReport {
   repo: string;
@@ -78,6 +105,10 @@ export interface PullRequestReport {
   base: string | null;
   isDraft: boolean;
   state: string;
+  /** Red, with no working session and no new commit for `stalledAfterMinutes`. */
+  stalled: boolean;
+  /** The minutes since the commit time of the head commit. */
+  idleMinutes: number | null;
   error: string | null;
   checks: { passed: number; failing: string[]; running: number; skipped: number; quota: number };
   reviewers: {
@@ -120,8 +151,10 @@ function coderabbitNote(decision: Decision): CoderabbitNote | null {
 }
 
 // Claude Code reports "shell" while the session runs a command.
+export const isWorking = (status: string) => status === 'busy' || status === 'shell';
+
 function sessionStateOf(status: string): SessionState {
-  if (status === 'busy' || status === 'shell') return 'working';
+  if (isWorking(status)) return 'working';
   return status === 'waiting' ? 'waiting' : 'idle';
 }
 
@@ -176,6 +209,13 @@ export function buildReport(
       base: snapshot?.base ?? null,
       isDraft: snapshot?.status === 'draft',
       state: stateOf(snapshot, summary, error),
+      ...stallOf({
+        overall: summary?.overall,
+        headAt: snapshot?.headAt,
+        working: Boolean(session && isWorking(session.status)),
+        afterMinutes: settings.stalledAfterMinutes,
+        now,
+      }),
       error: error ?? null,
       checks: summary
         ? {

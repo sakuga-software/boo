@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
-import { buildReport, type ReportInput } from './report.js';
+import { buildReport, stallOf, type ReportInput } from './report.js';
 import type { LocalSession, Owner } from './sessions.js';
 import { DEFAULT_SETTINGS } from './settings.js';
 
@@ -54,6 +54,8 @@ test('the output keeps the same keys, in the same order', () => {
     'base',
     'isDraft',
     'state',
+    'stalled',
+    'idleMinutes',
     'error',
     'checks',
     'reviewers',
@@ -187,4 +189,29 @@ test('a CodeRabbit rate limit on a merged pull request delays the open ones', ()
 
   const merged: ReportInput = { pr: pr(1), snapshot: snapshot({ status: 'merged', comments: [limit(7, 30, 5)] }) };
   assert.equal(report([merged, open]).find(({ number }) => number === 2)!.notes.coderabbit?.kind, 'wait');
+});
+
+const HOUR_AGO = ago(60);
+
+test('a red pull request with no working session and an old head commit is stalled', () => {
+  const stall = (patch: Partial<Parameters<typeof stallOf>[0]>) =>
+    stallOf({ overall: 'checks failing', headAt: HOUR_AGO, working: false, afterMinutes: 30, now, ...patch });
+  assert.deepEqual(stall({}), { stalled: true, idleMinutes: 60 });
+  assert.deepEqual(stall({ overall: 'conflicts' }).stalled, true);
+  assert.deepEqual(stall({ overall: 'changes requested' }).stalled, true);
+  assert.deepEqual(stall({ overall: 'awaiting review' }), { stalled: false, idleMinutes: 60 });
+  assert.deepEqual(stall({ working: true }).stalled, false);
+  assert.deepEqual(stall({ afterMinutes: 90 }).stalled, false);
+  assert.deepEqual(stall({ headAt: undefined }), { stalled: false, idleMinutes: null });
+});
+
+test('a waiting session does not keep a pull request from stalling, and a busy one does', () => {
+  const failing: ReportInput = {
+    pr: pr(1),
+    snapshot: snapshot({ headAt: HOUR_AGO, checks: [{ name: 'Migrations', state: 'failure' }] }),
+  };
+  const owned = (status: string) => new Map([['acme/web#1', { session: { ...session, status }, linkedAt: now }]]);
+  assert.equal(report([failing], owned('waiting'))[0]!.stalled, true);
+  assert.equal(report([failing], owned('busy'))[0]!.stalled, false);
+  assert.equal(report([failing])[0]!.idleMinutes, 60);
 });

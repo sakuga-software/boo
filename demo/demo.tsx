@@ -176,6 +176,8 @@ const fakeGitHub: GitHub = {
       base: parent ? `pr-${parent}` : 'main',
       defaultBranch: 'main',
       status: status(target),
+      // mobile#911 fails its checks, and nobody pushed to it for 2 hours: it shows as stalled.
+      headAt: new Date(start - (target.number === 911 ? 120 : 12) * 60_000).toISOString(),
       changes: {
         additions: (target.number * 7) % 400,
         deletions: (target.number * 3) % 120,

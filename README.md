@@ -80,22 +80,23 @@ needs no `COLUMNS` and no clean-up. It does not work with `--watch`.
 }
 ```
 
-| Key                   | Value                                                                                                                                                                                                                                                                                               |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `state`               | The words of the human output: `conflicts`, `changes requested`, `checks failing`, `ready to merge`, `approved`, `reviewing`, `reviewed`, `quota`, `awaiting review`. Also `merged`, `closed` or `draft` for a pull request that left the list, and `error` if GitHub did not answer (see `error`). |
-| `headSha`, `base`     | The head commit and the base branch. `null` if GitHub did not answer.                                                                                                                                                                                                                               |
-| `checks`              | The counts of the checks of the head commit, and the names of the checks that fail. `quota` counts the checks of a reviewer that refused for quota: they do not fail.                                                                                                                               |
-| `reviewers[].mark`    | `approved`, `changes requested`, `commented`, `reviewing`, `quota`, `to retry`, `requested`, `stale` (an older commit only), `skipped` or `paused`.                                                                                                                                                 |
-| `reviewers[].onHead`  | `true` if the last review of the reviewer covers the head commit.                                                                                                                                                                                                                                   |
-| `reviewers[].verdict` | The verdict that stands over all the commits, or `null`.                                                                                                                                                                                                                                            |
-| `reviewers[].score`   | The last confidence score of the reviewer, or `null`.                                                                                                                                                                                                                                               |
-| `reviewers[].at`      | The time of the last review of the reviewer, or `null`.                                                                                                                                                                                                                                             |
-| `stack`               | The listed pull request that this one merges into (`owner/repo#number`), its place from the bottom (`null` if the stack forks), and the size of the stack.                                                                                                                                          |
-| `agent.kind`          | `claude`, `copilot`, `codex`, `cursor`, `devin` or `null`. A local session makes it `claude`.                                                                                                                                                                                                       |
-| `agent.sessionState`  | `working`, `idle`, `waiting`, or `none` if no session on this machine linked the pull request.                                                                                                                                                                                                      |
-| `notes.merge`         | The rule that blocks the merge, or `null`.                                                                                                                                                                                                                                                          |
-| `notes.retries`       | The retries of the review bots that a run without `--json` posts, with their times.                                                                                                                                                                                                                 |
-| `notes.coderabbit`    | The CodeRabbit quota: `wait` with `availableAt`, `trigger`, `pending`, `skipped`, `paused`, `idle`, or `null`.                                                                                                                                                                                      |
+| Key                      | Value                                                                                                                                                                                                                                                                                               |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `state`                  | The words of the human output: `conflicts`, `changes requested`, `checks failing`, `ready to merge`, `approved`, `reviewing`, `reviewed`, `quota`, `awaiting review`. Also `merged`, `closed` or `draft` for a pull request that left the list, and `error` if GitHub did not answer (see `error`). |
+| `stalled`, `idleMinutes` | `stalled` is `true` for a stalled pull request (see [Stalled pull requests](#stalled-pull-requests)). `idleMinutes` gives the minutes since the commit time of the head commit, or `null`.                                                                                                          |
+| `headSha`, `base`        | The head commit and the base branch. `null` if GitHub did not answer.                                                                                                                                                                                                                               |
+| `checks`                 | The counts of the checks of the head commit, and the names of the checks that fail. `quota` counts the checks of a reviewer that refused for quota: they do not fail.                                                                                                                               |
+| `reviewers[].mark`       | `approved`, `changes requested`, `commented`, `reviewing`, `quota`, `to retry`, `requested`, `stale` (an older commit only), `skipped` or `paused`.                                                                                                                                                 |
+| `reviewers[].onHead`     | `true` if the last review of the reviewer covers the head commit.                                                                                                                                                                                                                                   |
+| `reviewers[].verdict`    | The verdict that stands over all the commits, or `null`.                                                                                                                                                                                                                                            |
+| `reviewers[].score`      | The last confidence score of the reviewer, or `null`.                                                                                                                                                                                                                                               |
+| `reviewers[].at`         | The time of the last review of the reviewer, or `null`.                                                                                                                                                                                                                                             |
+| `stack`                  | The listed pull request that this one merges into (`owner/repo#number`), its place from the bottom (`null` if the stack forks), and the size of the stack.                                                                                                                                          |
+| `agent.kind`             | `claude`, `copilot`, `codex`, `cursor`, `devin` or `null`. A local session makes it `claude`.                                                                                                                                                                                                       |
+| `agent.sessionState`     | `working`, `idle`, `waiting`, or `none` if no session on this machine linked the pull request.                                                                                                                                                                                                      |
+| `notes.merge`            | The rule that blocks the merge, or `null`.                                                                                                                                                                                                                                                          |
+| `notes.retries`          | The retries of the review bots that a run without `--json` posts, with their times.                                                                                                                                                                                                                 |
+| `notes.coderabbit`       | The CodeRabbit quota: `wait` with `availableAt`, `trigger`, `pending`, `skipped`, `paused`, `idle`, or `null`.                                                                                                                                                                                      |
 
 The keys stay the same from one version to the next. A test fixes them.
 
@@ -139,7 +140,8 @@ The line of a pull request shows:
 An unfolded pull request shows its details in sections, one fact for each line, with a blank line
 between two sections:
 
-- **changes**: the lines added and removed, and the count of changed files.
+- **changes**: the lines added and removed, the count of changed files, and the age of the last
+  commit.
 - **agent**: the agent, then the name, the state and the folder of its local session, or the page
   of its cloud session.
 - **reviewers**: the reviewers that reviewed the last commit out of all the reviewers, the count of
@@ -151,8 +153,24 @@ between two sections:
   the return time if the notice gives one; `↻` CodeRabbit to retry; `○` requested; `◌` reviewed an
   older commit only, with the verdict that still stands; `⊘` skipped; `‖` paused.
 - **checks**: the checks that passed, the names of the checks that fail, and the checks that run.
-- **notes**: the protection rule that blocks the merge, the state of the pull request under it in
-  a stack, the planned retries and the CodeRabbit quota.
+- **notes**: why the pull request is stalled, the protection rule that blocks the merge, the state
+  of the pull request under it in a stack, the planned retries and the CodeRabbit quota.
+
+### Stalled pull requests
+
+A pull request can stay red for hours with no agent on it: the agent stopped, or it waits for an
+answer. A yellow `zZ stalled` on the line marks a pull request with all these conditions:
+
+- its state is `conflicts`, `checks failing` or `changes requested`;
+- no local session works on it (a session that waits for an answer does not work);
+- its head commit is older than `stalledAfterMinutes` in the settings file. The default is 30.
+
+```json
+{ "stalledAfterMinutes": 45 }
+```
+
+The commit time of the head commit counts, so a rebase or an amend starts the time again. A narrow
+terminal shows `zZ` only.
 
 A click on a row selects it, and a click on the selected row unfolds or folds it. A piped run shows
 every pull request unfolded.

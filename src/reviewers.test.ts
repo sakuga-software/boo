@@ -406,6 +406,7 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
         {
           commit: {
             message: 'feat: x\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>',
+            committedDate: ago(90),
             authors: { nodes: [{ user: { login: 'Mheaus' } }] },
             statusCheckRollup: {
               contexts: {
@@ -427,6 +428,7 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     },
   });
   assert.equal(snapshot.mergeState, 'unstable');
+  assert.equal(snapshot.headAt, ago(90));
   assert.equal(snapshot.agent?.id, 'claude');
   assert.deepEqual(snapshot.changes, { additions: 190, deletions: 65, files: 12 });
   assert.deepEqual(snapshot.requested, ['greptile-apps[bot]']);
