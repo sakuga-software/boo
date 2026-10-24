@@ -193,7 +193,7 @@ test('the watch keeps the last data through a failed read', async () => {
     { intervalMs: 0, signal: abort.signal },
     async (event) => {
       events.push(event);
-      if (reads.length === 0) abort.abort();
+      if (event.event === 'review') abort.abort();
     },
     (error) => assert.fail(String(error)),
   );
