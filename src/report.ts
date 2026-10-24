@@ -2,6 +2,7 @@ import { activeBots, plannedRetries } from './bots.js';
 import { decide, quotaScope, quotaSignals, type Decision, type QuotaSignal } from './decide.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { confidenceOf, isOnHead, summarize, type Overall, type Summary } from './reviewers.js';
+import type { MergePolicy, PolicyMiss } from './policy.js';
 import type { Owner } from './sessions.js';
 import type { Settings } from './settings.js';
 import { placeStacks } from './stacks.js';
@@ -38,6 +39,7 @@ export type Fetched = Omit<PullRequestSnapshot, 'status'>;
 export function assess(
   fetched: ReadonlyMap<string, { repo: string; fetched: Fetched; left: boolean }>,
   now: Date,
+  { policy, viewer }: { policy?: MergePolicy | undefined; viewer?: string | undefined } = {},
 ): Map<string, { decision: Decision; summary: Summary }> {
   const scopeOf = ({ repo, fetched }: { repo: string; fetched: Fetched }) =>
     quotaScope(repo, fetched.comments, fetched.reviews);
@@ -54,7 +56,7 @@ export function assess(
     if (entry.left) continue;
     const quota = signalsByScope.get(scopeOf(entry)) ?? [];
     const decision = decide({ ...entry.fetched, now, pr: key, quota });
-    results.set(key, { decision, summary: summarize({ ...entry.fetched, now, coderabbit: decision }) });
+    results.set(key, { decision, summary: summarize({ ...entry.fetched, now, coderabbit: decision, policy, viewer }) });
   }
   return results;
 }
@@ -122,6 +124,8 @@ export interface PullRequestReport {
   stack: { parent: string | null; position: number | null; size: number };
   agent: { kind: string | null; session: string | null; sessionState: SessionState; cloudSession: string | null };
   notes: { merge: string | null; retries: { bot: string; at: string }[]; coderabbit: CoderabbitNote | null };
+  /** The rules of the merge policy that the pull request misses. */
+  policy: PolicyMiss[];
 }
 
 export type CoderabbitNote =
@@ -171,6 +175,7 @@ export function buildReport(
   owners: ReadonlyMap<string, Owner>,
   settings: Settings,
   now: Date,
+  viewer?: string,
 ): PullRequestReport[] {
   const fetched = new Map(
     inputs.flatMap(({ pr, snapshot }) => {
@@ -179,7 +184,7 @@ export function buildReport(
       return [[keyOf(pr), { repo: pr.repo, fetched: rest, left: status !== 'open' }] as const];
     }),
   );
-  const assessed = assess(fetched, now);
+  const assessed = assess(fetched, now, { policy: settings.mergePolicy, viewer });
   const byKey = new Map(inputs.map((input) => [keyOf(input.pr), input]));
   const places = placeStacks(
     inputs.map(({ pr, snapshot }) => ({
@@ -252,6 +257,7 @@ export function buildReport(
           : [],
         coderabbit: result ? coderabbitNote(result.decision) : null,
       },
+      policy: summary?.policy ?? [],
     };
   });
 }

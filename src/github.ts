@@ -113,6 +113,12 @@ export interface PullRequestSnapshot {
   requested: string[];
   /** The coding agent that the pull request names. */
   agent?: Agent;
+  /** The description of the pull request. */
+  body?: string;
+  /** The first author of each review thread that is not resolved. Undefined if the query did not read the threads. */
+  openThreads?: string[];
+  /** The changed files. Undefined if the query did not read them. */
+  files?: string[];
   /** The commit time of the head commit. A rebase or an amend gives a new time. */
   headAt?: string;
   /** The size of the change. */
@@ -131,7 +137,15 @@ const VARIABLES = '$owner: String!, $name: String!, $number: Int!';
 
 // The first query reads the newest reviews and comments, and the first checks. A long pull request
 // needs more pages: the decisions depend on old verdicts and on the first CodeRabbit comment.
-const QUERY = `
+/** The parts of a pull request that only a merge policy reads. Each one costs GraphQL points. */
+export interface ExtraFields {
+  /** The authors of the review threads that are not resolved: the first 100 threads. */
+  threads?: boolean;
+  /** The changed files: the first 100. */
+  files?: boolean;
+}
+
+const queryOf = ({ threads, files }: ExtraFields) => `
 query(${VARIABLES}) {
   rateLimit { limit remaining resetAt }
   ${PULL} {
@@ -145,6 +159,8 @@ query(${VARIABLES}) {
     comments(last: 100) { ${OLDER} nodes { ${COMMENT_FIELDS} } }
     commits(last: 1) { nodes { commit { message committedDate authors(first: 10) { nodes { user { login } } }
       statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
+    ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }' : ''}
+    ${files ? 'files(first: 100) { nodes { path } }' : ''}
   } }
 }`;
 
@@ -218,6 +234,8 @@ interface PullRequestNode {
   reviewRequests: { nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[] };
   reviews: Page<ReviewNode>;
   comments: Page<CommentNode>;
+  reviewThreads?: { nodes: { isResolved: boolean; comments: { nodes: { author: Actor | null }[] } }[] };
+  files?: { nodes: { path: string }[] };
   commits: {
     nodes: {
       commit: {
@@ -331,6 +349,13 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
       )
       .filter((login): login is string => Boolean(login)),
     ...(agent && { agent }),
+    body: pull.body,
+    ...(pull.reviewThreads && {
+      openThreads: pull.reviewThreads.nodes
+        .filter((thread) => !thread.isResolved)
+        .map((thread) => loginOf(thread.comments.nodes[0]?.author ?? null) ?? ''),
+    }),
+    ...(pull.files && { files: pull.files.nodes.map((file) => file.path) }),
     ...(commit?.committedDate && { headAt: commit.committedDate }),
     ...(pull.changedFiles !== undefined && {
       changes: { additions: pull.additions ?? 0, deletions: pull.deletions ?? 0, files: pull.changedFiles },
@@ -462,15 +487,19 @@ export const CACHE_TTL_MS = 30_000;
  */
 export async function fetchPullRequest(
   pr: PullRequest,
-  { maxAgeMs = CACHE_TTL_MS }: { maxAgeMs?: number } = {},
+  { maxAgeMs = CACHE_TTL_MS, extra = {} }: { maxAgeMs?: number; extra?: ExtraFields } = {},
 ): Promise<PullRequestSnapshot> {
-  return cachedRead(cache, `pr-${pr.repo}#${pr.number}`, maxAgeMs, () => readPullRequest(pr));
+  return cachedRead(cache, readKey(pr, extra), maxAgeMs, () => readPullRequest(pr, extra));
 }
 
-async function readPullRequest(pr: PullRequest): Promise<PullRequestSnapshot> {
+/** The cache key of a read. A read with fewer fields must not answer a read that needs the threads or the files. */
+export const readKey = (pr: PullRequest, { threads, files }: ExtraFields) =>
+  `pr-${pr.repo}#${pr.number}${threads ? '+threads' : ''}${files ? '+files' : ''}`;
+
+async function readPullRequest(pr: PullRequest, extra: ExtraFields): Promise<PullRequestSnapshot> {
   const [owner = '', name = ''] = pr.repo.split('/');
   const variables = { owner, name, number: pr.number };
-  const pull = await graphql(QUERY, variables);
+  const pull = await graphql(queryOf(extra), variables);
   type Pages = { page?: Page<never> };
   const page = (value: unknown) => (value as Pages).page;
   const rollup = pull.commits.nodes[0]?.commit.statusCheckRollup;
@@ -531,6 +560,16 @@ export async function mergePullRequest(pr: PullRequest, head: string): Promise<v
   const method = (['squash', 'merge', 'rebase'] as const).find((candidate) => allowed[candidate]);
   if (!method) throw new Error(`${pr.repo} allows no merge method`);
   await gh(['pr', 'merge', String(pr.number), '--repo', pr.repo, `--${method}`, '--match-head-commit', head]);
+}
+
+let viewer: Promise<string | undefined> | undefined;
+
+/** Returns the login of the account of `gh`, read once. Undefined if GitHub does not give it. */
+export function viewerLogin(): Promise<string | undefined> {
+  viewer ??= gh(['api', 'graphql', '-f', 'query={ viewer { login } }', '--jq', '.data.viewer.login'])
+    .then((login) => login.trim() || undefined)
+    .catch(() => undefined);
+  return viewer;
 }
 
 const OPENERS: Partial<Record<NodeJS.Platform, string>> = { darwin: 'open', win32: 'explorer' };

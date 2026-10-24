@@ -2,8 +2,9 @@ import { render } from 'ink';
 import meow from 'meow';
 import { homedir } from 'node:os';
 import { App } from './app.js';
-import { fetchPullRequest, listPullRequests } from './github.js';
+import { fetchPullRequest, listPullRequests, viewerLogin } from './github.js';
 import { readReport, watchEvents, type WatchSources } from './events.js';
+import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, saveSettings, settingsPath } from './settings.js';
 import { detectBackground } from './theme.js';
@@ -39,7 +40,8 @@ const cli = meow(
                        reviewer counts, as on GitHub)
     checks failing     a check of the last commit fails; a check of a run that
                        a newer run of the same workflow replaces does not count
-    ready to merge     approved, every check passes, and GitHub can merge
+    ready to merge     approved, every check passes, GitHub can merge, and the
+                       "mergePolicy" of the settings file passes (see the README)
     approved           approved, but a check runs or a rule blocks the merge
     reviewing          a reviewer reviews the pull request now
     reviewed           a reviewer reviewed the last commit, with no verdict
@@ -181,8 +183,9 @@ const authors = parseAuthors(cli.flags.author) ?? settings.authors;
 
 const sources: WatchSources = {
   listPullRequests: () => listPullRequests({ org, authors, ...(since && { since }) }),
-  fetchPullRequest,
+  fetchPullRequest: (pr) => fetchPullRequest(pr, { extra: extraFields(settings.mergePolicy) }),
   readOwners: () => readOwners(new LinkIndex()),
+  viewerLogin,
 };
 // A pipe takes the output in the background. An exit before the end of the write cuts it.
 const write = (text: string) => new Promise((resolve) => process.stdout.write(text, resolve));

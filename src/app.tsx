@@ -49,6 +49,7 @@ import {
 } from './reviewers.js';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
 import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
+import { extraFields } from './policy.js';
 import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from './report.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
@@ -82,7 +83,7 @@ export type GitHub = Pick<
   typeof github,
   'listPullRequests' | 'fetchPullRequest' | 'requestReview' | 'openInBrowser' | 'mergePullRequest'
 > &
-  Partial<Pick<typeof github, 'readRateLimit' | 'claimPost' | 'releasePost'>>;
+  Partial<Pick<typeof github, 'readRateLimit' | 'claimPost' | 'releasePost' | 'viewerLogin'>>;
 
 /** The Claude Code sessions of this machine. */
 export interface Sessions {
@@ -286,6 +287,8 @@ export function App(props: AppProps) {
   const buttonNodes = useRef(new Map<string, DOMElement>());
   const scrollStart = useRef(0);
   const [owners, setOwners] = useState<Map<string, Owner>>(() => new Map());
+  // The login of the user of boo. Only the "ownerOnly" rule of the merge policy reads it.
+  const viewerRef = useRef<string>(undefined);
   const [rate, setRate] = useState<github.RateLimit>();
   const lowRef = useRef(false);
   // The rows that show their details: the agent, the reviewers, the checks that fail.
@@ -338,7 +341,8 @@ export function App(props: AppProps) {
           row.fetched ? [[key, { repo: row.pr.repo, fetched: row.fetched, left: Boolean(row.left) }] as const] : [],
         ),
       );
-      for (const [key, result] of assess(fetched, new Date()))
+      const policy = settingsRef.current.mergePolicy;
+      for (const [key, result] of assess(fetched, new Date(), { policy, viewer: viewerRef.current }))
         rowsRef.current.set(key, { ...rowsRef.current.get(key)!, ...result });
       setRows([...rowsRef.current.values()]);
     }
@@ -346,7 +350,10 @@ export function App(props: AppProps) {
     async function refresh(pr: PullRequest, fresh = false): Promise<Decision | undefined> {
       update(pr, { activity: 'loading' });
       try {
-        const { status, ...state } = await gitHub.fetchPullRequest(pr, { maxAgeMs: fresh ? 0 : cacheAge() });
+        const { status, ...state } = await gitHub.fetchPullRequest(pr, {
+          maxAgeMs: fresh ? 0 : cacheAge(),
+          extra: extraFields(settingsRef.current.mergePolicy),
+        });
         if (status !== 'open') {
           update(pr, { left: status, activity: undefined, error: undefined });
           return undefined;
@@ -523,6 +530,7 @@ export function App(props: AppProps) {
     }
 
     async function run() {
+      if (settingsRef.current.mergePolicy?.ownerOnly) viewerRef.current = await gitHub.viewerLogin?.();
       await readPoints();
       await syncList();
       await triggerReady(tracked());
@@ -871,6 +879,17 @@ export function App(props: AppProps) {
     return `The ${request.bot.name} quota ${back}: ${request.bot.name} will likely refuse.`;
   }
 
+  /** Shows why the merge policy refuses the merge. Returns true if it refuses. */
+  function refusePolicy(row: Row, key: string): boolean {
+    const misses = row.summary?.policy ?? [];
+    if (misses.length === 0) return false;
+    setFlash({
+      text: `Cannot merge ${key}, it misses the merge policy: ${misses.map(({ note }) => note).join(', ')}.`,
+      color: 'yellow',
+    });
+    return true;
+  }
+
   function request(action: Action, key = live().key) {
     const row = key ? rowsRef.current.get(key) : undefined;
     if (!row || !key) return;
@@ -880,6 +899,7 @@ export function App(props: AppProps) {
       return;
     }
     if (action.merge) {
+      if (refusePolicy(row, key)) return;
       const head = row.fetched?.head;
       if (!head) {
         setFlash({ text: `Cannot merge ${key}: its state is not fetched yet.`, color: 'yellow' });
@@ -954,6 +974,8 @@ export function App(props: AppProps) {
       return;
     }
     if (pending.action.merge) {
+      // A refresh while the prompt waits can bring a new miss, such as a lower score on a new head.
+      if (refusePolicy(row, pending.key)) return;
       const head = pending.head;
       if (!head || merging.current.has(pending.key)) return;
       merging.current.add(pending.key);
@@ -1475,6 +1497,7 @@ function retryNote(options: Options, retry: boolean | undefined): string {
 function notesOf(row: Row, context: DescribeContext): string[] {
   const headAt = row.fetched?.headAt;
   const parts = [
+    ...(row.summary?.policy ?? []).map(({ note }) => `merge policy: ${note}`),
     context.stalled &&
       headAt &&
       `stalled: no session works on it, and the last commit is ${formatAgo(context.now, new Date(headAt))}`,

@@ -90,6 +90,8 @@ export interface WatchSources {
   listPullRequests(): Promise<PullRequest[]>;
   fetchPullRequest(pr: PullRequest): Promise<PullRequestSnapshot>;
   readOwners(): Promise<Map<string, Owner>>;
+  /** The login of the user of boo. Only the "ownerOnly" rule of the merge policy reads it. */
+  viewerLogin?(): Promise<string | undefined>;
 }
 
 /** Reads each pull request. A pull request that GitHub does not give keeps its place, with the error. */
@@ -110,7 +112,8 @@ export async function readReport(
   );
   // The session records are internal to Claude Code. If they are unreadable, the output shows no session.
   const owners = await sources.readOwners().catch(() => new Map<string, Owner>());
-  return buildReport(inputs, owners, settings, now);
+  const viewer = settings.mergePolicy?.ownerOnly ? await sources.viewerLogin?.() : undefined;
+  return buildReport(inputs, owners, settings, now, viewer);
 }
 
 /**

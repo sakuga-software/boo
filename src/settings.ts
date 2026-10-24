@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { AGENT_COMMANDS, BOTS, mentionProblem, RESERVED_KEYS } from './actions.js';
+import { parseMergePolicy, type MergePolicy } from './policy.js';
 
 export const SETTINGS = [
   { key: 'hideMerged', label: 'Hide the merged pull requests', fallback: true },
@@ -48,6 +49,8 @@ export type Settings = Record<SettingKey, boolean> & {
   agentPrompts: Record<string, string>;
   /** A red pull request with no working session and no new commit for this time is stalled. */
   stalledAfterMinutes: number;
+  /** The rules that a team adds before "ready to merge". */
+  mergePolicy?: MergePolicy;
 };
 
 export const DEFAULT_AUTHORS: readonly string[] = ['@me'];
@@ -145,6 +148,8 @@ export function parseSettings(value: unknown): Settings {
   settings.authors = parseAuthors((value as Record<string, unknown>).authors) ?? settings.authors;
   settings.bots = parseSwitches((value as Record<string, unknown>).bots);
   settings.agentPrompts = parsePrompts((value as Record<string, unknown>).agentPrompts);
+  const mergePolicy = parseMergePolicy((value as Record<string, unknown>).mergePolicy);
+  if (mergePolicy) settings.mergePolicy = mergePolicy;
   const custom = (value as Record<string, unknown>).customBots;
   // The id of a custom bot comes from its name, and the bar opens the first bot of a key.
   // Thus a bot with the name or the key of an earlier bot is dropped.

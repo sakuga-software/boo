@@ -8,6 +8,7 @@ import {
   type Review,
   type Verdict,
 } from './decide.js';
+import { policyMisses, type MergePolicy, type PolicyMiss } from './policy.js';
 
 export type CheckState = 'pending' | 'success' | 'failure' | 'skipped';
 
@@ -64,6 +65,14 @@ export interface PullRequestFacts {
   now: Date;
   /** The CodeRabbit decision. It knows the quota clock of CodeRabbit better than a generic rule. */
   coderabbit?: Decision;
+  /** The facts that only the merge policy reads. */
+  body?: string;
+  openThreads?: string[];
+  files?: string[];
+  changes?: { files: number };
+  policy?: MergePolicy | undefined;
+  /** The login of the user of boo. */
+  viewer?: string | undefined;
 }
 
 // The same words as the pr-signals.sh script of the review skills. They name no bot, so a new reviewer needs no edit.
@@ -363,6 +372,8 @@ export interface Summary {
   onHead: number;
   reviews: number;
   lastReview?: { name: string; at: Date };
+  /** The rules of the merge policy that the pull request misses. */
+  policy: PolicyMiss[];
 }
 
 /**
@@ -387,7 +398,19 @@ export function summarize(facts: PullRequestFacts): Summary {
     if (any('quota', 'to retry')) return 'quota';
     return 'awaiting review';
   };
-  const overall = overallOf();
+  const policy = policyMisses(facts.policy, {
+    head: facts.head,
+    body: facts.body ?? '',
+    reviews: facts.reviews,
+    comments: facts.comments,
+    openThreads: facts.openThreads ?? [],
+    files: facts.files,
+    changedFiles: facts.changes?.files,
+    viewer: facts.viewer,
+  });
+  // A rule of the team keeps the pull request from "ready to merge", as a rule of GitHub does.
+  const plain = overallOf();
+  const overall = plain === 'ready' && policy.length > 0 ? 'approved' : plain;
 
   const last = reviewers
     .filter((reviewer) => reviewer.lastReviewAt)
@@ -400,6 +423,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     onHead: reviewers.filter(isOnHead).length,
     reviews: reviewers.reduce((total, reviewer) => total + reviewer.reviews, 0),
     ...(last && { lastReview: { name: last.name, at: last.lastReviewAt! } }),
+    policy,
   };
 }
 

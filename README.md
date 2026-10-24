@@ -100,6 +100,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
 | `notes.merge`            | The rule that blocks the merge, or `null`.                                                                                                                                                                                                                                                          |
 | `notes.retries`          | The retries of the review bots that a run without `--json` posts, with their times.                                                                                                                                                                                                                 |
 | `notes.coderabbit`       | The CodeRabbit quota: `wait` with `availableAt`, `trigger`, `pending`, `skipped`, `paused`, `idle`, or `null`.                                                                                                                                                                                      |
+| `policy`                 | The rules of the merge policy that the pull request misses, as `{ "rule", "note" }`: `minScore`, `requireProof`, `resolvedBotThreads`, `ownerOnly`. Empty with no policy.                                                                                                                           |
 
 The keys stay the same from one version to the next. A test fixes them.
 
@@ -406,6 +407,34 @@ reviewer, so each install works under its own name (`sakuga-review[bot]` at Saku
 - Each failing check shows its cause in the details: `✖ Migrations · fails on main too` if the same
   check fails on the last commit of the base branch, else `✖ Migrations · fails here only`. A check
   that fails on the base branch too still counts as failing: the pull request cannot merge green.
+
+### Merge policy
+
+"Ready to merge" means approved, green and mergeable for GitHub. A team can add its own rules in
+`mergePolicy` in the settings file. A pull request that misses a rule shows `approved`, not
+`ready to merge`, and its details give a note for each rule: `merge policy: no proof`. `m` refuses
+to merge it and names the rules. `--json` gives the misses in `policy`.
+
+```json
+{
+  "mergePolicy": {
+    "minScore": { "reviewer": "sakuga-review", "score": 4, "onHead": true },
+    "requireProof": "\\.(gif|webm|mp4)|No /tfp:",
+    "resolvedBotThreads": true,
+    "ownerOnly": { "paths": [".github/workflows/**", "**/migrations/**", "**/auth/**"], "owner": "mathieu" }
+  }
+}
+```
+
+| Rule                 | The pull request needs                                                                                                                                                                                                                                                      | Note                                                                                                |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `minScore`           | A last confidence score of `reviewer` of at least `score`. With `onHead`, the score must come from a review of the head commit; a comment, such as the summary of Greptile, has no commit.                                                                                  | `no score from sakuga-review`, `no score from sakuga-review on head`, `score 3/5 on head, 4 needed` |
+| `requireProof`       | A match of this regular expression (case insensitive) in the description or in a comment: a link to a recording, or a reason with no test.                                                                                                                                  | `no proof`                                                                                          |
+| `resolvedBotThreads` | No unresolved review thread that a bot starts (the first 100 threads).                                                                                                                                                                                                      | `2 open bot threads`                                                                                |
+| `ownerOnly`          | If the pull request changes a file under one of `paths` (globs: `*` in a name, `**` for any folders), only `owner` merges it. The query reads the first 100 files: with more, only `owner` merges. `@me` is the account of `gh`, so a shared file names the owner by login. | `mathieu merges`                                                                                    |
+
+A rule with a missing or invalid field is dropped. `resolvedBotThreads` and `ownerOnly` make each
+query read the threads or the files, and cost about one GraphQL point more for each pull request.
 
 ### Retries of the other bots
 
