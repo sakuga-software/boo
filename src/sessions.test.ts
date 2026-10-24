@@ -123,7 +123,8 @@ test('a session with no inbox key gets no message', async () => {
   const home = await mkdtemp(join(tmpdir(), 'boo-inbox-'));
   await mkdir(join(home, 'sessions'));
   await assert.rejects(sendToSession(session(), 'hello', home), /no inbox key/);
-  assert.match(inboxFrames(session(), 't', 'hello', 'id'), /"msg_id":"id"/);
+  const id = '00000000-0000-4000-8000-000000000000';
+  assert.match(inboxFrames(session(), 't', 'hello', id), new RegExp(`"msg_id":"${id}"`));
 });
 
 test('a send ends after the write, even if the session keeps its side of the connection open', async () => {
