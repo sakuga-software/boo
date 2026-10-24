@@ -92,7 +92,9 @@ between two sections:
   the last commit; `⟳` reviewing, with `2/3` if the bot shows its progress; `◷` out of quota, with
   the return time if the notice gives one; `↻` CodeRabbit to retry; `○` requested; `◌` reviewed an
   older commit only, with the verdict that still stands; `⊘` skipped; `‖` paused.
-- **checks**: the checks that passed, the names of the checks that fail, and the checks that run.
+- **checks**: the counts of the checks that passed, fail and run. Then one line for each failing
+  check, with its cause (`fails here only`, or `fails on main too`), and one line for each check that
+  a newer run replaces (`cancelled by a newer run`).
 - **notes**: the protection rule that blocks the merge, the state of the pull request under it in
   a stack, the planned retries and the CodeRabbit quota.
 
@@ -291,6 +293,13 @@ reviewer, so each install works under its own name (`sakuga-review[bot]` at Saku
 - A check counts as a quota check, and not as a failure, if its description names a quota
   (CodeRabbit: "Review rate limited"), or if it fails and belongs to a reviewer that refused for
   quota. A red check of a refused reviewer tells nothing about the code.
+- A check of a cancelled run does not fail if a newer run of the same workflow, on the same commit,
+  has the same check, and that check passed or still runs. A push and a change of base can start a
+  workflow twice, and a concurrency rule cancels one run. The details show
+  `⊘ e2e · cancelled by a newer run`.
+- Each failing check shows its cause in the details: `✖ Migrations · fails on main too` if the same
+  check fails on the last commit of the base branch, else `✖ Migrations · fails here only`. A check
+  that fails on the base branch too still counts as failing: the pull request cannot merge green.
 
 ### Retries of the other bots
 

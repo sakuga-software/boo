@@ -30,7 +30,8 @@ const cli = meow(
     conflicts          GitHub reports a conflict with the base branch
     changes requested  a reviewer requests changes (the last verdict of each
                        reviewer counts, as on GitHub)
-    checks failing     a check of the last commit fails
+    checks failing     a check of the last commit fails; a check of a run that
+                       a newer run of the same workflow replaces does not count
     ready to merge     approved, every check passes, and GitHub can merge
     approved           approved, but a check runs or a rule blocks the merge
     reviewing          a reviewer reviews the pull request now
