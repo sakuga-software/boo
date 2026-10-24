@@ -15,6 +15,11 @@ export interface Check {
   name: string;
   state: CheckState;
   description?: string;
+  /** The GitHub Actions workflow of the check, and the ID of its run. */
+  workflow?: string;
+  run?: number;
+  /** The run of the check stopped before its end, for example because of a concurrency rule. */
+  cancelled?: boolean;
 }
 
 export type ReviewerStatus =
@@ -53,6 +58,8 @@ export interface PullRequestFacts {
   reviews: Review[];
   comments: Comment[];
   checks: Check[];
+  /** The checks of the last commit of the base branch. */
+  baseChecks?: Check[];
   requested: string[];
   now: Date;
   /** The CodeRabbit decision. It knows the quota clock of CodeRabbit better than a generic rule. */
@@ -263,10 +270,33 @@ export interface ChecksSummary {
   passed: number;
   skipped: number;
   pending: number;
+  /** The checks that fail, also the ones in `failedOnBase`. */
   failed: string[];
+  /** The failing checks that also fail on the last commit of the base branch. */
+  failedOnBase: string[];
+  /** The checks of a cancelled run that a newer run of the same workflow replaces. They do not fail. */
+  cancelled: string[];
   /** The checks that report a quota refusal of a reviewer, and not a result on the code. */
   quota: number;
 }
+
+/**
+ * True if a run of the same workflow on the same commit has the same check, and that check passed or
+ * still runs. A push and a change of base can start a workflow twice, and a concurrency rule cancels one run.
+ */
+function replacedByNewerRun(check: Check, checks: readonly Check[]): boolean {
+  if (!check.cancelled || !check.workflow) return false;
+  return checks.some(
+    (other) =>
+      other.workflow === check.workflow &&
+      other.run !== check.run &&
+      other.name === check.name &&
+      (other.state === 'success' || other.state === 'pending'),
+  );
+}
+
+const failsOn = (name: string, checks: readonly Check[]) =>
+  checks.some((check) => check.name === name && check.state === 'failure' && !check.cancelled);
 
 /**
  * Sorts the checks of the head commit. A check is a quota check in these cases:
@@ -274,9 +304,22 @@ export interface ChecksSummary {
  * - it fails and belongs to a reviewer that refused for quota.
  * A red check of a refused reviewer tells nothing about the code.
  */
-export function summarizeChecks(checks: Check[], reviewers: Reviewer[]): ChecksSummary {
+export function summarizeChecks(
+  checks: Check[],
+  reviewers: Reviewer[],
+  baseChecks: readonly Check[] = [],
+): ChecksSummary {
   const refused = reviewers.filter((reviewer) => reviewer.status === 'quota' || reviewer.status === 'to retry');
-  const summary: ChecksSummary = { total: checks.length, passed: 0, skipped: 0, pending: 0, failed: [], quota: 0 };
+  const summary: ChecksSummary = {
+    total: checks.length,
+    passed: 0,
+    skipped: 0,
+    pending: 0,
+    failed: [],
+    failedOnBase: [],
+    cancelled: [],
+    quota: 0,
+  };
   for (const check of checks) {
     const quota =
       QUOTA.test(check.description ?? '') ||
@@ -285,7 +328,11 @@ export function summarizeChecks(checks: Check[], reviewers: Reviewer[]): ChecksS
     else if (check.state === 'success') summary.passed++;
     else if (check.state === 'skipped') summary.skipped++;
     else if (check.state === 'pending') summary.pending++;
-    else summary.failed.push(check.name);
+    else if (replacedByNewerRun(check, checks)) summary.cancelled.push(check.name);
+    else {
+      summary.failed.push(check.name);
+      if (failsOn(check.name, baseChecks)) summary.failedOnBase.push(check.name);
+    }
   }
   return summary;
 }
@@ -324,7 +371,7 @@ export interface Summary {
  */
 export function summarize(facts: PullRequestFacts): Summary {
   const reviewers = reviewersOf(facts);
-  const checks = summarizeChecks(facts.checks, reviewers);
+  const checks = summarizeChecks(facts.checks, reviewers, facts.baseChecks);
   const changes = reviewers.some((reviewer) => reviewer.verdict === 'changes requested');
   const approved = !changes && reviewers.some((reviewer) => reviewer.verdict === 'approved');
   const any = (...statuses: ReviewerStatus[]) => reviewers.some((reviewer) => statuses.includes(reviewer.status));

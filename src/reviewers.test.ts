@@ -217,7 +217,62 @@ test('a red check of a refused reviewer and a status that names a quota are quot
     { name: 'test', state: 'success' },
   ];
   const summary = summarizeChecks(checks, summarize(facts({ reviews: [refusal] })).reviewers);
-  assert.deepEqual(summary, { total: 4, passed: 1, skipped: 0, pending: 0, failed: ['lint'], quota: 2 });
+  assert.deepEqual(summary, {
+    total: 4,
+    passed: 1,
+    skipped: 0,
+    pending: 0,
+    failed: ['lint'],
+    failedOnBase: [],
+    cancelled: [],
+    quota: 2,
+  });
+});
+
+const ciCheck = (name: string, run: number, state: Check['state'], cancelled = false): Check => ({
+  name,
+  state,
+  workflow: 'CI',
+  run,
+  ...(cancelled && { cancelled: true }),
+});
+
+test('a check of a cancelled run does not fail if a newer run of the same workflow passes or runs it', () => {
+  const checks = [
+    ciCheck('e2e', 1, 'failure', true),
+    ciCheck('e2e', 2, 'success'),
+    ciCheck('lint', 1, 'failure', true),
+    ciCheck('lint', 2, 'pending'),
+  ];
+  const summary = summarize(facts({ checks }));
+  assert.deepEqual(summary.checks.failed, []);
+  assert.deepEqual(summary.checks.cancelled, ['e2e', 'lint']);
+  assert.notEqual(summary.overall, 'checks failing');
+});
+
+test('a cancelled check with no newer run of the same workflow still fails', () => {
+  const checks = [
+    ciCheck('e2e', 1, 'failure', true),
+    { ...ciCheck('e2e', 2, 'success'), workflow: 'Nightly' },
+    ciCheck('lint', 3, 'failure', true),
+    ciCheck('lint', 4, 'failure', true),
+  ];
+  const summary = summarize(facts({ checks }));
+  assert.deepEqual(summary.checks.failed, ['e2e', 'lint', 'lint']);
+  assert.deepEqual(summary.checks.cancelled, []);
+  assert.equal(summary.overall, 'checks failing');
+});
+
+test('a failing check that also fails on the base branch says so, and still fails', () => {
+  const summary = summarize(
+    facts({
+      checks: [ciCheck('Migrations', 1, 'failure'), ciCheck('e2e', 1, 'failure')],
+      baseChecks: [ciCheck('Migrations', 9, 'failure'), ciCheck('e2e', 9, 'failure', true)],
+    }),
+  );
+  assert.deepEqual(summary.checks.failed, ['Migrations', 'e2e']);
+  assert.deepEqual(summary.checks.failedOnBase, ['Migrations']);
+  assert.equal(summary.overall, 'checks failing');
 });
 
 const SAKUGA = 'sakuga-review[bot]';
@@ -401,6 +456,13 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
       ],
     },
     comments: { nodes: [node(1, 50), node(2, 40), node(3, 30)] },
+    baseRef: {
+      target: {
+        statusCheckRollup: {
+          contexts: { nodes: [{ __typename: 'CheckRun', name: 'e2e', status: 'COMPLETED', conclusion: 'FAILURE' }] },
+        },
+      },
+    },
     commits: {
       nodes: [
         {
@@ -413,6 +475,13 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
                 nodes: [
                   { __typename: 'CheckRun', name: 'lint', status: 'IN_PROGRESS', conclusion: null },
                   { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'TIMED_OUT' },
+                  {
+                    __typename: 'CheckRun',
+                    name: 'e2e',
+                    status: 'COMPLETED',
+                    conclusion: 'CANCELLED',
+                    checkSuite: { workflowRun: { databaseId: 41, workflow: { name: 'CI' } } },
+                  },
                   {
                     __typename: 'StatusContext',
                     context: 'CodeRabbit',
@@ -451,8 +520,10 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
   assert.deepEqual(snapshot.checks, [
     { name: 'lint', state: 'pending' },
     { name: 'test', state: 'failure' },
+    { name: 'e2e', state: 'failure', workflow: 'CI', run: 41, cancelled: true },
     { name: 'CodeRabbit', state: 'success', description: 'Review rate limited' },
   ]);
+  assert.deepEqual(snapshot.baseChecks, [{ name: 'e2e', state: 'failure' }]);
 });
 
 test('the confidence of a reviewer comes from its last review or comment with a score', () => {
