@@ -49,6 +49,7 @@ import {
 } from './reviewers.js';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
 import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
+import { extraFields } from './policy.js';
 import { assess, keyOf, MERGE_STATE_WARNINGS } from './report.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
@@ -81,7 +82,8 @@ interface Row {
 export type GitHub = Pick<
   typeof github,
   'listPullRequests' | 'fetchPullRequest' | 'requestReview' | 'openInBrowser' | 'mergePullRequest'
->;
+> &
+  Partial<Pick<typeof github, 'viewerLogin'>>;
 
 /** The Claude Code sessions of this machine. */
 export interface Sessions {
@@ -282,6 +284,8 @@ export function App(props: AppProps) {
   const buttonNodes = useRef(new Map<string, DOMElement>());
   const scrollStart = useRef(0);
   const [owners, setOwners] = useState<Map<string, Owner>>(() => new Map());
+  // The login of the user of boo. Only the "ownerOnly" rule of the merge policy reads it.
+  const viewerRef = useRef<string>(undefined);
   // The rows that show their details: the agent, the reviewers, the checks that fail.
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(() => new Set());
   const unfoldedRef = useRef(unfolded);
@@ -332,7 +336,8 @@ export function App(props: AppProps) {
           row.fetched ? [[key, { repo: row.pr.repo, fetched: row.fetched, left: Boolean(row.left) }] as const] : [],
         ),
       );
-      for (const [key, result] of assess(fetched, new Date()))
+      const policy = settingsRef.current.mergePolicy;
+      for (const [key, result] of assess(fetched, new Date(), { policy, viewer: viewerRef.current }))
         rowsRef.current.set(key, { ...rowsRef.current.get(key)!, ...result });
       setRows([...rowsRef.current.values()]);
     }
@@ -340,7 +345,7 @@ export function App(props: AppProps) {
     async function refresh(pr: PullRequest): Promise<Decision | undefined> {
       update(pr, { activity: 'loading' });
       try {
-        const { status, ...state } = await gitHub.fetchPullRequest(pr);
+        const { status, ...state } = await gitHub.fetchPullRequest(pr, extraFields(settingsRef.current.mergePolicy));
         if (status !== 'open') {
           update(pr, { left: status, activity: undefined, error: undefined });
           return undefined;
@@ -486,6 +491,7 @@ export function App(props: AppProps) {
     }
 
     async function run() {
+      if (settingsRef.current.mergePolicy?.ownerOnly) viewerRef.current = await gitHub.viewerLogin?.();
       await syncList();
       await triggerReady(tracked());
       await retryOthers(tracked());
@@ -839,6 +845,14 @@ export function App(props: AppProps) {
       return;
     }
     if (action.merge) {
+      const misses = row.summary?.policy ?? [];
+      if (misses.length > 0) {
+        setFlash({
+          text: `Cannot merge ${key}, it misses the merge policy: ${misses.map(({ note }) => note).join(', ')}.`,
+          color: 'yellow',
+        });
+        return;
+      }
       const head = row.fetched?.head;
       if (!head) {
         setFlash({ text: `Cannot merge ${key}: its state is not fetched yet.`, color: 'yellow' });
@@ -1410,6 +1424,7 @@ function retryNote(options: Options, retry: boolean | undefined): string {
 /** The notes of a row. The sections of the reviewers and of the checks show the rest. */
 function notesOf(row: Row, context: DescribeContext): string[] {
   const parts = [
+    ...(row.summary?.policy ?? []).map(({ note }) => `merge policy: ${note}`),
     context.stack,
     row.summary && MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
     ...(context.retries ?? []).map(({ bot, at }) => `${bot.name} retry at ${formatTime(at)}`),

@@ -60,6 +60,7 @@ test('the output keeps the same keys, in the same order', () => {
     'stack',
     'agent',
     'notes',
+    'policy',
   ]);
   assert.deepEqual(Object.keys(first!.checks), ['passed', 'failing', 'running', 'skipped', 'quota']);
   assert.deepEqual(Object.keys(first!.stack), ['parent', 'position', 'size']);
@@ -187,4 +188,20 @@ test('a CodeRabbit rate limit on a merged pull request delays the open ones', ()
 
   const merged: ReportInput = { pr: pr(1), snapshot: snapshot({ status: 'merged', comments: [limit(7, 30, 5)] }) };
   assert.equal(report([merged, open]).find(({ number }) => number === 2)!.notes.coderabbit?.kind, 'wait');
+});
+
+test('a ready pull request that misses a rule of the merge policy is approved, with the rule', () => {
+  const approved: ReportInput = {
+    pr: pr(1),
+    snapshot: snapshot({
+      reviews: [{ user: { login: 'alice' }, commit_id: 'abc123', submitted_at: ago(5), state: 'APPROVED' }],
+      body: 'A change.',
+    }),
+  };
+  const settings = { ...DEFAULT_SETTINGS, mergePolicy: { requireProof: '\\.gif|No /tfp:' } };
+  const [missing] = buildReport([approved], new Map(), settings, now);
+  assert.equal(missing!.state, 'approved');
+  assert.deepEqual(missing!.policy, [{ rule: 'requireProof', note: 'no proof' }]);
+  const proved = { ...approved, snapshot: { ...approved.snapshot!, body: 'Recording: demo.gif' } };
+  assert.equal(buildReport([proved], new Map(), settings, now)[0]!.state, 'ready to merge');
 });

@@ -2,7 +2,8 @@ import { render } from 'ink';
 import meow from 'meow';
 import { homedir } from 'node:os';
 import { App } from './app.js';
-import { fetchPullRequest, listPullRequests } from './github.js';
+import { fetchPullRequest, listPullRequests, viewerLogin } from './github.js';
+import { extraFields } from './policy.js';
 import { buildReport, type ReportInput } from './report.js';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, saveSettings, settingsPath } from './settings.js';
@@ -36,7 +37,8 @@ const cli = meow(
     changes requested  a reviewer requests changes (the last verdict of each
                        reviewer counts, as on GitHub)
     checks failing     a check of the last commit fails
-    ready to merge     approved, every check passes, and GitHub can merge
+    ready to merge     approved, every check passes, GitHub can merge, and the
+                       "mergePolicy" of the settings file passes (see the README)
     approved           approved, but a check runs or a rule blocks the merge
     reviewing          a reviewer reviews the pull request now
     reviewed           a reviewer reviewed the last commit, with no verdict
@@ -178,7 +180,7 @@ if (cli.flags.json) {
   const inputs = await Promise.all(
     prs.map(async (pr): Promise<ReportInput> => {
       try {
-        return { pr, snapshot: await fetchPullRequest(pr) };
+        return { pr, snapshot: await fetchPullRequest(pr, extraFields(settings.mergePolicy)) };
       } catch (error) {
         return { pr, error: error instanceof Error ? error.message : String(error) };
       }
@@ -186,7 +188,8 @@ if (cli.flags.json) {
   );
   // The session records are internal to Claude Code. If they are unreadable, the output shows no session.
   const owners = await readOwners(new LinkIndex()).catch(() => new Map());
-  const text = `${JSON.stringify(buildReport(inputs, owners, settings, new Date()), null, 2)}\n`;
+  const viewer = settings.mergePolicy?.ownerOnly ? await viewerLogin() : undefined;
+  const text = `${JSON.stringify(buildReport(inputs, owners, settings, new Date(), viewer), null, 2)}\n`;
   // A pipe takes the output in the background. An exit before the end of the write cuts it.
   await new Promise((resolve) => process.stdout.write(text, resolve));
   process.exit(0);
