@@ -3,7 +3,7 @@ import { mkdtemp, readdir, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { cacheDir, DiskCache } from './cache.js';
+import { cachedRead, cacheDir, DiskCache } from './cache.js';
 import { lowOnPoints } from './github.js';
 
 const now = Date.parse('2026-10-24T12:00:00Z');
@@ -52,4 +52,22 @@ test('only the owner reads the cache folder and its entries', async () => {
   await new DiskCache(dir).set('pr-acme/web#1', { head: 'abc' }, now);
   assert.equal((await stat(dir)).mode & 0o777, 0o700);
   assert.equal((await stat(join(dir, 'pr-acme_web_1.json'))).mode & 0o777, 0o600);
+});
+
+test('a read younger than the maximum age comes from the cache, 0 reads GitHub, and each read fills the cache', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  let reads = 0;
+  const read = async () => ({ head: `h${++reads}` });
+  assert.deepEqual(await cachedRead(cache, 'pr-acme/web#1', 30_000, read), { head: 'h1' });
+  assert.deepEqual(await cachedRead(cache, 'pr-acme/web#1', 30_000, read), { head: 'h1' });
+  assert.equal(reads, 1);
+  assert.deepEqual(await cachedRead(cache, 'pr-acme/web#1', 0, read), { head: 'h2' });
+  assert.deepEqual(await cachedRead(cache, 'pr-acme/web#1', 30_000, read), { head: 'h2' });
+  assert.equal(reads, 2);
+});
+
+test('a failed read caches nothing', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  await assert.rejects(cachedRead(cache, 'pr-acme/web#1', 30_000, async () => Promise.reject(new Error('HTTP 502'))));
+  assert.equal(await cache.get('pr-acme/web#1', 30_000), undefined);
 });

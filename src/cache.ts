@@ -42,3 +42,23 @@ export class DiskCache {
     }
   }
 }
+
+/** The part of a cache that `cachedRead` uses. */
+export interface ReadCache {
+  get<T>(key: string, maxAgeMs: number): Promise<{ value: T } | undefined>;
+  set(key: string, value: unknown): Promise<void>;
+}
+
+/** Returns the cached value if it is younger than `maxAgeMs`. Else calls `read`, and caches its result. */
+export async function cachedRead<T>(
+  cache: ReadCache,
+  key: string,
+  maxAgeMs: number,
+  read: () => Promise<T>,
+): Promise<T> {
+  const cached = await cache.get<T>(key, maxAgeMs);
+  if (cached) return cached.value;
+  const value = await read();
+  await cache.set(key, value);
+  return value;
+}

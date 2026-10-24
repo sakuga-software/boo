@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { requestText, type Request } from './actions.js';
 import { detectAgent, type Agent } from './agents.js';
-import { cacheDir, DiskCache } from './cache.js';
+import { cachedRead, cacheDir, DiskCache } from './cache.js';
 import type { Comment, Review } from './decide.js';
 import type { Check, CheckState } from './reviewers.js';
 
@@ -421,12 +421,7 @@ export async function fetchPullRequest(
   pr: PullRequest,
   { maxAgeMs = CACHE_TTL_MS }: { maxAgeMs?: number } = {},
 ): Promise<PullRequestSnapshot> {
-  const key = `pr-${pr.repo}#${pr.number}`;
-  const cached = await cache.get<PullRequestSnapshot>(key, maxAgeMs);
-  if (cached) return cached.value;
-  const snapshot = await readPullRequest(pr);
-  await cache.set(key, snapshot);
-  return snapshot;
+  return cachedRead(cache, `pr-${pr.repo}#${pr.number}`, maxAgeMs, () => readPullRequest(pr));
 }
 
 async function readPullRequest(pr: PullRequest): Promise<PullRequestSnapshot> {
