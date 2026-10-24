@@ -466,13 +466,17 @@ export function App(props: AppProps) {
         await exclusive(async () => {
           // A row whose last fetch failed shows old data: its head and its status are not checked.
           const due = (row: Row) => !row.left && !row.error && row.decision?.kind === 'trigger';
-          if (!due(rowOf(pr))) return;
+          const waits = (row: Row) => !due(row) || unanswered(row, lastPosts.current.get(keyOf(pr)));
+          if (waits(rowOf(pr))) return;
           // A read from the cache can miss a request that another run of boo just posted. A fresh read sees it.
           await refresh(pr, true);
           const row = rowOf(pr);
-          if (!due(row)) return;
-          if (unanswered(row, lastPosts.current.get(keyOf(pr)))) return;
-          if (gitHub.claimPost && !(await gitHub.claimPost(pr, CODERABBIT.id))) return;
+          if (waits(row)) return;
+          if (gitHub.claimPost && !(await gitHub.claimPost(pr, CODERABBIT.id))) {
+            // Another run of boo posts the request. The repost guard then waits for its reply, as for a post of this run.
+            lastPosts.current.set(keyOf(pr), { at: Date.now(), before: row.fetched?.comments ?? [] });
+            return;
+          }
           if (await post(pr, { bot: CODERABBIT, command: 'review' })) setTriggered((count) => count + 1);
         });
       }
@@ -487,8 +491,9 @@ export function App(props: AppProps) {
           // A read from the cache can miss a review that another run of boo just asked for.
           await refresh(pr, true);
           for (const retry of dueRetries()) {
-            if (gitHub.claimPost && !(await gitHub.claimPost(pr, retry.bot.id))) continue;
             retried.current.start(keyOf(pr), retry);
+            // Another run of boo posts this retry, and retries it if its post fails.
+            if (gitHub.claimPost && !(await gitHub.claimPost(pr, retry.bot.id))) continue;
             if (await send(pr, { bot: retry.bot, command: retry.bot.commands[0]!.command })) {
               setTriggered((count) => count + 1);
               void refresh(pr, true);
