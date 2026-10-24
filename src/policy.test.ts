@@ -80,6 +80,16 @@ test('a change to an owned path needs the owner, and @me is the user of boo', ()
   assert.deepEqual(policyMisses({ ownerOnly: { ...ownerOnly, owner: '@me' } }, facts({ files: ['auth/x.ts'] })), []);
 });
 
+test('a pull request with more files than the query read needs the owner', () => {
+  const ownerOnly = { paths: ['**/auth/**'], owner: 'mathieu' };
+  const many = facts({ files: Array.from({ length: 100 }, (_, index) => `src/f${index}.ts`), changedFiles: 140 });
+  assert.deepEqual(policyMisses({ ownerOnly }, { ...many, viewer: 'alice' }), [
+    { rule: 'ownerOnly', note: 'mathieu merges: more than 100 files' },
+  ]);
+  assert.deepEqual(policyMisses({ ownerOnly }, { ...many, viewer: 'mathieu' }), []);
+  assert.deepEqual(policyMisses({ ownerOnly }, { ...many, changedFiles: 100, viewer: 'alice' }), []);
+});
+
 test('a glob matches like a shell glob, with ** for any folders', () => {
   assert.ok(globToRegExp('**/migrations/**').test('migrations/0001.sql'));
   assert.ok(globToRegExp('**/migrations/**').test('packages/db/migrations/0001.sql'));

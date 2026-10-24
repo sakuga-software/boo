@@ -31,6 +31,8 @@ export interface PolicyFacts {
   openThreads: readonly string[];
   /** The changed files. Undefined if GitHub gave no list. */
   files?: readonly string[] | undefined;
+  /** The count of changed files. The list can hold fewer: the query reads the first 100. */
+  changedFiles?: number | undefined;
   /** The login of the user of boo, if GitHub gave it. */
   viewer?: string | undefined;
 }
@@ -157,9 +159,15 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
   }
   if (ownerOnly && ownerOnly.owner !== '@me') {
     const patterns = ownerOnly.paths.map(globToRegExp);
-    const owned = facts.files?.some((file) => patterns.some((pattern) => pattern.test(file)));
-    if (owned && !(facts.viewer && sameLogin(facts.viewer, ownerOnly.owner)))
-      misses.push({ rule: 'ownerOnly', note: `${ownerOnly.owner} merges` });
+    const files = facts.files;
+    // A file after the files that the query read can be an owned file. The rule then blocks the merge.
+    const partial = files !== undefined && facts.changedFiles !== undefined && files.length < facts.changedFiles;
+    const owned = files?.some((file) => patterns.some((pattern) => pattern.test(file)));
+    if ((owned || partial) && !(facts.viewer && sameLogin(facts.viewer, ownerOnly.owner)))
+      misses.push({
+        rule: 'ownerOnly',
+        note: owned ? `${ownerOnly.owner} merges` : `${ownerOnly.owner} merges: more than ${files!.length} files`,
+      });
   }
   return misses;
 }

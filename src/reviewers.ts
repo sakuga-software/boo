@@ -62,6 +62,7 @@ export interface PullRequestFacts {
   body?: string;
   openThreads?: string[];
   files?: string[];
+  changes?: { files: number };
   policy?: MergePolicy | undefined;
   /** The login of the user of boo. */
   viewer?: string | undefined;
@@ -357,6 +358,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     comments: facts.comments,
     openThreads: facts.openThreads ?? [],
     files: facts.files,
+    changedFiles: facts.changes?.files,
     viewer: facts.viewer,
   });
   // A rule of the team keeps the pull request from "ready to merge", as a rule of GitHub does.
