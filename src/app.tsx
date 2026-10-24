@@ -22,16 +22,7 @@ import {
   type Request,
   type ReviewerRef,
 } from './actions.js';
-import {
-  botReplied,
-  decide,
-  quotaScope,
-  quotaSignals,
-  type Comment,
-  type Decision,
-  type QuotaSignal,
-  type QuotaSource,
-} from './decide.js';
+import { botReplied, type Comment, type Decision, type QuotaSource } from './decide.js';
 import {
   activeBots,
   allBots,
@@ -50,7 +41,6 @@ import { ICON_WIDTH, layoutFor, LABEL_WIDTH, rowHeight, SELECTION_WIDTH, type La
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from './mouse.js';
 import {
   confidenceOf,
-  summarize,
   type Confidence,
   type Overall,
   type Reviewer,
@@ -59,6 +49,7 @@ import {
 } from './reviewers.js';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
 import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
+import { assess, keyOf, MERGE_STATE_WARNINGS } from './report.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
@@ -129,19 +120,11 @@ const HIDING_SETTING: Record<LeftStatus, SettingKey> = {
   closed: 'hideClosed',
   draft: 'hideDrafts',
 };
-// GitHub mergeable_state values that deserve a warning before a merge.
-const MERGE_STATE_WARNINGS: Record<string, string> = {
-  dirty: 'conflicts with the base branch',
-  blocked: 'blocked by the branch protection rules',
-  behind: 'behind the base branch',
-  unknown: 'GitHub has not computed the merge state yet',
-};
 /** The height of the header: the crown and the three lines of the head. */
 export const HEADER_LINES = 4;
 // Lines outside the list in interactive mode: the header, the margin, the scroll hints and the footer.
 const CHROME_LINES = HEADER_LINES + 8;
 
-const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
 const alone = (key: string): Placement => ({ key, depth: 0, lead: '', trail: ' '.repeat(ICON_WIDTH), size: 1 });
 
 /** Puts the rows in the order of the list. With grouping, each stacked pull request follows the one that it merges into. */
@@ -342,31 +325,15 @@ export function App(props: AppProps) {
       return run;
     }
 
-    // The CodeRabbit quota belongs to the developer, so every row reads the quota signals of the rows
-    // in the same quota scope (see quotaScope). A new fetch on one row can thus change the decision
-    // of the others, with no API call.
+    // A new fetch on one row can change the CodeRabbit decision of the others, with no API call (see assess).
     function redecide() {
-      const now = new Date();
-      const scopeOf = (row: Row) => quotaScope(row.pr.repo, row.fetched?.comments ?? [], row.fetched?.reviews ?? []);
-      const signalsByScope = new Map<string, QuotaSignal[]>();
-      for (const [key, row] of rowsRef.current) {
-        if (!row.fetched) continue;
-        const scope = scopeOf(row);
-        signalsByScope.set(scope, [
-          ...(signalsByScope.get(scope) ?? []),
-          ...quotaSignals(key, row.fetched.comments, row.fetched.reviews),
-        ]);
-      }
-      for (const [key, row] of rowsRef.current) {
-        if (!row.fetched || row.left) continue;
-        const quota = signalsByScope.get(scopeOf(row)) ?? [];
-        const decision = decide({ ...row.fetched, now, pr: key, quota });
-        rowsRef.current.set(key, {
-          ...row,
-          decision,
-          summary: summarize({ ...row.fetched, now, coderabbit: decision }),
-        });
-      }
+      const fetched = new Map(
+        [...rowsRef.current].flatMap(([key, row]) =>
+          row.fetched ? [[key, { repo: row.pr.repo, fetched: row.fetched, left: Boolean(row.left) }] as const] : [],
+        ),
+      );
+      for (const [key, result] of assess(fetched, new Date()))
+        rowsRef.current.set(key, { ...rowsRef.current.get(key)!, ...result });
       setRows([...rowsRef.current.values()]);
     }
 

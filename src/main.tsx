@@ -2,6 +2,9 @@ import { render } from 'ink';
 import meow from 'meow';
 import { homedir } from 'node:os';
 import { App } from './app.js';
+import { fetchPullRequest, listPullRequests } from './github.js';
+import { buildReport, type ReportInput } from './report.js';
+import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, saveSettings, settingsPath } from './settings.js';
 import { detectBackground } from './theme.js';
 
@@ -23,6 +26,8 @@ const cli = meow(
                               (default: "authors" in the settings file, else @me)
     -w, --watch               Stay open until Ctrl+C, and refresh the list once a minute
     -n, --dry-run             Show the state, but post and merge nothing
+        --json                Print the state as JSON, one object for each pull
+                              request, and post nothing; see the README for the keys
     -h, --help                Show this help
         --version             Show the version
 
@@ -134,6 +139,7 @@ const cli = meow(
     $ boo --org all
     $ boo --dry-run --since 2026-09-15
     $ boo --author @me --author app/my-agent
+    $ boo --json | jq '.[] | select(.state == "checks failing") | .url'
 
   Requires an authenticated gh (gh auth status).
 `,
@@ -147,6 +153,7 @@ const cli = meow(
       author: { type: 'string', shortFlag: 'a', isMultiple: true },
       watch: { type: 'boolean', shortFlag: 'w', default: false },
       dryRun: { type: 'boolean', shortFlag: 'n', default: false },
+      json: { type: 'boolean', default: false },
       help: { type: 'boolean', shortFlag: 'h' },
     },
   },
@@ -159,13 +166,37 @@ if (since !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(D
 }
 const org = cli.flags.org === 'all' ? '' : cli.flags.org;
 
+const settings = await loadSettings();
+const authors = parseAuthors(cli.flags.author) ?? settings.authors;
+
+if (cli.flags.json) {
+  if (cli.flags.watch) {
+    console.error('--json prints the state once: it does not work with --watch.');
+    process.exit(2);
+  }
+  const prs = await listPullRequests({ org, authors, ...(since && { since }) });
+  const inputs = await Promise.all(
+    prs.map(async (pr): Promise<ReportInput> => {
+      try {
+        return { pr, snapshot: await fetchPullRequest(pr) };
+      } catch (error) {
+        return { pr, error: error instanceof Error ? error.message : String(error) };
+      }
+    }),
+  );
+  // The session records are internal to Claude Code. If they are unreadable, the output shows no session.
+  const owners = await readOwners(new LinkIndex()).catch(() => new Map());
+  const text = `${JSON.stringify(buildReport(inputs, owners, settings, new Date()), null, 2)}\n`;
+  // A pipe takes the output in the background. An exit before the end of the write cuts it.
+  await new Promise((resolve) => process.stdout.write(text, resolve));
+  process.exit(0);
+}
+
 const interactive = cli.flags.watch && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
 const background = process.stdout.isTTY
   ? await detectBackground(process.stdin, process.stdout, process.env)
   : 'unknown';
-const settings = await loadSettings();
 const { watch, dryRun } = cli.flags;
-const authors = parseAuthors(cli.flags.author) ?? settings.authors;
 const app = render(
   <App
     options={{ watch, dryRun, org, authors, ...(since && { since }), interactive, background }}
