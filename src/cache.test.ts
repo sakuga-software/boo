@@ -20,12 +20,19 @@ test('a missing, broken or future entry is a miss, and a write leaves no tempora
   const dir = await mkdtemp(join(tmpdir(), 'boo-cache-'));
   const cache = new DiskCache(dir);
   assert.equal(await cache.get('missing', 30_000, now), undefined);
-  await writeFile(join(dir, 'broken.json'), '{');
+  await cache.set('broken', 1, now);
+  const [broken] = (await readdir(dir)).filter((file) => file.startsWith('broken'));
+  await writeFile(join(dir, broken!), '{');
   assert.equal(await cache.get('broken', 30_000, now), undefined);
   await cache.set('future', 1, now + 60_000);
   assert.equal(await cache.get('future', 30_000, now), undefined);
   await Promise.all([1, 2, 3].map((value) => cache.set('pr-acme/web#2', value, now)));
-  assert.deepEqual((await readdir(dir)).sort(), ['broken.json', 'future.json', 'pr-acme_web_2.json']);
+  assert.deepEqual(
+    (await readdir(dir))
+      .filter((file) => !file.startsWith('broken'))
+      .map((file) => file.replace(/-[0-9a-f]{8}\.json$/, '')),
+    ['future', 'pr-acme_web_2'],
+  );
 });
 
 test('a write in a folder that cannot exist fails without an error', async () => {
@@ -51,7 +58,8 @@ test('only the owner reads the cache folder and its entries', async () => {
   const dir = join(await mkdtemp(join(tmpdir(), 'boo-cache-')), 'boo');
   await new DiskCache(dir).set('pr-acme/web#1', { head: 'abc' }, now);
   assert.equal((await stat(dir)).mode & 0o777, 0o700);
-  assert.equal((await stat(join(dir, 'pr-acme_web_1.json'))).mode & 0o777, 0o600);
+  const [entry] = await readdir(dir);
+  assert.equal((await stat(join(dir, entry!))).mode & 0o777, 0o600);
 });
 
 test('a read younger than the maximum age comes from the cache, 0 reads GitHub, and each read fills the cache', async () => {
@@ -86,4 +94,11 @@ test('a released claim goes to the next run at once', async () => {
   assert.equal(await cache.claim('post-acme/web#1-coderabbit', 120_000), false);
   await cache.release('post-acme/web#1-coderabbit');
   assert.equal(await cache.claim('post-acme/web#1-coderabbit', 120_000), true);
+});
+
+test('two keys with the same readable part get two entries', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  await cache.set('pr-a/b_c#1', 'first', now);
+  await cache.set('pr-a_b/c#1', 'second', now);
+  assert.deepEqual(await cache.get('pr-a/b_c#1', 30_000, now), { value: 'first', at: now });
 });

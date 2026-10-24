@@ -1,11 +1,14 @@
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export const cacheDir = (env: NodeJS.ProcessEnv = process.env) =>
   join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'boo');
 
-const fileName = (key: string) => `${key.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
+// The readable part can be the same for two keys, such as "a/b_c" and "a_b/c". The hash keeps them apart.
+const fileName = (key: string) =>
+  `${key.replace(/[^A-Za-z0-9._-]/g, '_')}-${createHash('sha256').update(key).digest('hex').slice(0, 8)}.json`;
 
 /**
  * A cache on disk that all the runs of boo on this machine share: a terminal watch, a scheduled run,
