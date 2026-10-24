@@ -2033,14 +2033,17 @@ const FOOTER_ORDER: Overall[] = [
 
 function Footer({ rows, triggered, done, listError, options }: FooterProps) {
   const active = rows.filter((row) => !row.left);
+  // A row whose last read failed keeps the summary of an older read. Its row shows the error, not that summary.
+  const read = active.filter((row) => !row.error);
   const countLeft = (status: LeftStatus) => rows.filter((row) => row.left === status).length;
   const waiting = active.filter((row) => row.decision?.kind === 'wait').length;
   const parts: [number, string, string][] = [
     ...FOOTER_ORDER.map((overall): [number, string, string] => [
-      active.filter((row) => row.summary?.overall === overall).length,
+      read.filter((row) => row.summary?.overall === overall).length,
       OVERALL_VIEWS[overall].label,
       OVERALL_VIEWS[overall].color,
     ]),
+    [active.length - read.length, 'error', 'red'],
     [triggered, 'retried', 'blue'],
     [countLeft('merged'), 'merged', 'magenta'],
     [countLeft('closed'), 'closed', 'red'],
