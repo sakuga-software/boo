@@ -50,7 +50,7 @@ import {
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
 import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
 import { extraFields } from './policy.js';
-import { assess, keyOf, MERGE_STATE_WARNINGS } from './report.js';
+import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from './report.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
@@ -83,7 +83,7 @@ export type GitHub = Pick<
   typeof github,
   'listPullRequests' | 'fetchPullRequest' | 'requestReview' | 'openInBrowser' | 'mergePullRequest'
 > &
-  Partial<Pick<typeof github, 'viewerLogin'>>;
+  Partial<Pick<typeof github, 'readRateLimit' | 'claimPost' | 'releasePost' | 'viewerLogin'>>;
 
 /** The Claude Code sessions of this machine. */
 export interface Sessions {
@@ -113,6 +113,8 @@ const DEFAULT_TIMING: Timing = {
   sessionsPollMs: 5_000,
 };
 const REPOST_GUARD_MS = 15 * 60_000;
+// The poll interval and the cache age while less than 20 % of the GraphQL points remain.
+const SLOW_POLL_MS = 5 * 60_000;
 const BRAND = '#8B5CF6';
 // The color of Claude Code in its own terminal theme.
 const CLAUDE = '#D77757';
@@ -208,7 +210,8 @@ interface Confirmation {
 
 interface PostControls {
   post(pr: PullRequest, request: Request): Promise<void>;
-  refresh(pr: PullRequest): Promise<unknown>;
+  /** `fresh`: read GitHub, not the cache that other runs share. */
+  refresh(pr: PullRequest, fresh?: boolean): Promise<unknown>;
   /** Stops the wait of the watch loop, and reads the list and every pull request again. */
   refreshAll(): void;
 }
@@ -286,6 +289,8 @@ export function App(props: AppProps) {
   const [owners, setOwners] = useState<Map<string, Owner>>(() => new Map());
   // The login of the user of boo. Only the "ownerOnly" rule of the merge policy reads it.
   const viewerRef = useRef<string>(undefined);
+  const [rate, setRate] = useState<github.RateLimit>();
+  const lowRef = useRef(false);
   // The rows that show their details: the agent, the reviewers, the checks that fail.
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(() => new Set());
   const unfoldedRef = useRef(unfolded);
@@ -342,10 +347,13 @@ export function App(props: AppProps) {
       setRows([...rowsRef.current.values()]);
     }
 
-    async function refresh(pr: PullRequest): Promise<Decision | undefined> {
+    async function refresh(pr: PullRequest, fresh = false): Promise<Decision | undefined> {
       update(pr, { activity: 'loading' });
       try {
-        const { status, ...state } = await gitHub.fetchPullRequest(pr, extraFields(settingsRef.current.mergePolicy));
+        const { status, ...state } = await gitHub.fetchPullRequest(pr, {
+          maxAgeMs: fresh ? 0 : cacheAge(),
+          extra: extraFields(settingsRef.current.mergePolicy),
+        });
         if (status !== 'open') {
           update(pr, { left: status, activity: undefined, error: undefined });
           return undefined;
@@ -364,7 +372,7 @@ export function App(props: AppProps) {
       let decision: Decision | undefined;
       do {
         await sleep(Math.min(timing.replyPollMs, Math.max(0, deadline - Date.now())), undefined, { signal });
-        decision = await refresh(pr);
+        decision = await refresh(pr, true);
       } while (decision?.kind === 'pending' && Date.now() < deadline);
       return decision;
     }
@@ -399,7 +407,7 @@ export function App(props: AppProps) {
       }
       // Only CodeRabbit shares the quota clock of the queue. Another bot does not wait for a CodeRabbit retry.
       const sent = isCodeRabbit(request) ? await post(pr, request) : await send(pr, request);
-      if (sent && !isCodeRabbit(request)) void refresh(pr);
+      if (sent && !isCodeRabbit(request)) void refresh(pr, true);
       setFlash(
         sent
           ? { text: `Sent "${requestText(request)}" on ${keyOf(pr)}.`, color: 'green' }
@@ -430,11 +438,23 @@ export function App(props: AppProps) {
       if (options.dryRun || !coderabbitRetries()) return;
       for (const pr of prs) {
         await exclusive(async () => {
-          const row = rowOf(pr);
           // A row whose last fetch failed shows old data: its head and its status are not checked.
-          if (row.left || row.error || row.decision?.kind !== 'trigger') return;
-          if (unanswered(row, lastPosts.current.get(keyOf(pr)))) return;
+          const due = (row: Row) => !row.left && !row.error && row.decision?.kind === 'trigger';
+          const waits = (row: Row) => !due(row) || unanswered(row, lastPosts.current.get(keyOf(pr)));
+          if (waits(rowOf(pr))) return;
+          // A read from the cache can miss a request that another run of boo just posted. A fresh read sees it.
+          await refresh(pr, true);
+          const row = rowOf(pr);
+          if (waits(row)) return;
+          if (gitHub.claimPost && !(await gitHub.claimPost(pr, CODERABBIT.id))) {
+            // Another run of boo posts the request. The repost guard waits as long as the claim, then a fresh
+            // read shows the request of the other run, or the post that failed.
+            const at = Date.now() - REPOST_GUARD_MS + github.POST_WAIT_MS;
+            lastPosts.current.set(keyOf(pr), { at, before: row.fetched?.comments ?? [] });
+            return;
+          }
           if (await post(pr, { bot: CODERABBIT, command: 'review' })) setTriggered((count) => count + 1);
+          else await gitHub.releasePost?.(pr, CODERABBIT.id);
         });
       }
     }
@@ -443,12 +463,19 @@ export function App(props: AppProps) {
     async function retryOthers(prs: PullRequest[]) {
       await Promise.all(
         prs.map(async (pr) => {
-          for (const retry of retriesOf(rowOf(pr)).filter(({ at }) => at.getTime() <= Date.now())) {
+          const dueRetries = () => retriesOf(rowOf(pr)).filter(({ at }) => at.getTime() <= Date.now());
+          if (dueRetries().length === 0) return;
+          // A read from the cache can miss a review that another run of boo just asked for.
+          await refresh(pr, true);
+          for (const retry of dueRetries()) {
             retried.current.start(keyOf(pr), retry);
+            // Another run of boo posts this retry, and retries it if its post fails.
+            if (gitHub.claimPost && !(await gitHub.claimPost(pr, retry.bot.id))) continue;
             if (await send(pr, { bot: retry.bot, command: retry.bot.commands[0]!.command })) {
               setTriggered((count) => count + 1);
-              void refresh(pr);
+              void refresh(pr, true);
             } else {
+              await gitHub.releasePost?.(pr, retry.bot.id);
               const next = retried.current.fail(keyOf(pr), retry);
               // The next fetch clears the error of the row, so the flash keeps the failure visible.
               if (!signal.aborted)
@@ -470,12 +497,21 @@ export function App(props: AppProps) {
         .map((decision) => decision.availableAt.getTime());
       const retries = tracked().flatMap((pr) => retriesOf(rowOf(pr)).map(({ at }) => at.getTime()));
       const ends = [...waits, ...retries].map((end) => end + 2_000 - Date.now());
-      return Math.max(1_000, Math.min(timing.watchPollMs, ...ends));
+      return Math.max(1_000, Math.min(lowRef.current ? SLOW_POLL_MS : timing.watchPollMs, ...ends));
     }
 
     const tracked = () => [...rowsRef.current.values()].map((row) => row.pr);
 
-    async function syncList() {
+    const cacheAge = () => (lowRef.current ? SLOW_POLL_MS : github.CACHE_TTL_MS);
+
+    async function readPoints() {
+      const rate = await gitHub.readRateLimit?.().catch(() => undefined);
+      if (signal.aborted) return;
+      lowRef.current = github.lowOnPoints(rate);
+      setRate(rate);
+    }
+
+    async function syncList(fresh = false) {
       const listed = new Map((await gitHub.listPullRequests({ ...options, authors })).map((pr) => [keyOf(pr), pr]));
       signal.throwIfAborted();
       const plan = planSync(
@@ -487,11 +523,15 @@ export function App(props: AppProps) {
       setRows([...rowsRef.current.values()]);
       selectedRef.current ??= [...rowsRef.current.keys()][0];
       setSelected(selectedRef.current);
-      await Promise.all([...added, ...plan.recheck.map((key) => rowsRef.current.get(key)!.pr)].map(refresh));
+      await Promise.all(
+        [...added, ...plan.recheck.map((key) => rowsRef.current.get(key)!.pr)].map((pr) => refresh(pr, fresh)),
+      );
+      await readPoints();
     }
 
     async function run() {
       if (settingsRef.current.mergePolicy?.ownerOnly) viewerRef.current = await gitHub.viewerLogin?.();
+      await readPoints();
       await syncList();
       await triggerReady(tracked());
       await retryOthers(tracked());
@@ -509,11 +549,14 @@ export function App(props: AppProps) {
         wake = new AbortController();
         setNextCheckAt(undefined);
 
-        if (refreshAsked || Date.now() - listedAt >= timing.listRefreshMs) {
+        const listEvery = lowRef.current ? SLOW_POLL_MS : timing.listRefreshMs;
+        if (refreshAsked || Date.now() - listedAt >= listEvery) {
+          // r asks for the state now, so it reads GitHub and not the cache of the other runs.
+          const fresh = refreshAsked;
           refreshAsked = false;
           listedAt = Date.now();
           try {
-            await syncList();
+            await syncList(fresh);
             setListError(undefined);
           } catch (error) {
             setListError(message(error));
@@ -524,7 +567,7 @@ export function App(props: AppProps) {
             const row = rowOf(pr);
             return !row.left && !inProgress(row) && (!needsWatch(row, autoPost) || row.decision?.kind === 'wait');
           });
-          await Promise.all(quiet.map(refresh));
+          await Promise.all(quiet.map((pr) => refresh(pr, fresh)));
         }
 
         const due = watched.filter((pr) => {
@@ -532,7 +575,7 @@ export function App(props: AppProps) {
           if (row.left) return false;
           return inProgress(row) || row.decision?.kind !== 'wait' || row.decision.availableAt.getTime() <= Date.now();
         });
-        await Promise.all(due.map(refresh));
+        await Promise.all(due.map((pr) => refresh(pr)));
         await triggerReady(tracked());
         await retryOthers(tracked());
       }
@@ -943,7 +986,7 @@ export function App(props: AppProps) {
           async () => {
             // With a merge queue or auto-merge, gh succeeds but the pull request stays open for a while.
             // A queue can also use another method than the one requested, so the messages name none.
-            await controls.current?.refresh(row.pr);
+            await controls.current?.refresh(row.pr, true);
             const after = rowsRef.current.get(pending.key);
             if (after?.left === 'merged') setFlash({ text: `Merged ${pending.key}.`, color: 'green' });
             else if (after?.error) {
@@ -1140,6 +1183,16 @@ export function App(props: AppProps) {
     const parent = stackParent(row, rowsRef.current.values());
     return parent && stackDetail(row, parent, describe(parent, { now: clock, options }), options);
   };
+  const stallOfRow = (row: Row) => {
+    const session = owners.get(keyOf(row.pr))?.session;
+    return stallOf({
+      overall: row.left || row.error ? undefined : row.summary?.overall,
+      headAt: row.fetched?.headAt,
+      working: Boolean(session && isWorking(session)),
+      afterMinutes: settings.stalledAfterMinutes,
+      now: clock,
+    }).stalled;
+  };
   const views = new Map(
     shownRows.map((row) => [
       row,
@@ -1147,6 +1200,7 @@ export function App(props: AppProps) {
         now: clock,
         options,
         stack: stackNote(row),
+        stalled: stallOfRow(row),
         coderabbitRetry: coderabbitRetries(),
         // Without --watch, the tool stops before a retry that is due later.
         retries: options.watch ? retriesOf(row) : [],
@@ -1189,6 +1243,7 @@ export function App(props: AppProps) {
         mood={moodOf({ fatal: Boolean(fatal), done, sleeping: Boolean(nextCheckAt) })}
         now={clock}
         nextCheckAt={nextCheckAt}
+        rate={rate}
       />
       {rows === null && !fatal && (
         <Text>
@@ -1233,6 +1288,7 @@ export function App(props: AppProps) {
               place={places.get(keyOf(row.pr))!}
               hint={stackHint(row, places.get(keyOf(row.pr))!, rowsRef.current)}
               agent={agentOf(row, owners)}
+              stalled={stallOfRow(row)}
               lines={lines.get(row)!}
               expanded={expanded(row)}
               selected={options.interactive && keyOf(row.pr) === selection}
@@ -1289,7 +1345,9 @@ interface HeaderProps {
   options: Options;
   mood: Mood;
   now: Date;
-  nextCheckAt?: Date;
+  nextCheckAt?: Date | undefined;
+  /** The GraphQL points of the account. The header shows them below 20 %. */
+  rate?: github.RateLimit | undefined;
 }
 
 export function Ghost({ mood, background = 'unknown' }: { mood: Mood; background?: Background | undefined }) {
@@ -1316,7 +1374,7 @@ export function Ghost({ mood, background = 'unknown' }: { mood: Mood; background
   );
 }
 
-export function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
+export function Header({ options, mood, now, nextCheckAt, rate }: HeaderProps) {
   const status =
     !options.watch || mood === 'done' || mood === 'failed'
       ? ' '
@@ -1341,8 +1399,14 @@ export function Header({ options, mood, now, nextCheckAt }: HeaderProps) {
         <Text dimColor wrap="truncate-end">
           {scope.join(' · ')}
         </Text>
-        <Text dimColor wrap="truncate-end">
-          {status}
+        <Text wrap="truncate-end">
+          <Text dimColor>{status}</Text>
+          {github.lowOnPoints(rate) && (
+            <Text color="yellow">
+              {status.trim() && ' · '}GraphQL {rate!.remaining}/{rate!.limit} left
+              {options.watch && `, refresh every ${SLOW_POLL_MS / 60_000} min`}
+            </Text>
+          )}
         </Text>
       </Box>
     </Box>
@@ -1395,6 +1459,8 @@ interface DescribeContext {
   coderabbitRetry?: boolean;
   /** The retries of the other bots that the tool plans. */
   retries?: readonly Retry[];
+  /** The pull request needs work, and nobody works on it. */
+  stalled?: boolean;
 }
 
 function coderabbitDetail(decision: Decision | undefined, { now, options, coderabbitRetry }: DescribeContext) {
@@ -1429,8 +1495,12 @@ function retryNote(options: Options, retry: boolean | undefined): string {
 
 /** The notes of a row. The sections of the reviewers and of the checks show the rest. */
 function notesOf(row: Row, context: DescribeContext): string[] {
+  const headAt = row.fetched?.headAt;
   const parts = [
     ...(row.summary?.policy ?? []).map(({ note }) => `merge policy: ${note}`),
+    context.stalled &&
+      headAt &&
+      `stalled: no session works on it, and the last commit is ${formatAgo(context.now, new Date(headAt))}`,
     context.stack,
     row.summary && MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
     ...(context.retries ?? []).map(({ bot, at }) => `${bot.name} retry at ${formatTime(at)}`),
@@ -1684,6 +1754,7 @@ function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout:
     );
   };
   const changes = row.fetched?.changes;
+  const headAt = row.fetched?.headAt;
   if (changes)
     section('changes', [
       <Text>
@@ -1691,6 +1762,7 @@ function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout:
         <Text dimColor>
           {' '}
           · {changes.files} file{changes.files === 1 ? '' : 's'}
+          {headAt && ` · last commit ${formatAgo(now, new Date(headAt))}`}
         </Text>
       </Text>,
     ]);
@@ -1793,6 +1865,7 @@ interface RowViewProps {
   place: Placement;
   hint: string | undefined;
   agent: AgentInfo | undefined;
+  stalled: boolean;
   lines: DetailLine[];
   expanded: boolean;
   selected: boolean;
@@ -1828,7 +1901,20 @@ function Under({
   );
 }
 
-function RowView({ ref, row, view, options, layout, place, hint, agent, lines, expanded, selected }: RowViewProps) {
+function RowView({
+  ref,
+  row,
+  view,
+  options,
+  layout,
+  place,
+  hint,
+  agent,
+  stalled,
+  lines,
+  expanded,
+  selected,
+}: RowViewProps) {
   const name = shortName(row.pr, options);
   const before = options.interactive ? SELECTION_WIDTH : 0;
   const rest = layout.indent - before - ICON_WIDTH;
@@ -1882,6 +1968,11 @@ function RowView({ ref, row, view, options, layout, place, hint, agent, lines, e
         {layout.agent && agent && (
           <Box flexShrink={0} marginLeft={2}>
             <AgentBadge agent={agent} named={layout.agentName} />
+          </Box>
+        )}
+        {stalled && (
+          <Box flexShrink={0} marginLeft={2}>
+            <Text color="yellow">zZ{layout.agentName && ' stalled'}</Text>
           </Box>
         )}
         {summary && !row.left && layout.checks && (

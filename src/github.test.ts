@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mergeSearches } from './github.js';
+import { mergeSearches, readKey } from './github.js';
 
 const result = (url: string, updatedAt: string, isDraft = false) => ({ url, updatedAt, isDraft });
 
@@ -13,4 +13,16 @@ test('the searches of several authors give one list: newest first, each pull req
     merged.map((pull) => pull.url),
     ['a/3', 'a/1'],
   );
+});
+
+test('a cached read without the fields of the merge policy does not answer a read that needs them', () => {
+  const pr = { repo: 'acme/web', number: 1, title: '', url: '' };
+  const keys = [
+    readKey(pr, {}),
+    readKey(pr, { threads: true }),
+    readKey(pr, { files: true }),
+    readKey(pr, { threads: true, files: true }),
+  ];
+  assert.equal(new Set(keys).size, 4);
+  assert.equal(readKey(pr, { threads: false, files: false }), readKey(pr, {}));
 });

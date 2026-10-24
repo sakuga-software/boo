@@ -78,3 +78,9 @@ test('a stored prompt replaces the prompt of a known agent command only', () => 
   const settings = parseSettings({ agentPrompts: { fix: 'Run /ar on {url}.', deploy: 'no', test: 3, review: ' ' } });
   assert.deepEqual(settings.agentPrompts, { fix: 'Run /ar on {url}.' });
 });
+
+test('stalledAfterMinutes takes a positive whole number of minutes, else 30', () => {
+  assert.equal(parseSettings({ stalledAfterMinutes: 45 }).stalledAfterMinutes, 45);
+  for (const stored of [0, -5, 2.5, '45', null])
+    assert.equal(parseSettings({ stalledAfterMinutes: stored }).stalledAfterMinutes, 30);
+});

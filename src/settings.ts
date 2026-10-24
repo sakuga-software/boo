@@ -47,6 +47,8 @@ export type Settings = Record<SettingKey, boolean> & {
   customBots: CustomBot[];
   /** The prompts that replace the default prompts of the agent commands, by the label of the command. */
   agentPrompts: Record<string, string>;
+  /** A red pull request with no working session and no new commit for this time is stalled. */
+  stalledAfterMinutes: number;
   /** The rules that a team adds before "ready to merge". */
   mergePolicy?: MergePolicy;
 };
@@ -59,6 +61,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bots: {},
   customBots: [],
   agentPrompts: {},
+  stalledAfterMinutes: 30,
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -135,6 +138,9 @@ export function parseSettings(value: unknown): Settings {
     agentPrompts: {},
   };
   if (typeof value !== 'object' || value === null) return settings;
+  const stalledAfter = (value as Record<string, unknown>).stalledAfterMinutes;
+  if (typeof stalledAfter === 'number' && Number.isInteger(stalledAfter) && stalledAfter > 0)
+    settings.stalledAfterMinutes = stalledAfter;
   for (const { key } of SETTINGS) {
     const stored = (value as Record<string, unknown>)[key];
     if (typeof stored === 'boolean') settings[key] = stored;

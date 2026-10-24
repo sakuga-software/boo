@@ -3,8 +3,8 @@ import meow from 'meow';
 import { homedir } from 'node:os';
 import { App } from './app.js';
 import { fetchPullRequest, listPullRequests, viewerLogin } from './github.js';
+import { readReport, watchEvents, type WatchSources } from './events.js';
 import { extraFields } from './policy.js';
-import { buildReport, type ReportInput } from './report.js';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, saveSettings, settingsPath } from './settings.js';
 import { detectBackground } from './theme.js';
@@ -29,6 +29,8 @@ const cli = meow(
     -n, --dry-run             Show the state, but post and merge nothing
         --json                Print the state as JSON, one object for each pull
                               request, and post nothing; see the README for the keys
+        --events              With --watch: print each change as one JSON line
+                              (NDJSON), and post nothing; see the README
     -h, --help                Show this help
         --version             Show the version
 
@@ -56,6 +58,11 @@ const cli = meow(
     a line: "on #921 · 2/3" is its place in the stack. A pull request on
     another base shows that base ("on feat/x"). The settings can turn the
     grouping off.
+
+  Stalled
+    zZ marks a pull request that is conflicts, changes requested or checks
+    failing, with no local session that works on it, and no new commit for
+    "stalledAfterMinutes" in the settings file (30 by default).
 
   Agents
     The line of a pull request shows its coding agent: ✻ for Claude Code,
@@ -143,6 +150,7 @@ const cli = meow(
     $ boo --dry-run --since 2026-09-15
     $ boo --author @me --author app/my-agent
     $ boo --json | jq '.[] | select(.state == "checks failing") | .url'
+    $ boo --watch --events | jq -c 'select(.event == "state")'
 
   Requires an authenticated gh (gh auth status).
 `,
@@ -157,6 +165,7 @@ const cli = meow(
       watch: { type: 'boolean', shortFlag: 'w', default: false },
       dryRun: { type: 'boolean', shortFlag: 'n', default: false },
       json: { type: 'boolean', default: false },
+      events: { type: 'boolean', default: false },
       help: { type: 'boolean', shortFlag: 'h' },
     },
   },
@@ -172,27 +181,40 @@ const org = cli.flags.org === 'all' ? '' : cli.flags.org;
 const settings = await loadSettings();
 const authors = parseAuthors(cli.flags.author) ?? settings.authors;
 
-if (cli.flags.json) {
-  if (cli.flags.watch) {
-    console.error('--json prints the state once: it does not work with --watch.');
+const sources: WatchSources = {
+  listPullRequests: () => listPullRequests({ org, authors, ...(since && { since }) }),
+  fetchPullRequest: (pr) => fetchPullRequest(pr, { extra: extraFields(settings.mergePolicy) }),
+  readOwners: () => readOwners(new LinkIndex()),
+  viewerLogin,
+};
+// A pipe takes the output in the background. An exit before the end of the write cuts it.
+const write = (text: string) => new Promise((resolve) => process.stdout.write(text, resolve));
+
+if (cli.flags.events) {
+  if (!cli.flags.watch) {
+    console.error('--events streams the changes: it needs --watch.');
     process.exit(2);
   }
-  const prs = await listPullRequests({ org, authors, ...(since && { since }) });
-  const inputs = await Promise.all(
-    prs.map(async (pr): Promise<ReportInput> => {
-      try {
-        return { pr, snapshot: await fetchPullRequest(pr, extraFields(settings.mergePolicy)) };
-      } catch (error) {
-        return { pr, error: error instanceof Error ? error.message : String(error) };
-      }
-    }),
+  const abort = new AbortController();
+  process.once('SIGINT', () => abort.abort());
+  process.once('SIGTERM', () => abort.abort());
+  await watchEvents(
+    sources,
+    settings,
+    { intervalMs: 60_000, signal: abort.signal },
+    async (event) => void (await write(`${JSON.stringify(event)}\n`)),
+    (error) => console.error(`✖ ${error instanceof Error ? error.message : String(error)}`),
   );
-  // The session records are internal to Claude Code. If they are unreadable, the output shows no session.
-  const owners = await readOwners(new LinkIndex()).catch(() => new Map());
-  const viewer = settings.mergePolicy?.ownerOnly ? await viewerLogin() : undefined;
-  const text = `${JSON.stringify(buildReport(inputs, owners, settings, new Date(), viewer), null, 2)}\n`;
-  // A pipe takes the output in the background. An exit before the end of the write cuts it.
-  await new Promise((resolve) => process.stdout.write(text, resolve));
+  process.exit(0);
+}
+
+if (cli.flags.json) {
+  if (cli.flags.watch) {
+    console.error('--json prints the state once: --watch --events streams the changes.');
+    process.exit(2);
+  }
+  const reports = await readReport(await sources.listPullRequests(), sources, settings, new Date());
+  await write(`${JSON.stringify(reports, null, 2)}\n`);
   process.exit(0);
 }
 
