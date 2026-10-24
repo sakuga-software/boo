@@ -1,0 +1,28 @@
+# Types and tests, in a few seconds. CI is the gate: `git push --no-verify` skips this hook, not CI.
+#
+# Git writes one line for each pushed ref on the standard input:
+#   <local ref> <local commit> <remote ref> <remote commit>
+
+head=$(git rev-parse HEAD)
+
+check=0
+# `|| [ -n "$local_ref" ]`: a last line with no end of line is read too.
+while read -r local_ref local_commit _remote_ref _remote_commit || [ -n "$local_ref" ]; do
+  case "$local_commit" in
+    # A deleted ref is all zeros: it has no commit to check.
+    *[!0]*) ;;
+    *) continue ;;
+  esac
+  if [ "$local_commit" = "$head" ]; then
+    check=1
+  else
+    echo "pre-push: $local_ref is not the commit of the working tree. It is not checked here: CI checks it." >&2
+  fi
+done
+[ "$check" = 1 ] || exit 0
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "pre-push: the working tree has changes that are not committed. The check reads the working tree." >&2
+fi
+
+pnpm typecheck && pnpm test

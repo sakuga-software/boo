@@ -33,14 +33,17 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/cli.js",
-    "prepare": "pnpm build",
+    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc && chmod +x dist/cli.js",
+    "prepare": "husky && pnpm build",
     "dev": "tsx src/cli.ts",
-    "typecheck": "tsc --noEmit && tsc -p demo/tsconfig.json",
-    "lint": "oxlint .",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json && tsc -p demo/tsconfig.json",
+    "lint": "oxlint --deny-warnings .",
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
-    "test": "tsx --test src/*.test.ts",
+    "test": "tsx --tsconfig tsconfig.test.json --test src/*.test.ts src/*.test.tsx",
+    "test:coverage": "tsx --tsconfig tsconfig.test.json --test --experimental-test-coverage --test-coverage-exclude=\"src/**/*.test.*\" --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=75 src/*.test.ts src/*.test.tsx",
+    "check:pack": "node scripts/check-pack.mjs",
+    "check": "pnpm lint && pnpm format && pnpm typecheck && pnpm test:coverage && pnpm check:pack",
     "demo": "tsx --tsconfig demo/tsconfig.json demo/demo.tsx"
   },
   "dependencies": {
@@ -52,6 +55,8 @@
   "devDependencies": {
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
+    "husky": "^9.1.7",
+    "ink-testing-library": "^4.0.0",
     "oxfmt": "^0.72.0",
     "oxlint": "^1.87.0",
     "tsx": "^4.23.15",

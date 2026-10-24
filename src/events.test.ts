@@ -16,12 +16,15 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   base: 'main',
   isDraft: false,
   state: 'awaiting review',
+  stalled: false,
+  idleMinutes: null,
   error: null,
   checks: { passed: 2, failing: [], running: 0, skipped: 0, quota: 0 },
   reviewers: [],
   stack: { parent: null, position: 1, size: 1 },
   agent: { kind: null, session: null, sessionState: 'none', cloudSession: null },
   notes: { merge: null, retries: [], coderabbit: null },
+  policy: [],
   ...patch,
 });
 const byKey = (...reports: PullRequestReport[]) => new Map(reports.map((item) => [`acme/web#${item.number}`, item]));
