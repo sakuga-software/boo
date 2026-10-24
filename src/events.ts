@@ -137,7 +137,12 @@ export async function watchEvents(
       const reports = (await readReport([...listed, ...gone], sources, settings, now)).filter(
         (report) => !goneKeys.has(`${report.repo}#${report.number}`) || LEFT_STATES.has(report.state),
       );
-      for (const event of diffReports(previous, reports, now.toISOString())) await emit(event);
+      // A stop during the read must not write the events of that read.
+      if (signal.aborted) return;
+      for (const event of diffReports(previous, reports, now.toISOString())) {
+        if (signal.aborted) return;
+        await emit(event);
+      }
       previous = new Map(
         reports
           .filter((report) => !LEFT_STATES.has(report.state))

@@ -223,3 +223,24 @@ test('an abort during a read stops the watch at once, not after the interval', a
   );
   assert.ok(Date.now() - started < 1_000);
 });
+
+test('an abort during the read of the pull requests writes no event of that read', async () => {
+  const abort = new AbortController();
+  const sources: WatchSources = {
+    listPullRequests: async () => [pr(1), pr(2)],
+    fetchPullRequest: async () => {
+      abort.abort();
+      return snapshot();
+    },
+    readOwners: async () => new Map(),
+  };
+  const events: WatchEvent[] = [];
+  await watchEvents(
+    sources,
+    DEFAULT_SETTINGS,
+    { intervalMs: 60_000, signal: abort.signal },
+    async (event) => void events.push(event),
+    () => {},
+  );
+  assert.deepEqual(events, []);
+});
