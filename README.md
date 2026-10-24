@@ -38,8 +38,66 @@ boo --org all           # all organizations; the default organization is sakuga-
 boo --since 2026-09-15  # only the pull requests created on or after this date
 boo --author @me --author app/my-agent  # the pull requests of these authors, for this run
 boo --dry-run           # post and merge nothing
+boo --json              # print the state as JSON for a script, and post nothing
 boo --help              # options, states and marks
 ```
+
+## JSON output
+
+`boo --json` prints one JSON array, with one object for each pull request, in the order of the list.
+It posts nothing and merges nothing. It has no colors, no spinner and no width limit, so a script
+needs no `COLUMNS` and no clean-up. It does not work with `--watch`.
+
+```json
+{
+  "repo": "acme/web",
+  "number": 921,
+  "title": "feat(search): filter the results by date",
+  "url": "https://github.com/acme/web/pull/921",
+  "headSha": "4f1c2e…",
+  "base": "main",
+  "isDraft": false,
+  "state": "checks failing",
+  "error": null,
+  "checks": { "passed": 8, "failing": ["Migrations"], "running": 0, "skipped": 1, "quota": 0 },
+  "reviewers": [
+    {
+      "login": "greptile-apps[bot]",
+      "mark": "commented",
+      "onHead": true,
+      "verdict": "commented",
+      "score": { "score": 4, "total": 5 },
+      "at": "2026-10-24T09:12:00.000Z"
+    }
+  ],
+  "stack": { "parent": null, "position": 1, "size": 2 },
+  "agent": { "kind": "claude", "session": "web-2", "sessionState": "working", "cloudSession": null },
+  "notes": {
+    "merge": "blocked by the branch protection rules",
+    "retries": [{ "bot": "Copilot", "at": "2026-10-24T10:00:00.000Z" }],
+    "coderabbit": null
+  }
+}
+```
+
+| Key                   | Value                                                                                                                                                                                                                                                                                               |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `state`               | The words of the human output: `conflicts`, `changes requested`, `checks failing`, `ready to merge`, `approved`, `reviewing`, `reviewed`, `quota`, `awaiting review`. Also `merged`, `closed` or `draft` for a pull request that left the list, and `error` if GitHub did not answer (see `error`). |
+| `headSha`, `base`     | The head commit and the base branch. `null` if GitHub did not answer.                                                                                                                                                                                                                               |
+| `checks`              | The counts of the checks of the head commit, and the names of the checks that fail. `quota` counts the checks of a reviewer that refused for quota: they do not fail.                                                                                                                               |
+| `reviewers[].mark`    | `approved`, `changes requested`, `commented`, `reviewing`, `quota`, `to retry`, `requested`, `stale` (an older commit only), `skipped` or `paused`.                                                                                                                                                 |
+| `reviewers[].onHead`  | `true` if the last review of the reviewer covers the head commit.                                                                                                                                                                                                                                   |
+| `reviewers[].verdict` | The verdict that stands over all the commits, or `null`.                                                                                                                                                                                                                                            |
+| `reviewers[].score`   | The last confidence score of the reviewer, or `null`.                                                                                                                                                                                                                                               |
+| `reviewers[].at`      | The time of the last review of the reviewer, or `null`.                                                                                                                                                                                                                                             |
+| `stack`               | The listed pull request that this one merges into (`owner/repo#number`), its place from the bottom (`null` if the stack forks), and the size of the stack.                                                                                                                                          |
+| `agent.kind`          | `claude`, `copilot`, `codex`, `cursor`, `devin` or `null`. A local session makes it `claude`.                                                                                                                                                                                                       |
+| `agent.sessionState`  | `working`, `idle`, `waiting`, or `none` if no session on this machine linked the pull request.                                                                                                                                                                                                      |
+| `notes.merge`         | The rule that blocks the merge, or `null`.                                                                                                                                                                                                                                                          |
+| `notes.retries`       | The retries of the review bots that a run without `--json` posts, with their times.                                                                                                                                                                                                                 |
+| `notes.coderabbit`    | The CodeRabbit quota: `wait` with `availableAt`, `trigger`, `pending`, `skipped`, `paused`, `idle`, or `null`.                                                                                                                                                                                      |
+
+The keys stay the same from one version to the next. A test fixes them.
 
 ## What a row shows
 

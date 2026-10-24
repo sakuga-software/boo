@@ -302,6 +302,8 @@ export type Overall =
   | 'awaiting review';
 
 const ON_HEAD: readonly ReviewerStatus[] = ['approved', 'changes requested', 'commented'];
+/** True if the last review of the reviewer covers the head commit. */
+export const isOnHead = (reviewer: Reviewer) => ON_HEAD.includes(reviewer.status);
 // GitHub mergeable states that let an approved pull request merge. "unstable" means that a check fails,
 // and summarizeChecks already decides if that check counts.
 const MERGEABLE = new Set(['clean', 'has_hooks', 'unstable']);
@@ -348,7 +350,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     reviewers,
     checks,
     overall,
-    onHead: reviewers.filter((reviewer) => ON_HEAD.includes(reviewer.status)).length,
+    onHead: reviewers.filter(isOnHead).length,
     reviews: reviewers.reduce((total, reviewer) => total + reviewer.reviews, 0),
     ...(last && { lastReview: { name: last.name, at: last.lastReviewAt! } }),
   };
