@@ -91,7 +91,7 @@ export type GitHub = Pick<
   typeof github,
   'listPullRequests' | 'fetchPullRequest' | 'requestReview' | 'openInBrowser' | 'mergePullRequest'
 > &
-  Partial<Pick<typeof github, 'readRateLimit' | 'claimPost'>>;
+  Partial<Pick<typeof github, 'readRateLimit' | 'claimPost' | 'releasePost'>>;
 
 /** The Claude Code sessions of this machine. */
 export interface Sessions {
@@ -473,11 +473,14 @@ export function App(props: AppProps) {
           const row = rowOf(pr);
           if (waits(row)) return;
           if (gitHub.claimPost && !(await gitHub.claimPost(pr, CODERABBIT.id))) {
-            // Another run of boo posts the request. The repost guard then waits for its reply, as for a post of this run.
-            lastPosts.current.set(keyOf(pr), { at: Date.now(), before: row.fetched?.comments ?? [] });
+            // Another run of boo posts the request. The repost guard waits as long as the claim, then a fresh
+            // read shows the request of the other run, or the post that failed.
+            const at = Date.now() - REPOST_GUARD_MS + github.POST_WAIT_MS;
+            lastPosts.current.set(keyOf(pr), { at, before: row.fetched?.comments ?? [] });
             return;
           }
           if (await post(pr, { bot: CODERABBIT, command: 'review' })) setTriggered((count) => count + 1);
+          else await gitHub.releasePost?.(pr, CODERABBIT.id);
         });
       }
     }
@@ -498,6 +501,7 @@ export function App(props: AppProps) {
               setTriggered((count) => count + 1);
               void refresh(pr, true);
             } else {
+              await gitHub.releasePost?.(pr, retry.bot.id);
               const next = retried.current.fail(keyOf(pr), retry);
               // The next fetch clears the error of the row, so the flash keeps the failure visible.
               if (!signal.aborted)

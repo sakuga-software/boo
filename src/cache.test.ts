@@ -79,3 +79,11 @@ test('one run gets a claim, the others do not until it expires', async () => {
   assert.equal(await cache.claim('post-acme/web#2-coderabbit', 120_000), true);
   assert.equal(await cache.claim('post-acme/web#1-coderabbit', 120_000, Date.now() + 121_000), true);
 });
+
+test('a released claim goes to the next run at once', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  assert.equal(await cache.claim('post-acme/web#1-coderabbit', 120_000), true);
+  assert.equal(await cache.claim('post-acme/web#1-coderabbit', 120_000), false);
+  await cache.release('post-acme/web#1-coderabbit');
+  assert.equal(await cache.claim('post-acme/web#1-coderabbit', 120_000), true);
+});

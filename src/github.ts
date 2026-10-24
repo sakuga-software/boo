@@ -416,8 +416,18 @@ const POST_CLAIM_MS = 2 * 60_000;
  */
 export async function claimPost(pr: PullRequest, what: string): Promise<boolean> {
   const cache = await cacheOfAccount();
-  return cache ? cache.claim(`post-${pr.repo}#${pr.number}-${what}`, POST_CLAIM_MS) : true;
+  return cache ? cache.claim(postKey(pr, what), POST_CLAIM_MS) : true;
 }
+
+/** Gives back the claim of a post that failed, so that a run can try it again at once. */
+export async function releasePost(pr: PullRequest, what: string): Promise<void> {
+  await (await cacheOfAccount())?.release(postKey(pr, what));
+}
+
+/** The time that a run waits for the post of another run that holds the claim. */
+export const POST_WAIT_MS = POST_CLAIM_MS;
+
+const postKey = (pr: PullRequest, what: string) => `post-${pr.repo}#${pr.number}-${what}`;
 
 /**
  * The age of a cached pull request that a read takes. It is the poll interval of the watch: a watch

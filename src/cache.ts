@@ -57,6 +57,11 @@ export class DiskCache {
     return false;
   }
 
+  /** Gives a claim back, for example after a failed post: the next run can take it at once. */
+  async release(key: string): Promise<void> {
+    await rm(join(this.dir, `${fileName(key)}.claim`), { force: true }).catch(() => {});
+  }
+
   // Two runs can write one key at the same time. A rename replaces the file in one step, so a reader never sees half a file.
   async set(key: string, value: unknown, now = Date.now()): Promise<void> {
     const path = join(this.dir, fileName(key));
