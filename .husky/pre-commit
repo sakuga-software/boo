@@ -1,0 +1,42 @@
+# Format and lint of the staged files, in less than a second. `pre-push` checks the types and runs
+# the tests, and CI is the gate: `git commit --no-verify` skips this hook, not CI.
+#
+# The tools read the file of the working tree. If a staged file also has changes that are not
+# staged, the hook checks a version that the commit does not hold.
+
+root=$(git rev-parse --show-toplevel)
+bin="$root/node_modules/.bin"
+
+# In a linked working tree, git gives `GIT_DIR` to the hook and no `GIT_WORK_TREE`: each git command
+# runs from the root, or its paths are wrong.
+staged() {
+  git -C "$root" diff --cached --name-only --diff-filter=ACMR -z
+}
+
+[ -n "$(staged | tr -d '\0')" ] || exit 0
+
+if [ ! -x "$bin/oxfmt" ] || [ ! -x "$bin/oxlint" ]; then
+  echo "pre-commit: $bin has no oxfmt or no oxlint. Run \`pnpm install\` in this working tree." >&2
+  exit 1
+fi
+
+cd "$root" || exit 1
+
+# The tools give a success for a name that they do not find, so a staged file that is not in the
+# working tree would pass with no check.
+missing=$(staged | xargs -0 sh -c 'for file; do [ -e "$file" ] || [ -L "$file" ] || printf "  %s\n" "$file"; done' sh)
+if [ -n "$missing" ]; then
+  echo "pre-commit: these staged files are not in the working tree. Nothing can check them:" >&2
+  echo "$missing" >&2
+  exit 1
+fi
+
+failed=0
+# `--no-error-on-unmatched-pattern`: a commit can hold only files that the tools do not read (an image).
+staged | xargs -0 "$bin/oxfmt" --check --no-error-on-unmatched-pattern || failed=1
+staged | xargs -0 "$bin/oxlint" --deny-warnings --no-error-on-unmatched-pattern || failed=1
+
+if [ "$failed" = 1 ]; then
+  echo "pre-commit: the staged files do not pass the format or the lint. \`pnpm format:fix\` fixes the format." >&2
+fi
+exit "$failed"

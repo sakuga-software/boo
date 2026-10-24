@@ -1,0 +1,32 @@
+name: PR title
+
+# A squash merge takes the title of the pull request for the commit on main. The title must follow the
+# convention of the commits: `git log` stays readable, and the notes of a release come from it.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  validate-title:
+    name: PR title
+    # A runner of GitHub: see ci.yml.
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check the title
+        # The title goes through the environment. A title written into the script could run as code.
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          REGEX='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9-]+\))?(!)?: [^ ].{3,}$'
+          if printf '%s' "$TITLE" | grep -Eq "$REGEX"; then
+            echo "Title accepted."
+            exit 0
+          fi
+          echo "::error::The pull request title does not follow the convention of the commits."
+          echo "Expected: <type>(<optional-scope>): <subject>"
+          echo "Types: build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test"
+          echo "Example: feat(watch): stream each change as NDJSON"
+          exit 1

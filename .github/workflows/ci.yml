@@ -15,8 +15,9 @@ concurrency:
 
 jobs:
   check:
-    # One job per script, so a red check names what broke without opening the logs.
-    name: ${{ matrix.script }}
+    # One job per script, so a red check names what broke without opening the logs. The names stay
+    # the same when a script changes: a required check that never reports blocks every merge.
+    name: ${{ matrix.name }}
     # A runner of GitHub, free for a public repository. The self-hosted runners serve the private
     # repositories only, and a self-hosted runner on a public repository runs the code of forks.
     runs-on: ubuntu-latest
@@ -24,7 +25,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        script: [lint, format, typecheck, test]
+        include:
+          - { name: lint, script: lint }
+          - { name: format, script: format }
+          - { name: typecheck, script: typecheck }
+          # The tests, and the coverage that they must keep.
+          - { name: test, script: 'test:coverage' }
+          # What npm would publish: the files of the tarball, and `boo` installed from it.
+          - { name: pack, script: 'check:pack' }
+          # `engines` accepts Node 22. The other jobs run the Node of .nvmrc.
+          - { name: test (Node 22), script: test, node: '22' }
 
     steps:
       - name: Checkout code
@@ -36,6 +46,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
+          # Empty, so .nvmrc gives the version, unless the matrix names one.
+          node-version: ${{ matrix.node }}
           node-version-file: .nvmrc
 
       - name: Setup pnpm

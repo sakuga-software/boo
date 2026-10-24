@@ -1,28 +1,32 @@
 name: Publish
 
 # A GitHub release publishes the package on npm. The tag of the release must be the version of
-# package.json with a "v" before it, for example v1.2.0.
+# package.json with a "v" before it, for example v1.2.0. A manual run checks the package and
+# publishes nothing.
+#
+# npm trusts this workflow (trusted publishing, OIDC): the repository keeps no npm token. The two
+# jobs split the trust. `pack` installs the dependencies, runs the checks and packs the tarball, with
+# no right to publish. `publish` can get the OIDC token, but it checks out nothing and installs
+# nothing: it only uploads the tarball of `pack`. So the install script of a dependency never runs
+# next to a token that can publish.
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  # npm trusted publishing: npm trusts the OIDC token of this workflow, so the repository keeps no
-  # npm token. The same token signs the provenance of the package.
-  id-token: write
 
 concurrency:
   group: publish
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: npm publish
-    # Trusted publishing and provenance work only on a runner of GitHub.
+  pack:
+    name: Pack
+    # A runner of GitHub: see ci.yml.
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: npm
 
     steps:
       - name: Checkout code
@@ -34,12 +38,12 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          registry-url: https://registry.npmjs.org
 
       - name: Setup pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Check the tag against the version
+        if: github.event_name == 'release'
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
@@ -63,9 +67,69 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm test
+        run: pnpm test:coverage
 
-      # Trusted publishing needs npm 11.5.1 or later. The npm of the Node version in .nvmrc can be older.
+      - name: Check the package
+        run: pnpm check:pack
+
+      - name: Pack
+        run: pnpm pack --pack-destination tarball
+
+      - name: Show what npm would publish
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          name=$(node -p 'require("./package.json").name')
+          version=$(node -p 'require("./package.json").version')
+          # A version on npm can never be replaced. Only E404 means « not there »: any other failure
+          # of the registry stops the job and shows its error.
+          if found=$(npm view "$name@$version" version 2>npm-view.log); then
+            if [ "$found" = "$version" ]; then
+              if [ "$EVENT" = release ]; then
+                echo "::error::$name@$version is already on npm. Change the version before the release."
+                exit 1
+              fi
+              echo "::notice::$name@$version is already on npm. Change the version to publish."
+              exit 0
+            fi
+          elif ! grep -q 'E404' npm-view.log; then
+            echo "::error::npm could not tell whether $name@$version exists:"
+            cat npm-view.log
+            exit 1
+          fi
+          npm publish ./tarball/*.tgz --dry-run
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tarball
+          path: tarball/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: npm publish
+    needs: pack
+    if: github.event_name == 'release'
+    # Trusted publishing and provenance work only on a runner of GitHub.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: read
+      # The OIDC token that npm exchanges for a publish right. The same token signs the provenance.
+      id-token: write
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # This job has no checkout, so it cannot read .nvmrc. Keep the two versions the same.
+          node-version: '26'
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or later.
       - name: Update npm if it is too old
         run: |
           recent() {
@@ -78,5 +142,13 @@ jobs:
           recent || { echo "::error::Trusted publishing needs npm 11.5.1 or later, and npm is $(npm --version)."; exit 1; }
           npm --version
 
+      - name: Download the tarball
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tarball
+          path: tarball
+
+      # `./`: without it, npm reads `tarball/x.tgz` as the GitHub repository `tarball/x.tgz`.
+      # The package.json of the tarball gives `access` and `provenance` (publishConfig).
       - name: Publish
-        run: npm publish
+        run: npm publish ./tarball/*.tgz
