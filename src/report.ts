@@ -122,7 +122,13 @@ export interface PullRequestReport {
     at: string | null;
   }[];
   stack: { parent: string | null; position: number | null; size: number };
-  agent: { kind: string | null; session: string | null; sessionState: SessionState; cloudSession: string | null };
+  agent: {
+    kind: string | null;
+    session: string | null;
+    subAgent: { id: string; description: string | null } | null;
+    sessionState: SessionState;
+    cloudSession: string | null;
+  };
   notes: { merge: string | null; retries: { bot: string; at: string }[]; coderabbit: CoderabbitNote | null };
   /** The rules of the merge policy that the pull request misses. */
   policy: PolicyMiss[];
@@ -203,7 +209,8 @@ export function buildReport(
     const result = assessed.get(place.key);
     const summary = result?.summary;
     const confidence = snapshot ? confidenceOf(snapshot.reviews, snapshot.comments) : new Map();
-    const session = owners.get(place.key)?.session;
+    const owner = owners.get(place.key);
+    const session = owner?.session;
     const agent = snapshot?.agent;
     return {
       repo: pr.repo,
@@ -244,6 +251,7 @@ export function buildReport(
         // A local session is always Claude Code, whatever agent wrote the pull request.
         kind: session ? 'claude' : (agent?.id ?? null),
         session: session?.name ?? null,
+        subAgent: owner?.subAgent ? { id: owner.subAgent.id, description: owner.subAgent.description ?? null } : null,
         sessionState: session ? sessionStateOf(session.status) : 'none',
         cloudSession: agent?.cloudSession ?? null,
       },

@@ -22,7 +22,7 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   checks: { passed: 2, failing: [], running: 0, skipped: 0, quota: 0 },
   reviewers: [],
   stack: { parent: null, position: 1, size: 1 },
-  agent: { kind: null, session: null, sessionState: 'none', cloudSession: null },
+  agent: { kind: null, session: null, subAgent: null, sessionState: 'none', cloudSession: null },
   notes: { merge: null, retries: [], coderabbit: null },
   policy: [],
   ...patch,

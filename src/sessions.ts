@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /**
  * A Claude Code session that runs on this machine. Claude Code writes one record for each session in
@@ -22,10 +22,20 @@ export interface LocalSession {
   socket: string;
 }
 
-/** The local session that works on a pull request: the live session that linked it last. */
+/** A sub-agent of a session. `description` is the task that the session gave to it. */
+export interface SubAgent {
+  id: string;
+  description?: string;
+}
+
+/**
+ * The local session that works on a pull request: the live session that linked it last. `subAgent` is
+ * the sub-agent of that session that changed the pull request last.
+ */
 export interface Owner {
   session: LocalSession;
   linkedAt: Date;
+  subAgent?: SubAgent;
 }
 
 export const claudeHome = (env: NodeJS.ProcessEnv = process.env) => env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
@@ -94,20 +104,113 @@ export function parseLinks(text: string): { pr: string; at: Date }[] {
     });
 }
 
+// Claude Code writes the pr-link lines only in the transcript of the session, also for a pull request
+// of a sub-agent. The transcript of a sub-agent keeps the output of its commands: `gh pr create`,
+// `edit` and `comment` print the URL of the pull request, and `ready`, `merge` and `review` print
+// "pull request owner/repo#12".
+const PR_WRITE = /\bgh pr (?:create|edit|comment|ready|merge|review)\b/;
+const PR_REF = /(?:https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/|[Pp]ull request ([\w.-]+\/[\w.-]+)#)(\d+)/g;
+
+interface ContentPart {
+  type?: unknown;
+  id?: unknown;
+  name?: unknown;
+  input?: { command?: unknown };
+  tool_use_id?: unknown;
+  content?: unknown;
+}
+
+const partsOf = (line: string): { parts: ContentPart[]; at: Date } => {
+  try {
+    const { message, timestamp } = JSON.parse(line) as { message?: { content?: unknown }; timestamp?: unknown };
+    const parts = Array.isArray(message?.content) ? (message.content as ContentPart[]) : [];
+    return { parts, at: new Date(String(timestamp)) };
+  } catch {
+    return { parts: [], at: new Date(Number.NaN) };
+  }
+};
+
+/**
+ * Reads the pull requests that a sub-agent changed with `gh pr`, in the complete lines of a part of its
+ * transcript. `commands` keeps the ids of the `gh pr` commands that have no output yet, from one part
+ * to the next.
+ */
+export function parseSubAgentActions(text: string, commands: Set<string>): { pr: string; at: Date }[] {
+  const actions: { pr: string; at: Date }[] = [];
+  for (const line of text.split('\n')) {
+    const use = line.includes('"tool_use"') && line.includes('gh pr ');
+    const result = commands.size > 0 && line.includes('"tool_result"');
+    if (!use && !result) continue;
+    const { parts, at } = partsOf(line);
+    for (const part of parts) {
+      if (part.type === 'tool_use' && typeof part.id === 'string' && PR_WRITE.test(String(part.input?.command ?? '')))
+        commands.add(part.id);
+      if (part.type !== 'tool_result' || typeof part.tool_use_id !== 'string' || !commands.delete(part.tool_use_id))
+        continue;
+      // gh prints the pull request on the last line.
+      const last = [...JSON.stringify(part.content ?? '').matchAll(PR_REF)].at(-1);
+      if (last && !Number.isNaN(at.getTime())) actions.push({ pr: `${last[1] ?? last[2]}#${last[3]}`, at });
+    }
+  }
+  return actions;
+}
+
 // A transcript can weigh hundreds of megabytes. Claude Code writes a link again each time that the
-// session looks at its pull request, so the last part of the file has the links that matter.
+// session looks at its pull request, so the last part of the file has the links that matter. The
+// index reads the same last part of the transcript of a sub-agent.
 const FIRST_READ_BYTES = 64 * 1024 * 1024;
 
-interface Transcript {
+interface Tail {
   path: string;
   /** The end of the last complete line that the index read. */
   offset: number;
+}
+
+/** Returns the complete lines after `offset`, and moves `offset` after them. `reset` runs if the file got shorter. */
+async function readNewLines(tail: Tail, reset: () => void): Promise<string | undefined> {
+  const file = await open(tail.path);
+  try {
+    const { size } = await file.stat();
+    // A shorter file is a new file: what the index read from the old one no longer counts.
+    if (size < tail.offset) {
+      tail.offset = 0;
+      reset();
+    }
+    const length = size - tail.offset;
+    if (length === 0) return undefined;
+    const buffer = Buffer.alloc(length);
+    await file.read(buffer, 0, length, tail.offset);
+    const end = buffer.lastIndexOf(0x0a);
+    if (end === -1) return undefined;
+    tail.offset += end + 1;
+    return buffer.subarray(0, end).toString('utf8');
+  } finally {
+    await file.close();
+  }
+}
+
+const keepLast = (links: Map<string, Date>, pr: string, at: Date) => {
+  const known = links.get(pr);
+  if (!known || known < at) links.set(pr, at);
+};
+
+interface Transcript extends Tail {
   links: Map<string, Date>;
 }
+
+interface SubAgentTranscript extends Tail {
+  subAgent: SubAgent;
+  commands: Set<string>;
+  actions: Map<string, Date>;
+}
+
+/** The sub-agent that changed a pull request last, by "owner/repo#number". */
+export type SubAgentActions = Map<string, { subAgent: SubAgent; at: Date }>;
 
 /** Keeps the pull request links of each transcript, and reads only the new lines at each update. */
 export class LinkIndex {
   private readonly transcripts = new Map<string, Transcript>();
+  private readonly subAgents = new Map<string, SubAgentTranscript>();
 
   constructor(private readonly home = claudeHome()) {}
 
@@ -115,8 +218,48 @@ export class LinkIndex {
   async linksOf(sessionId: string): Promise<Map<string, Date>> {
     const transcript = this.transcripts.get(sessionId) ?? (await this.find(sessionId));
     if (!transcript) return new Map();
-    await this.readNew(transcript).catch(() => {});
+    const text = await readNewLines(transcript, () => transcript.links.clear()).catch(() => undefined);
+    for (const { pr, at } of parseLinks(text ?? '')) keepLast(transcript.links, pr, at);
     return transcript.links;
+  }
+
+  /** Returns the pull requests that the sub-agents of the session changed, with the sub-agent that changed each one last. */
+  async subAgentsOf(sessionId: string): Promise<SubAgentActions> {
+    const transcript = this.transcripts.get(sessionId) ?? (await this.find(sessionId));
+    const actions: SubAgentActions = new Map();
+    if (!transcript) return actions;
+    const dir = join(dirname(transcript.path), sessionId, 'subagents');
+    const files = (await readdir(dir).catch(() => [])).filter((file) => /^agent-[\w-]+\.jsonl$/.test(file));
+    for (const file of files) {
+      const path = join(dir, file);
+      const agent = this.subAgents.get(path) ?? (await this.addSubAgent(path));
+      const text = await readNewLines(agent, () => agent.actions.clear()).catch(() => undefined);
+      for (const { pr, at } of parseSubAgentActions(text ?? '', agent.commands)) keepLast(agent.actions, pr, at);
+      for (const [pr, at] of agent.actions) {
+        const known = actions.get(pr);
+        if (!known || known.at < at) actions.set(pr, { subAgent: agent.subAgent, at });
+      }
+    }
+    return actions;
+  }
+
+  private async addSubAgent(path: string): Promise<SubAgentTranscript> {
+    const id = path.replace(/^.*\/agent-|\.jsonl$/g, '');
+    const description = await readFile(path.replace(/\.jsonl$/, '.meta.json'), 'utf8')
+      .then((text) => (JSON.parse(text) as { description?: unknown }).description)
+      .catch(() => undefined);
+    const subAgent = {
+      id,
+      ...(typeof description === 'string' && description.trim() && { description: description.trim() }),
+    };
+    const size = await stat(path).then(
+      (stats) => stats.size,
+      () => 0,
+    );
+    const offset = Math.max(0, size - FIRST_READ_BYTES);
+    const agent = { path, offset, subAgent, commands: new Set<string>(), actions: new Map<string, Date>() };
+    this.subAgents.set(path, agent);
+    return agent;
   }
 
   private async find(sessionId: string): Promise<Transcript | undefined> {
@@ -134,40 +277,18 @@ export class LinkIndex {
     }
     return undefined;
   }
-
-  private async readNew(transcript: Transcript) {
-    const file = await open(transcript.path);
-    try {
-      const { size } = await file.stat();
-      // A shorter file is a new file: the links of the old one no longer count.
-      if (size < transcript.offset) {
-        transcript.offset = 0;
-        transcript.links.clear();
-      }
-      const length = size - transcript.offset;
-      if (length === 0) return;
-      const buffer = Buffer.alloc(length);
-      await file.read(buffer, 0, length, transcript.offset);
-      const end = buffer.lastIndexOf(0x0a);
-      if (end === -1) return;
-      for (const { pr, at } of parseLinks(buffer.subarray(0, end).toString('utf8'))) {
-        const known = transcript.links.get(pr);
-        if (!known || known < at) transcript.links.set(pr, at);
-      }
-      transcript.offset += end + 1;
-    } finally {
-      await file.close();
-    }
-  }
 }
 
-/** Gives each pull request the live session that linked it last. */
-export function pickOwners(links: readonly { session: LocalSession; links: Map<string, Date> }[]): Map<string, Owner> {
+/** Gives each pull request the live session that linked it last, and the sub-agent of that session that changed it last. */
+export function pickOwners(
+  links: readonly { session: LocalSession; links: Map<string, Date>; subAgents?: SubAgentActions }[],
+): Map<string, Owner> {
   const owners = new Map<string, Owner>();
-  for (const { session, links: linked } of links) {
+  for (const { session, links: linked, subAgents } of links) {
     for (const [pr, linkedAt] of linked) {
       const known = owners.get(pr);
-      if (!known || known.linkedAt < linkedAt) owners.set(pr, { session, linkedAt });
+      const subAgent = subAgents?.get(pr)?.subAgent;
+      if (!known || known.linkedAt < linkedAt) owners.set(pr, { session, linkedAt, ...(subAgent && { subAgent }) });
     }
   }
   return owners;
@@ -177,7 +298,13 @@ export function pickOwners(links: readonly { session: LocalSession; links: Map<s
 export async function readOwners(index: LinkIndex, home = claudeHome()): Promise<Map<string, Owner>> {
   const sessions = await listSessions(home);
   return pickOwners(
-    await Promise.all(sessions.map(async (session) => ({ session, links: await index.linksOf(session.sessionId) }))),
+    await Promise.all(
+      sessions.map(async (session) => ({
+        session,
+        links: await index.linksOf(session.sessionId),
+        subAgents: await index.subAgentsOf(session.sessionId).catch(() => new Map()),
+      })),
+    ),
   );
 }
 

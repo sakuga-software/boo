@@ -74,7 +74,13 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
     }
   ],
   "stack": { "parent": null, "position": 1, "size": 2 },
-  "agent": { "kind": "claude", "session": "web-2", "sessionState": "working", "cloudSession": null },
+  "agent": {
+    "kind": "claude",
+    "session": "web-2",
+    "subAgent": { "id": "a0e40d0b237c6058e", "description": "Fix the search filter" },
+    "sessionState": "working",
+    "cloudSession": null
+  },
   "notes": {
     "merge": "blocked by the branch protection rules",
     "retries": [{ "bot": "Copilot", "at": "2026-10-24T10:00:00.000Z" }],
@@ -96,6 +102,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
 | `reviewers[].at`         | The time of the last review of the reviewer, or `null`.                                                                                                                                                                                                                                             |
 | `stack`                  | The listed pull request that this one merges into (`owner/repo#number`), its place from the bottom (`null` if the stack forks), and the size of the stack.                                                                                                                                          |
 | `agent.kind`             | `claude`, `copilot`, `codex`, `cursor`, `devin` or `null`. A local session makes it `claude`.                                                                                                                                                                                                       |
+| `agent.subAgent`         | The sub-agent of the session that changed the pull request last, as `{ "id", "description" }`, or `null`. See [Sub-agents](#sub-agents).                                                                                                                                                            |
 | `agent.sessionState`     | `working`, `idle`, `waiting`, or `none` if no session on this machine linked the pull request.                                                                                                                                                                                                      |
 | `notes.merge`            | The rule that blocks the merge, or `null`.                                                                                                                                                                                                                                                          |
 | `notes.retries`          | The retries of the review bots that a run without `--json` posts, with their times.                                                                                                                                                                                                                 |
@@ -163,9 +170,9 @@ The line of a pull request shows:
   `draft`. These three are hidden by default: `h` shows them.
 - **The checks** of the last commit: passed, running or failing.
 - **The place in the stack**, for a pull request that merges into another listed pull request.
-- **The agent**: `✻` in the orange of Claude Code, with the name of its local session, `cloud` or
-  `Claude`; `◇` and the name of another agent. A spinner replaces `✻` while the session works, and a
-  yellow `?` follows a session that waits for an answer. See
+- **The agent**: `✻` in the orange of Claude Code, with the name of its local session and of its
+  sub-agent, `cloud` or `Claude`; `◇` and the name of another agent. A spinner replaces `✻` while
+  the session works, and a yellow `?` follows a session that waits for an answer. See
   [Agents and local sessions](#agents-and-local-sessions).
 
 An unfolded pull request shows its details in sections, one fact for each line, with a blank line
@@ -173,8 +180,8 @@ between two sections:
 
 - **changes**: the lines added and removed, the count of changed files, and the age of the last
   commit.
-- **agent**: the agent, then the name, the state and the folder of its local session, or the page
-  of its cloud session.
+- **agent**: the agent, then the name, the sub-agent, the state and the folder of its local
+  session, or the page of its cloud session.
 - **reviewers**: the reviewers that reviewed the last commit out of all the reviewers, the count of
   reviews and the last reviewer. Then one line for each reviewer, with its mark, its state in words,
   its confidence score and the age of its last review. The confidence score comes from the last
@@ -289,6 +296,22 @@ The settings file can replace the prompt of a command, by its name. `{url}`, `{b
 ```json
 { "agentPrompts": { "fix": "Apply the review comments of {url}, then push." } }
 ```
+
+#### Sub-agents
+
+```
+❯▾✖  checks failing     web#924  fix(search): keep the filter   ✻ orchestra › Fix the search filter
+                        agent      ✻ Claude Code · session orchestra › sub-agent Fix the search filter · working
+```
+
+A session can give its work to sub-agents, and each sub-agent can open its own pull requests.
+Claude Code writes the link of such a pull request in the transcript of the session, not in the
+transcript of the sub-agent. The tool finds the sub-agent from its own transcript: the output of a
+`gh pr create`, `edit`, `comment`, `ready`, `merge` or `review` command gives the URL of the pull
+request. If more than one sub-agent changed a pull request, the last one shows. The line shows the
+task that the session gave to the sub-agent, after the name of the session, or the id of the
+sub-agent if the task is not known. The state is the state of the session, and the commands of `a`
+go to the session.
 
 ## Settings
 
