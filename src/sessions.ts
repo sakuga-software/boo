@@ -155,7 +155,8 @@ export function parseSubAgentActions(text: string, commands: Set<string>): { pr:
 }
 
 // A transcript can weigh hundreds of megabytes. Claude Code writes a link again each time that the
-// session looks at its pull request, so the last part of the file has the links that matter.
+// session looks at its pull request, so the last part of the file has the links that matter. The
+// index reads the same last part of the transcript of a sub-agent.
 const FIRST_READ_BYTES = 64 * 1024 * 1024;
 
 interface Tail {
@@ -250,7 +251,12 @@ export class LinkIndex {
       id,
       ...(typeof description === 'string' && description.trim() && { description: description.trim() }),
     };
-    const agent = { path, offset: 0, subAgent, commands: new Set<string>(), actions: new Map<string, Date>() };
+    const size = await stat(path).then(
+      (stats) => stats.size,
+      () => 0,
+    );
+    const offset = Math.max(0, size - FIRST_READ_BYTES);
+    const agent = { path, offset, subAgent, commands: new Set<string>(), actions: new Map<string, Date>() };
     this.subAgents.set(path, agent);
     return agent;
   }

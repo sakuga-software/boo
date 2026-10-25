@@ -146,6 +146,12 @@ test('the index finds the sub-agents of a session, with their task, and reads on
   );
   assert.deepEqual((await index.subAgentsOf(id)).get('acme/web#1')?.subAgent, { id: 'a2' });
   assert.equal((await index.subAgentsOf('missing')).size, 0);
+
+  const big = `${use('t9', 'gh pr create')}\n${'x'.repeat(64 * 1024 * 1024)}\n${use('t1', 'gh pr create')}\n${result('t1', 'https://github.com/acme/web/pull/2')}\n${result('t9', 'https://github.com/acme/web/pull/3')}\n`;
+  await writeFile(join(dir, 'agent-a3.jsonl'), big);
+  const read = await new LinkIndex(home).subAgentsOf(id);
+  assert.equal(read.get('acme/web#2')?.subAgent.id, 'a3');
+  assert.equal(read.has('acme/web#3'), false);
 });
 
 test('a pull request takes the sub-agent of the session that owns it, not of another session', () => {
