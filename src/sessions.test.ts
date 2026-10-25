@@ -8,6 +8,8 @@ import {
   inboxFrames,
   LinkIndex,
   parseLinks,
+  endingOf,
+  ownerWorks,
   parseSession,
   parseSubAgentActions,
   pickOwners,
@@ -150,14 +152,14 @@ test('the index finds the sub-agents of a session, with their task, and reads on
   await writeFile(join(dir, 'agent-a2.jsonl'), `${use('t1', 'gh pr create')}\n`);
   const index = new LinkIndex(home);
   const first = await index.subAgentsOf(id);
-  assert.deepEqual(first.get('acme/web#1')?.subAgent, { id: 'a1', description: 'Fix the filter' });
+  assert.deepEqual(first.get('acme/web#1')?.subAgent, { id: 'a1', description: 'Fix the filter', state: 'done' });
   assert.equal(first.size, 1);
 
   await appendFile(
     join(dir, 'agent-a2.jsonl'),
     `${result('t1', 'https://github.com/acme/web/pull/1', '2026-10-20T11:00:00Z')}\n`,
   );
-  assert.deepEqual((await index.subAgentsOf(id)).get('acme/web#1')?.subAgent, { id: 'a2' });
+  assert.deepEqual((await index.subAgentsOf(id)).get('acme/web#1')?.subAgent, { id: 'a2', state: 'done' });
   assert.equal((await index.subAgentsOf('missing')).size, 0);
 
   const big = `${use('t9', 'gh pr create')}\n${'x'.repeat(64 * 1024 * 1024)}\n${use('t1', 'gh pr create')}\n${result('t1', 'https://github.com/acme/web/pull/2')}\n${result('t9', 'https://github.com/acme/web/pull/3')}\n`;
@@ -174,12 +176,78 @@ test('a pull request takes the sub-agent of the session that owns it, not of ano
     {
       session: early,
       links: new Map([['acme/web#1', new Date('2026-10-20T10:00:00Z')]]),
-      subAgents: new Map([['acme/web#1', { subAgent: { id: 'a1' }, at: new Date('2026-10-20T10:00:00Z') }]]),
+      subAgents: new Map([
+        ['acme/web#1', { subAgent: { id: 'a1', state: 'working' }, at: new Date('2026-10-20T10:00:00Z') }],
+      ]),
     },
     { session: late, links: new Map([['acme/web#1', new Date('2026-10-20T11:00:00Z')]]) },
   ]);
   assert.equal(owners.get('acme/web#1')?.session.name, 'late');
   assert.equal(owners.get('acme/web#1')?.subAgent, undefined);
+});
+
+const reply = (content: unknown[], stop: string | null, at = '2026-10-20T10:00:00Z', patch = {}) =>
+  JSON.stringify({ type: 'assistant', timestamp: at, message: { content, stop_reason: stop }, ...patch });
+
+test('the last message of a sub-agent gives its state', () => {
+  const text = { type: 'text', text: 'Done.' };
+  const at = new Date('2026-10-20T10:00:00Z');
+  assert.deepEqual(endingOf(reply([text], 'end_turn')), { state: 'done', at, open: false });
+  assert.deepEqual(
+    endingOf(
+      reply([{ type: 'text', text: 'You have hit your session limit' }], 'stop_sequence', '2026-10-20T10:00:00Z', {
+        isApiErrorMessage: true,
+        error: 'rate_limit',
+      }),
+    ),
+    { state: 'failed', error: 'rate limit', at, open: false },
+  );
+  assert.deepEqual(
+    endingOf(
+      JSON.stringify({
+        type: 'user',
+        timestamp: '2026-10-20T10:00:00Z',
+        message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] },
+      }),
+    ),
+    { state: 'stopped', at, open: false },
+  );
+  assert.equal(endingOf(`${reply([text], 'end_turn')}\n${use('t1', 'gh pr view 1')}`)?.state, 'working');
+  assert.equal(endingOf(`${use('t1', 'pnpm test')}\n{"type":"attachment"}\nbroken`)?.open, false);
+  assert.deepEqual(endingOf(result('t1', 'ok')), {
+    state: 'working',
+    at: new Date('2026-10-20T10:00:05Z'),
+    open: true,
+  });
+  assert.equal(endingOf(reply([text], null))?.open, true);
+  assert.equal(endingOf('{"type":"attachment"}'), undefined);
+});
+
+test('an open message is working for 10 minutes, then the sub-agent is done', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'boo-subagents-'));
+  const id = session().sessionId;
+  const dir = join(home, 'projects', '-work', id, 'subagents');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(home, 'projects', '-work', `${id}.jsonl`), '');
+  await writeFile(
+    join(dir, 'agent-a1.jsonl'),
+    `${use('t1', 'gh pr create')}\n${result('t1', 'https://github.com/acme/web/pull/1', '2026-10-20T10:00:00Z')}\n`,
+  );
+  const index = new LinkIndex(home);
+  const stateAt = async (time: string) =>
+    (await index.subAgentsOf(id, new Date(time))).get('acme/web#1')?.subAgent.state;
+  assert.equal(await stateAt('2026-10-20T10:09:00Z'), 'working');
+  assert.equal(await stateAt('2026-10-20T10:11:00Z'), 'done');
+  await appendFile(join(dir, 'agent-a1.jsonl'), `${use('t2', 'pnpm test')}\n`);
+  assert.equal(await stateAt('2026-10-20T12:00:00Z'), 'working');
+});
+
+test('the sub-agent, not the session, tells whether a pull request has an agent at work', () => {
+  const busy = session({ status: 'busy' });
+  const linkedAt = new Date();
+  assert.equal(ownerWorks({ session: busy, linkedAt }), true);
+  assert.equal(ownerWorks({ session: busy, linkedAt, subAgent: { id: 'a1', state: 'done' } }), false);
+  assert.equal(ownerWorks({ session: session(), linkedAt, subAgent: { id: 'a1', state: 'working' } }), true);
 });
 
 test('a message to a session sends the token of its inbox, then a user message for that session', async () => {

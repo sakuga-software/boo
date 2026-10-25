@@ -220,13 +220,20 @@ test('two pull requests of two sub-agents of one session show the two sub-agents
     gitHub,
     DEFAULT_SETTINGS,
     new Map([
-      ['acme/web#1', { session, linkedAt, subAgent: { id: 'a1', description: 'Fix the search filter of the list' } }],
-      ['acme/web#2', { session, linkedAt, subAgent: { id: 'a2' } }],
+      [
+        'acme/web#1',
+        { session, linkedAt, subAgent: { id: 'a1', description: 'Fix the search filter of the list', state: 'done' } },
+      ],
+      ['acme/web#2', { session, linkedAt, subAgent: { id: 'a2', state: 'failed', error: 'rate limit' } }],
     ]),
   );
   t.after(() => app.unmount());
   const frame = await frameWith(app, 'orchestra › a2');
   assert.match(frame, /web#1 .*orchestra › Fix the search filter o…/);
+  assert.match(frame, /web#2 .*orchestra › a2 ✖/);
   await press(app, 'e');
   await frameWith(app, 'session orchestra › sub-agent Fix the search');
+  await frameWith(app, '/work · session idle');
+  await press(app, 'e', '\u001B[B', 'e');
+  await frameWith(app, 'session orchestra › sub-agent a2 · failed: rat');
 });

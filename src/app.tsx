@@ -54,7 +54,16 @@ import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from './report.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
-import { LinkIndex, readOwners, sendToSession, type LocalSession, type Owner, type SubAgent } from './sessions.js';
+import {
+  isWorkingStatus,
+  LinkIndex,
+  ownerWorks,
+  readOwners,
+  sendToSession,
+  type LocalSession,
+  type Owner,
+  type SubAgent,
+} from './sessions.js';
 
 export interface Options {
   org: string;
@@ -1189,11 +1198,11 @@ export function App(props: AppProps) {
     return parent && stackDetail(row, parent, describe(parent, { now: clock, options }), options);
   };
   const stallOfRow = (row: Row) => {
-    const session = owners.get(keyOf(row.pr))?.session;
+    const owner = owners.get(keyOf(row.pr));
     return stallOf({
       overall: row.left || row.error ? undefined : row.summary?.overall,
       headAt: row.fetched?.headAt,
-      working: Boolean(session && isWorking(session)),
+      working: Boolean(owner && ownerWorks(owner)),
       afterMinutes: settings.stalledAfterMinutes,
       now: clock,
     }).stalled;
@@ -1559,6 +1568,8 @@ interface AgentInfo {
   claude: boolean;
   session?: LocalSession;
   subAgent?: SubAgent;
+  /** The sub-agent works on the pull request, or the session if the pull request has no sub-agent. */
+  works: boolean;
   cloudSession?: string;
 }
 
@@ -1572,17 +1583,18 @@ function agentOf(row: Row, owners: Map<string, Owner>): AgentInfo | undefined {
       claude: true,
       session: owner.session,
       ...(owner.subAgent && { subAgent: owner.subAgent }),
+      works: ownerWorks(owner),
     };
   if (!agent) return undefined;
   return {
     name: agent.name,
     claude: agent.id === 'claude',
+    works: false,
     ...(agent.cloudSession && { cloudSession: agent.cloudSession }),
   };
 }
 
-// "shell" means that the session runs a command now.
-const isWorking = (session: LocalSession) => session.status === 'busy' || session.status === 'shell';
+const isWorking = (session: LocalSession) => isWorkingStatus(session.status);
 
 function sessionState(session: LocalSession): string {
   if (isWorking(session)) return 'working';
@@ -1593,6 +1605,13 @@ function sessionState(session: LocalSession): string {
 const agentMark = (agent: AgentInfo) => (agent.claude ? '✻' : '◇');
 
 const subAgentName = (subAgent: SubAgent) => subAgent.description ?? subAgent.id;
+
+const subAgentState = (subAgent: SubAgent) => (subAgent.error ? `failed: ${subAgent.error}` : subAgent.state);
+
+function subAgentColor(subAgent: SubAgent): string | undefined {
+  if (subAgent.state === 'working') return CLAUDE;
+  return subAgent.state === 'failed' ? 'red' : undefined;
+}
 
 const BADGE_SUB_AGENT_WIDTH = 24;
 
@@ -1609,13 +1628,14 @@ function badgeName(agent: AgentInfo): string {
 
 /** The agent on the line of the pull request: a mark, and the session name if the row has the width. */
 function AgentBadge({ agent, named }: { agent: AgentInfo; named: boolean }) {
-  const { session } = agent;
+  const { session, subAgent } = agent;
   const color = agent.claude ? CLAUDE : 'gray';
   return (
     <Text color={color} dimColor={!session && !agent.claude}>
-      {session && isWorking(session) ? <Spinner type="dots" /> : agentMark(agent)}
+      {agent.works ? <Spinner type="dots" /> : agentMark(agent)}
       {named && ` ${badgeName(agent)}`}
-      {session?.status === 'waiting' && <Text color="yellow"> ?</Text>}
+      {!subAgent && session?.status === 'waiting' && <Text color="yellow"> ?</Text>}
+      {subAgent?.state === 'failed' && <Text color="red"> ✖</Text>}
     </Text>
   );
 }
@@ -1655,12 +1675,19 @@ function agentLines(agent: AgentInfo): ReactNode[] {
           </>
         )}
         <Text dimColor> · </Text>
-        <Text color={stateColor(session)} dimColor={!stateColor(session)}>
-          {sessionState(session)}
-        </Text>
+        {subAgent ? (
+          <Text color={subAgentColor(subAgent)} dimColor={!subAgentColor(subAgent)}>
+            {subAgentState(subAgent)}
+          </Text>
+        ) : (
+          <Text color={stateColor(session)} dimColor={!stateColor(session)}>
+            {sessionState(session)}
+          </Text>
+        )}
       </Text>,
       <Text key="cwd" dimColor wrap="truncate-end">
-        {session.cwd.replace(homedir(), '~')} · a sends rebase, review, fix or test
+        {session.cwd.replace(homedir(), '~')}
+        {subAgent && ` · session ${sessionState(session)}`} · a sends rebase, review, fix or test
       </Text>,
     ];
   if (agent.cloudSession)

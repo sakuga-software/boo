@@ -71,8 +71,9 @@ const cli = meow(
     machine that linked the pull request shows its name; the session with
     the last link wins. A spinner means that it works, and ? that it waits
     for an answer. If a sub-agent of the session opened or changed the pull
-    request with gh pr, its task follows the name of the session. These records are internal to Claude Code: a new version
-    can change them.
+    request with gh pr, its task follows the name of the session, and the
+    spinner means that the sub-agent works; ✖ marks a sub-agent that failed.
+    These records are internal to Claude Code: a new version can change them.
 
   Reviewers
     A reviewer is a person or a bot that submitted a review, that GitHub asks
