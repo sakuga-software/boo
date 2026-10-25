@@ -70,7 +70,8 @@ const cli = meow(
     the last commit and the description. A Claude Code session on this
     machine that linked the pull request shows its name; the session with
     the last link wins. A spinner means that it works, and ? that it waits
-    for an answer. These records are internal to Claude Code: a new version
+    for an answer. If a sub-agent of the session opened or changed the pull
+    request with gh pr, its task follows the name of the session. These records are internal to Claude Code: a new version
     can change them.
 
   Reviewers

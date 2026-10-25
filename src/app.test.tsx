@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { render } from 'ink-testing-library';
 import { App, type GitHub } from './app.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
+import type { LocalSession, Owner } from './sessions.js';
 import { DEFAULT_SETTINGS, type Settings } from './settings.js';
 
 const now = Date.now();
@@ -65,12 +66,12 @@ function fakeGitHub(snapshots: Map<number, PullRequestSnapshot | Error>, extra: 
   return { gitHub, merges };
 }
 
-function start(gitHub: GitHub, settings: Settings = DEFAULT_SETTINGS) {
+function start(gitHub: GitHub, settings: Settings = DEFAULT_SETTINGS, owners = new Map<string, Owner>()) {
   return render(
     <App
       options={{ org: 'acme', authors: ['@me'], watch: true, dryRun: false, interactive: true }}
       gitHub={gitHub}
-      sessions={{ readOwners: async () => new Map(), send: async () => {} }}
+      sessions={{ readOwners: async () => owners, send: async () => {} }}
       settings={settings}
       saveSettings={async () => {}}
     />,
@@ -197,4 +198,35 @@ test('low GraphQL points slow the refresh down, and the header says so', async (
   const app = start(gitHub);
   t.after(() => app.unmount());
   await frameWith(app, 'GraphQL 100/5000 left, refresh every 5 min');
+});
+
+test('two pull requests of two sub-agents of one session show the two sub-agents', async (t) => {
+  const { gitHub } = fakeGitHub(
+    new Map([
+      [1, snapshot()],
+      [2, snapshot()],
+    ]),
+  );
+  const session: LocalSession = {
+    pid: 1,
+    sessionId: 's1',
+    name: 'orchestra',
+    status: 'idle',
+    cwd: '/work',
+    socket: '/tmp/s.sock',
+  };
+  const linkedAt = new Date(now);
+  const app = start(
+    gitHub,
+    DEFAULT_SETTINGS,
+    new Map([
+      ['acme/web#1', { session, linkedAt, subAgent: { id: 'a1', description: 'Fix the search filter of the list' } }],
+      ['acme/web#2', { session, linkedAt, subAgent: { id: 'a2' } }],
+    ]),
+  );
+  t.after(() => app.unmount());
+  const frame = await frameWith(app, 'orchestra › a2');
+  assert.match(frame, /web#1 .*orchestra › Fix the search filter o…/);
+  await press(app, 'e');
+  await frameWith(app, 'session orchestra › sub-agent Fix the search');
 });

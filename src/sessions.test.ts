@@ -9,6 +9,7 @@ import {
   LinkIndex,
   parseLinks,
   parseSession,
+  parseSubAgentActions,
   pickOwners,
   sendToSession,
   type LocalSession,
@@ -87,6 +88,79 @@ test('the index reads only the complete lines, then the new ones', async () => {
   await writeFile(path, `${link(3, '2026-10-20T13:00:00Z')}\n`);
   assert.deepEqual([...(await index.linksOf(id)).keys()], ['acme/web#3']);
   assert.equal((await index.linksOf('missing')).size, 0);
+});
+
+const use = (id: string, command: string) =>
+  JSON.stringify({
+    type: 'assistant',
+    timestamp: '2026-10-20T10:00:00Z',
+    message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] },
+  });
+
+const result = (id: string, output: string, at = '2026-10-20T10:00:05Z') =>
+  JSON.stringify({
+    type: 'user',
+    timestamp: at,
+    message: { content: [{ type: 'tool_result', tool_use_id: id, content: output }] },
+  });
+
+test('a sub-agent changes the pull request that the output of its gh pr command names', () => {
+  const commands = new Set<string>();
+  const text = [
+    use('t1', 'git push && gh pr create --title "fix: filter" --body x'),
+    use('t2', 'gh pr view 7 --json title'),
+    result('t2', 'https://github.com/acme/web/pull/7'),
+    result('t1', 'Warning: 1 uncommitted change\nhttps://github.com/acme/web/pull/12\n'),
+    use('t3', 'gh pr comment 12 --body done'),
+    result('t3', 'no URL here'),
+    use('t4', 'gh pr edit 13 --add-label x'),
+  ].join('\n');
+  assert.deepEqual(parseSubAgentActions(text, commands), [{ pr: 'acme/web#12', at: new Date('2026-10-20T10:00:05Z') }]);
+  assert.deepEqual([...commands], ['t4']);
+  assert.deepEqual(parseSubAgentActions(result('t4', 'https://github.com/acme/web/pull/13'), commands), [
+    { pr: 'acme/web#13', at: new Date('2026-10-20T10:00:05Z') },
+  ]);
+  assert.equal(commands.size, 0);
+});
+
+test('the index finds the sub-agents of a session, with their task, and reads only their new lines', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'boo-subagents-'));
+  const id = session().sessionId;
+  const dir = join(home, 'projects', '-work', id, 'subagents');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(home, 'projects', '-work', `${id}.jsonl`), `${link(1, '2026-10-20T10:00:00Z')}\n`);
+  await writeFile(join(dir, 'agent-a1.meta.json'), JSON.stringify({ description: 'Fix the filter' }));
+  await writeFile(
+    join(dir, 'agent-a1.jsonl'),
+    `${use('t1', 'gh pr create')}\n${result('t1', 'https://github.com/acme/web/pull/1')}\n`,
+  );
+  await writeFile(join(dir, 'agent-a2.jsonl'), `${use('t1', 'gh pr create')}\n`);
+  const index = new LinkIndex(home);
+  const first = await index.subAgentsOf(id);
+  assert.deepEqual(first.get('acme/web#1')?.subAgent, { id: 'a1', description: 'Fix the filter' });
+  assert.equal(first.size, 1);
+
+  await appendFile(
+    join(dir, 'agent-a2.jsonl'),
+    `${result('t1', 'https://github.com/acme/web/pull/1', '2026-10-20T11:00:00Z')}\n`,
+  );
+  assert.deepEqual((await index.subAgentsOf(id)).get('acme/web#1')?.subAgent, { id: 'a2' });
+  assert.equal((await index.subAgentsOf('missing')).size, 0);
+});
+
+test('a pull request takes the sub-agent of the session that owns it, not of another session', () => {
+  const early = session({ name: 'early' });
+  const late = session({ name: 'late' });
+  const owners = pickOwners([
+    {
+      session: early,
+      links: new Map([['acme/web#1', new Date('2026-10-20T10:00:00Z')]]),
+      subAgents: new Map([['acme/web#1', { subAgent: { id: 'a1' }, at: new Date('2026-10-20T10:00:00Z') }]]),
+    },
+    { session: late, links: new Map([['acme/web#1', new Date('2026-10-20T11:00:00Z')]]) },
+  ]);
+  assert.equal(owners.get('acme/web#1')?.session.name, 'late');
+  assert.equal(owners.get('acme/web#1')?.subAgent, undefined);
 });
 
 test('a message to a session sends the token of its inbox, then a user message for that session', async () => {

@@ -54,7 +54,7 @@ import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from './report.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
-import { LinkIndex, readOwners, sendToSession, type LocalSession, type Owner } from './sessions.js';
+import { LinkIndex, readOwners, sendToSession, type LocalSession, type Owner, type SubAgent } from './sessions.js';
 
 export interface Options {
   org: string;
@@ -1558,14 +1558,21 @@ interface AgentInfo {
   name: string;
   claude: boolean;
   session?: LocalSession;
+  subAgent?: SubAgent;
   cloudSession?: string;
 }
 
 function agentOf(row: Row, owners: Map<string, Owner>): AgentInfo | undefined {
-  const session = owners.get(keyOf(row.pr))?.session;
+  const owner = owners.get(keyOf(row.pr));
   const agent = row.fetched?.agent;
   // A local session is always Claude Code, whatever agent wrote the pull request.
-  if (session) return { name: 'Claude Code', claude: true, session };
+  if (owner)
+    return {
+      name: 'Claude Code',
+      claude: true,
+      session: owner.session,
+      ...(owner.subAgent && { subAgent: owner.subAgent }),
+    };
   if (!agent) return undefined;
   return {
     name: agent.name,
@@ -1585,7 +1592,16 @@ function sessionState(session: LocalSession): string {
 
 const agentMark = (agent: AgentInfo) => (agent.claude ? '✻' : '◇');
 
+const subAgentName = (subAgent: SubAgent) => subAgent.description ?? subAgent.id;
+
+const BADGE_SUB_AGENT_WIDTH = 24;
+
 function badgeName(agent: AgentInfo): string {
+  if (agent.session && agent.subAgent) {
+    const name = subAgentName(agent.subAgent);
+    const short = name.length > BADGE_SUB_AGENT_WIDTH ? `${name.slice(0, BADGE_SUB_AGENT_WIDTH - 1)}…` : name;
+    return `${agent.session.name} › ${short}`;
+  }
   if (agent.session) return agent.session.name;
   if (agent.cloudSession) return 'cloud';
   return agent.claude ? 'Claude' : agent.name;
@@ -1625,13 +1641,19 @@ function agentLines(agent: AgentInfo): ReactNode[] {
       {agentMark(agent)} {agent.name}
     </Text>
   );
-  const { session } = agent;
+  const { session, subAgent } = agent;
   if (session)
     return [
       <Text key="name" wrap="truncate-end">
         {name}
         <Text dimColor> · session </Text>
         <Text color={CLAUDE}>{session.name}</Text>
+        {subAgent && (
+          <>
+            <Text dimColor> › sub-agent </Text>
+            <Text color={CLAUDE}>{subAgentName(subAgent)}</Text>
+          </>
+        )}
         <Text dimColor> · </Text>
         <Text color={stateColor(session)} dimColor={!stateColor(session)}>
           {sessionState(session)}

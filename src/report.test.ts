@@ -66,7 +66,7 @@ test('the output keeps the same keys, in the same order', () => {
   ]);
   assert.deepEqual(Object.keys(first!.checks), ['passed', 'failing', 'running', 'skipped', 'quota']);
   assert.deepEqual(Object.keys(first!.stack), ['parent', 'position', 'size']);
-  assert.deepEqual(Object.keys(first!.agent), ['kind', 'session', 'sessionState', 'cloudSession']);
+  assert.deepEqual(Object.keys(first!.agent), ['kind', 'session', 'subAgent', 'sessionState', 'cloudSession']);
   assert.deepEqual(Object.keys(first!.notes), ['merge', 'retries', 'coderabbit']);
 });
 
@@ -148,12 +148,39 @@ test('a local session makes the agent Claude Code, with the state of the session
     [{ pr: pr(1), snapshot: snapshot({ agent: { id: 'copilot', name: 'Copilot' } }) }],
     new Map([['acme/web#1', { session, linkedAt: now }]]),
   );
-  assert.deepEqual(first!.agent, { kind: 'claude', session: 'web-2', sessionState: 'working', cloudSession: null });
+  assert.deepEqual(first!.agent, {
+    kind: 'claude',
+    session: 'web-2',
+    subAgent: null,
+    sessionState: 'working',
+    cloudSession: null,
+  });
+});
+
+test('the sub-agent of the session that changed the pull request comes with the session', () => {
+  const [first, second] = report(
+    [
+      { pr: pr(1), snapshot: snapshot() },
+      { pr: pr(2), snapshot: snapshot() },
+    ],
+    new Map([
+      ['acme/web#1', { session, linkedAt: now, subAgent: { id: 'a1', description: 'Fix the filter' } }],
+      ['acme/web#2', { session, linkedAt: now, subAgent: { id: 'a2' } }],
+    ]),
+  );
+  assert.deepEqual(first!.agent.subAgent, { id: 'a1', description: 'Fix the filter' });
+  assert.deepEqual(second!.agent.subAgent, { id: 'a2', description: null });
 });
 
 test('a pull request with no agent and no session says none', () => {
   const [first] = report([{ pr: pr(1), snapshot: snapshot() }]);
-  assert.deepEqual(first!.agent, { kind: null, session: null, sessionState: 'none', cloudSession: null });
+  assert.deepEqual(first!.agent, {
+    kind: null,
+    session: null,
+    subAgent: null,
+    sessionState: 'none',
+    cloudSession: null,
+  });
 });
 
 test('a merged pull request, a draft and an unreadable one keep their place, with no summary', () => {
