@@ -106,9 +106,10 @@ export function parseLinks(text: string): { pr: string; at: Date }[] {
 
 // Claude Code writes the pr-link lines only in the transcript of the session, also for a pull request
 // of a sub-agent. The transcript of a sub-agent keeps the output of its commands: `gh pr create`,
-// `edit` and `comment` print the URL of the pull request.
+// `edit` and `comment` print the URL of the pull request, and `ready`, `merge` and `review` print
+// "pull request owner/repo#12".
 const PR_WRITE = /\bgh pr (?:create|edit|comment|ready|merge|review)\b/;
-const PR_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
+const PR_REF = /(?:https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/|[Pp]ull request ([\w.-]+\/[\w.-]+)#)(\d+)/g;
 
 interface ContentPart {
   type?: unknown;
@@ -146,9 +147,9 @@ export function parseSubAgentActions(text: string, commands: Set<string>): { pr:
         commands.add(part.id);
       if (part.type !== 'tool_result' || typeof part.tool_use_id !== 'string' || !commands.delete(part.tool_use_id))
         continue;
-      // gh prints the URL of the pull request on the last line.
-      const last = [...JSON.stringify(part.content ?? '').matchAll(PR_URL)].at(-1);
-      if (last && !Number.isNaN(at.getTime())) actions.push({ pr: `${last[1]}#${last[2]}`, at });
+      // gh prints the pull request on the last line.
+      const last = [...JSON.stringify(part.content ?? '').matchAll(PR_REF)].at(-1);
+      if (last && !Number.isNaN(at.getTime())) actions.push({ pr: `${last[1] ?? last[2]}#${last[3]}`, at });
     }
   }
   return actions;

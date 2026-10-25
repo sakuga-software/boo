@@ -121,6 +121,19 @@ test('a sub-agent changes the pull request that the output of its gh pr command 
     { pr: 'acme/web#13', at: new Date('2026-10-20T10:00:05Z') },
   ]);
   assert.equal(commands.size, 0);
+
+  const ready = [
+    use('t5', 'gh pr ready 14'),
+    result('t5', '✓ Pull request acme/web#14 is marked as "ready for review"'),
+    use('t6', 'gh pr merge 15 --squash'),
+    result('t6', '✓ Squashed and merged pull request acme/web#15 (fix: filter)'),
+    use('t7', 'gh pr review 16 --approve'),
+    result('t7', '✓ Approved pull request acme/web#16'),
+  ].join('\n');
+  assert.deepEqual(
+    parseSubAgentActions(ready, commands).map(({ pr }) => pr),
+    ['acme/web#14', 'acme/web#15', 'acme/web#16'],
+  );
 });
 
 test('the index finds the sub-agents of a session, with their task, and reads only their new lines', async () => {
