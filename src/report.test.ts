@@ -164,12 +164,23 @@ test('the sub-agent of the session that changed the pull request comes with the 
       { pr: pr(2), snapshot: snapshot() },
     ],
     new Map([
-      ['acme/web#1', { session, linkedAt: now, subAgent: { id: 'a1', description: 'Fix the filter' } }],
-      ['acme/web#2', { session, linkedAt: now, subAgent: { id: 'a2' } }],
+      [
+        'acme/web#1',
+        { session, linkedAt: now, subAgent: { id: 'a1', description: 'Fix the filter', state: 'working' } },
+      ],
+      ['acme/web#2', { session, linkedAt: now, subAgent: { id: 'a2', state: 'failed', error: 'rate limit' } }],
     ]),
   );
-  assert.deepEqual(first!.agent.subAgent, { id: 'a1', description: 'Fix the filter' });
-  assert.deepEqual(second!.agent.subAgent, { id: 'a2', description: null });
+  assert.deepEqual(first!.agent.subAgent, { id: 'a1', description: 'Fix the filter', state: 'working', error: null });
+  assert.deepEqual(second!.agent.subAgent, { id: 'a2', description: null, state: 'failed', error: 'rate limit' });
+});
+
+test('a red pull request of a sub-agent that ended is stalled, even if its session works', () => {
+  const red = snapshot({ headAt: ago(60), checks: [{ name: 'test', state: 'failure' }] });
+  const owned = (state: 'working' | 'done') =>
+    new Map([['acme/web#1', { session, linkedAt: now, subAgent: { id: 'a1', state } }]]);
+  assert.equal(report([{ pr: pr(1), snapshot: red }], owned('done'))[0]!.stalled, true);
+  assert.equal(report([{ pr: pr(1), snapshot: red }], owned('working'))[0]!.stalled, false);
 });
 
 test('a pull request with no agent and no session says none', () => {

@@ -3,7 +3,7 @@ import { decide, quotaScope, quotaSignals, type Decision, type QuotaSignal } fro
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { confidenceOf, isOnHead, summarize, type Overall, type Summary } from './reviewers.js';
 import type { MergePolicy, PolicyMiss } from './policy.js';
-import type { Owner } from './sessions.js';
+import { isWorkingStatus, ownerWorks, type Owner, type SubAgentState } from './sessions.js';
 import type { Settings } from './settings.js';
 import { placeStacks } from './stacks.js';
 
@@ -125,7 +125,7 @@ export interface PullRequestReport {
   agent: {
     kind: string | null;
     session: string | null;
-    subAgent: { id: string; description: string | null } | null;
+    subAgent: { id: string; description: string | null; state: SubAgentState; error: string | null } | null;
     sessionState: SessionState;
     cloudSession: string | null;
   };
@@ -159,9 +159,6 @@ function coderabbitNote(decision: Decision): CoderabbitNote | null {
       return null;
   }
 }
-
-// Claude Code reports "shell" while the session runs a command.
-export const isWorkingStatus = (status: string) => status === 'busy' || status === 'shell';
 
 function sessionStateOf(status: string): SessionState {
   if (isWorkingStatus(status)) return 'working';
@@ -224,7 +221,7 @@ export function buildReport(
       ...stallOf({
         overall: summary?.overall,
         headAt: snapshot?.headAt,
-        working: Boolean(session && isWorkingStatus(session.status)),
+        working: Boolean(owner && ownerWorks(owner)),
         afterMinutes: settings.stalledAfterMinutes,
         now,
       }),
@@ -251,7 +248,14 @@ export function buildReport(
         // A local session is always Claude Code, whatever agent wrote the pull request.
         kind: session ? 'claude' : (agent?.id ?? null),
         session: session?.name ?? null,
-        subAgent: owner?.subAgent ? { id: owner.subAgent.id, description: owner.subAgent.description ?? null } : null,
+        subAgent: owner?.subAgent
+          ? {
+              id: owner.subAgent.id,
+              description: owner.subAgent.description ?? null,
+              state: owner.subAgent.state,
+              error: owner.subAgent.error ?? null,
+            }
+          : null,
         sessionState: session ? sessionStateOf(session.status) : 'none',
         cloudSession: agent?.cloudSession ?? null,
       },

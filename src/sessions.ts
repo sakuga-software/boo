@@ -22,10 +22,18 @@ export interface LocalSession {
   socket: string;
 }
 
-/** A sub-agent of a session. `description` is the task that the session gave to it. */
+/** What a sub-agent does, from the last message of its transcript. */
+export type SubAgentState = 'working' | 'done' | 'failed' | 'stopped';
+
+/**
+ * A sub-agent of a session. `description` is the task that the session gave to it. `error` tells why
+ * a failed sub-agent stopped, for example "rate limit".
+ */
 export interface SubAgent {
   id: string;
   description?: string;
+  state: SubAgentState;
+  error?: string;
 }
 
 /**
@@ -37,6 +45,13 @@ export interface Owner {
   linkedAt: Date;
   subAgent?: SubAgent;
 }
+
+// Claude Code reports "shell" while the session runs a command.
+export const isWorkingStatus = (status: string) => status === 'busy' || status === 'shell';
+
+/** The sub-agent works on the pull request of the owner. If the owner has no sub-agent, the session works on it. */
+export const ownerWorks = (owner: Owner) =>
+  owner.subAgent ? owner.subAgent.state === 'working' : isWorkingStatus(owner.session.status);
 
 export const claudeHome = (env: NodeJS.ProcessEnv = process.env) => env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 
@@ -114,6 +129,7 @@ const PR_REF = /(?:https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/|[Pp]ull req
 interface ContentPart {
   type?: unknown;
   id?: unknown;
+  text?: unknown;
   name?: unknown;
   input?: { command?: unknown };
   tool_use_id?: unknown;
@@ -154,6 +170,65 @@ export function parseSubAgentActions(text: string, commands: Set<string>): { pr:
   }
   return actions;
 }
+
+interface Ending {
+  state: SubAgentState;
+  error?: string;
+  at: Date;
+  /**
+   * A message that waits for the next part of the reply: a text with no stop reason, the output of a
+   * tool, or a message to the sub-agent.
+   */
+  open: boolean;
+}
+
+const textOf = (content: unknown): string =>
+  typeof content === 'string'
+    ? content
+    : ((content as ContentPart[] | undefined)
+        ?.map((part) => (part.type === 'text' ? String(part.text) : ''))
+        .join('') ?? '');
+
+/** Reads the state of a sub-agent from the last message in a part of its transcript. */
+export function endingOf(text: string): Ending | undefined {
+  const lines = text.split('\n');
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    let line: Record<string, unknown>;
+    try {
+      line = JSON.parse(lines[index]!) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (line.type !== 'assistant' && line.type !== 'user') continue;
+    const at = new Date(String(line.timestamp));
+    const message = (line.message ?? {}) as { content?: unknown; stop_reason?: unknown };
+    if (line.isApiErrorMessage === true) {
+      const error = typeof line.error === 'string' ? line.error.replaceAll('_', ' ') : 'API error';
+      return { state: 'failed', error, at, open: false };
+    }
+    if (line.type === 'user') {
+      const stopped = textOf(message.content).startsWith('[Request interrupted by user');
+      return stopped ? { state: 'stopped', at, open: false } : { state: 'working', at, open: true };
+    }
+    const parts = Array.isArray(message.content) ? (message.content as ContentPart[]) : [];
+    const textOnly = parts.length > 0 && parts.every((part) => part.type === 'text' || part.type === 'thinking');
+    if (textOnly && (message.stop_reason === 'end_turn' || message.stop_reason === 'stop_sequence'))
+      return { state: 'done', at, open: false };
+    return { state: 'working', at, open: textOnly && message.stop_reason == null };
+  }
+  return undefined;
+}
+
+// In a live sub-agent, the next part of the reply comes some seconds after an open message. But some
+// versions of Claude Code end a sub-agent on a text with no stop reason. Also, a sub-agent that is
+// done does not answer a message that comes after its end.
+const OPEN_MESSAGE_MS = 10 * 60_000;
+
+const stateOf = (ending: Ending | undefined, now: Date): Pick<SubAgent, 'state' | 'error'> => {
+  if (!ending) return { state: 'working' };
+  if (ending.open && now.getTime() - ending.at.getTime() > OPEN_MESSAGE_MS) return { state: 'done' };
+  return { state: ending.state, ...(ending.error && { error: ending.error }) };
+};
 
 // A transcript can weigh hundreds of megabytes. Claude Code writes a link again each time that the
 // session looks at its pull request, so the last part of the file has the links that matter. The
@@ -199,7 +274,9 @@ interface Transcript extends Tail {
 }
 
 interface SubAgentTranscript extends Tail {
-  subAgent: SubAgent;
+  id: string;
+  description?: string;
+  ending?: Ending;
   commands: Set<string>;
   actions: Map<string, Date>;
 }
@@ -224,7 +301,7 @@ export class LinkIndex {
   }
 
   /** Returns the pull requests that the sub-agents of the session changed, with the sub-agent that changed each one last. */
-  async subAgentsOf(sessionId: string): Promise<SubAgentActions> {
+  async subAgentsOf(sessionId: string, now = new Date()): Promise<SubAgentActions> {
     const transcript = this.transcripts.get(sessionId) ?? (await this.find(sessionId));
     const actions: SubAgentActions = new Map();
     if (!transcript) return actions;
@@ -233,11 +310,20 @@ export class LinkIndex {
     for (const file of files) {
       const path = join(dir, file);
       const agent = this.subAgents.get(path) ?? (await this.addSubAgent(path));
-      const text = await readNewLines(agent, () => agent.actions.clear()).catch(() => undefined);
+      const text = await readNewLines(agent, () => {
+        agent.actions.clear();
+        delete agent.ending;
+      }).catch(() => undefined);
       for (const { pr, at } of parseSubAgentActions(text ?? '', agent.commands)) keepLast(agent.actions, pr, at);
+      if (text) agent.ending = endingOf(text) ?? agent.ending;
+      const subAgent: SubAgent = {
+        id: agent.id,
+        ...(agent.description && { description: agent.description }),
+        ...stateOf(agent.ending, now),
+      };
       for (const [pr, at] of agent.actions) {
         const known = actions.get(pr);
-        if (!known || known.at < at) actions.set(pr, { subAgent: agent.subAgent, at });
+        if (!known || known.at < at) actions.set(pr, { subAgent, at });
       }
     }
     return actions;
@@ -248,16 +334,20 @@ export class LinkIndex {
     const description = await readFile(path.replace(/\.jsonl$/, '.meta.json'), 'utf8')
       .then((text) => (JSON.parse(text) as { description?: unknown }).description)
       .catch(() => undefined);
-    const subAgent = {
-      id,
-      ...(typeof description === 'string' && description.trim() && { description: description.trim() }),
-    };
+
     const size = await stat(path).then(
       (stats) => stats.size,
       () => 0,
     );
     const offset = Math.max(0, size - FIRST_READ_BYTES);
-    const agent = { path, offset, subAgent, commands: new Set<string>(), actions: new Map<string, Date>() };
+    const agent: SubAgentTranscript = {
+      path,
+      offset,
+      id,
+      ...(typeof description === 'string' && description.trim() && { description: description.trim() }),
+      commands: new Set<string>(),
+      actions: new Map<string, Date>(),
+    };
     this.subAgents.set(path, agent);
     return agent;
   }

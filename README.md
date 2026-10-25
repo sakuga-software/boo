@@ -77,7 +77,12 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
   "agent": {
     "kind": "claude",
     "session": "web-2",
-    "subAgent": { "id": "a0e40d0b237c6058e", "description": "Fix the search filter" },
+    "subAgent": {
+      "id": "a0e40d0b237c6058e",
+      "description": "Fix the search filter",
+      "state": "working",
+      "error": null
+    },
     "sessionState": "working",
     "cloudSession": null
   },
@@ -102,7 +107,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
 | `reviewers[].at`         | The time of the last review of the reviewer, or `null`.                                                                                                                                                                                                                                             |
 | `stack`                  | The listed pull request that this one merges into (`owner/repo#number`), its place from the bottom (`null` if the stack forks), and the size of the stack.                                                                                                                                          |
 | `agent.kind`             | `claude`, `copilot`, `codex`, `cursor`, `devin` or `null`. A local session makes it `claude`.                                                                                                                                                                                                       |
-| `agent.subAgent`         | The sub-agent of the session that changed the pull request last, as `{ "id", "description" }`, or `null`. See [Sub-agents](#sub-agents).                                                                                                                                                            |
+| `agent.subAgent`         | The sub-agent of the session that changed the pull request last, as `{ "id", "description", "state", "error" }`, or `null`. `state` is `working`, `done`, `failed` or `stopped`; `error` tells why a failed sub-agent stopped, for example `rate limit`. See [Sub-agents](#sub-agents).             |
 | `agent.sessionState`     | `working`, `idle`, `waiting`, or `none` if no session on this machine linked the pull request.                                                                                                                                                                                                      |
 | `notes.merge`            | The rule that blocks the merge, or `null`.                                                                                                                                                                                                                                                          |
 | `notes.retries`          | The retries of the review bots that a run without `--json` posts, with their times.                                                                                                                                                                                                                 |
@@ -202,7 +207,8 @@ A pull request can stay red for hours with no agent on it: the agent stopped, or
 answer. A yellow `zZ stalled` on the line marks a pull request with all these conditions:
 
 - its state is `conflicts`, `checks failing` or `changes requested`;
-- no local session works on it (a session that waits for an answer does not work);
+- no local session works on it (a session that waits for an answer does not work). If a sub-agent
+  of the session changed the pull request, the sub-agent must work on it, not the session;
 - its head commit is older than `stalledAfterMinutes` in the settings file. The default is 30.
 
 ```json
@@ -300,8 +306,9 @@ The settings file can replace the prompt of a command, by its name. `{url}`, `{b
 #### Sub-agents
 
 ```
-❯▾✖  checks failing     web#924  fix(search): keep the filter   ✻ orchestra › Fix the search filter
-                        agent      ✻ Claude Code · session orchestra › sub-agent Fix the search filter · working
+❯▾✖  checks failing     web#924  fix(search): keep the filter   ✻ orchestra › Fix the search filter ✖
+                        agent      ✻ Claude Code · session orchestra › sub-agent Fix the search filter · failed: rate limit
+                                   ~/code/web · session working · a sends rebase, review, fix or test
 ```
 
 A session can give its work to sub-agents, and each sub-agent can open its own pull requests.
@@ -310,8 +317,20 @@ transcript of the sub-agent. The tool finds the sub-agent from its own transcrip
 `gh pr create`, `edit`, `comment`, `ready`, `merge` or `review` command gives the URL of the pull
 request. If more than one sub-agent changed a pull request, the last one shows. The line shows the
 task that the session gave to the sub-agent, after the name of the session, or the id of the
-sub-agent if the task is not known. The state is the state of the session, and the commands of `a`
-go to the session.
+sub-agent if the task is not known. The commands of `a` go to the session.
+
+The state of the sub-agent comes from the last message of its transcript:
+
+- `done`: its last reply ends its turn;
+- `failed`: Claude Code stopped it with an error, for example `rate limit`. A red `✖` follows its
+  name on the line;
+- `stopped`: a person interrupted it;
+- `working`: anything else. The spinner shows on the line. If the last message waits for the next
+  part of the reply (the output of a tool, or a message to the sub-agent) for more than 10 minutes,
+  the sub-agent is `done`: a sub-agent that ended does not answer a message that comes after its end.
+
+The details show the state of the sub-agent on the first line, and the state of the session on the
+second line.
 
 ## Settings
 
