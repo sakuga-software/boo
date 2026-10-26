@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mergeSearches, readKey, searchScope } from './github.js';
+import { mergeSearches, readKey, searchScope, withUnfinishedRuns } from './github.js';
+import { summarizeChecks } from './reviewers.js';
 
 const result = (url: string, updatedAt: string, isDraft = false) => ({ url, updatedAt, isDraft });
 
@@ -31,4 +32,44 @@ test('the repositories replace the owner in the search, so a repository of anoth
   assert.deepEqual(searchScope('acme', []), ['--owner', 'acme']);
   assert.deepEqual(searchScope('', []), []);
   assert.deepEqual(searchScope('acme', ['acme/web', 'other/api']), ['--repo', 'acme/web', '--repo', 'other/api']);
+});
+
+const suite = (workflow: string, run: number, status: string) => ({
+  status,
+  workflowRun: { databaseId: run, workflow: { name: workflow } },
+});
+
+test('a queued workflow run with no check yet runs, and only the last run of each workflow counts', () => {
+  const checks = withUnfinishedRuns(
+    [{ name: 'mutation', state: 'success', workflow: 'Mutation', run: 1 }],
+    [
+      suite('Mutation', 1, 'COMPLETED'),
+      suite('CI', 2, 'QUEUED'),
+      suite('Deploy', 3, 'QUEUED'),
+      suite('Deploy', 4, 'COMPLETED'),
+      { status: 'QUEUED', workflowRun: null },
+    ],
+  );
+  assert.deepEqual(
+    checks.map(({ name, state }) => [name, state]),
+    [
+      ['mutation', 'success'],
+      ['CI', 'pending'],
+    ],
+  );
+  assert.equal(summarizeChecks(checks, []).pending, 1);
+});
+
+test('a run between two jobs runs, and a run with a running check adds nothing', () => {
+  const done = { name: 'build', state: 'success' as const, workflow: 'CI', run: 7 };
+  assert.equal(withUnfinishedRuns([done], [suite('CI', 7, 'IN_PROGRESS')]).length, 2);
+  const running = { name: 'test', state: 'pending' as const, workflow: 'CI', run: 7 };
+  assert.equal(withUnfinishedRuns([done, running], [suite('CI', 7, 'IN_PROGRESS')]).length, 2);
+});
+
+test('a queued newer run replaces the checks of a cancelled run of the same workflow', () => {
+  const cancelled = { name: 'test', state: 'failure' as const, workflow: 'CI', run: 1, cancelled: true };
+  const checks = withUnfinishedRuns([cancelled], [suite('CI', 1, 'COMPLETED'), suite('CI', 2, 'QUEUED')]);
+  const summary = summarizeChecks(checks, []);
+  assert.deepEqual([summary.failed, summary.cancelled, summary.pending], [[], ['test'], 1]);
 });

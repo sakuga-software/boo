@@ -45,7 +45,8 @@ const cli = meow(
                        a newer run of the same workflow replaces does not count
     ready to merge     approved, every check passes, GitHub can merge, and the
                        "mergePolicy" of the settings file passes (see the README)
-    approved           approved, but a check runs or a rule blocks the merge
+    approved           approved, but a check runs or a rule blocks the merge; a
+                       workflow run that is queued or between two jobs runs too
     reviewing          a reviewer reviews the pull request now
     reviewed           a reviewer reviewed the last commit, with no verdict
     quota              the reviewers that have not reviewed the last commit are
