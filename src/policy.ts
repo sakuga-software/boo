@@ -1,4 +1,4 @@
-import { isBotLogin } from './reviewers.js';
+import { displayName, isBotLogin } from './reviewers.js';
 import type { Comment, Review } from './decide.js';
 
 /** The rules that a team adds to "ready to merge", from the `mergePolicy` of the settings file. */
@@ -11,9 +11,11 @@ export interface MergePolicy {
   resolvedBotThreads?: boolean;
   /** Only `owner` merges a pull request that changes a file under one of `paths`. `@me` is the user of boo. */
   ownerOnly?: { paths: string[]; owner: string };
+  /** A review that a comment asks of a bot after its last review must come before the merge. */
+  answeredReviewRequests?: boolean;
 }
 
-export type PolicyRule = 'minScore' | 'requireProof' | 'resolvedBotThreads' | 'ownerOnly';
+export type PolicyRule = 'minScore' | 'requireProof' | 'resolvedBotThreads' | 'ownerOnly' | 'answeredReviewRequests';
 
 /** A rule that the pull request misses, with the note that the details and the merge refusal show. */
 export interface PolicyMiss {
@@ -59,7 +61,7 @@ export const extraFields = (policy: MergePolicy | undefined) => ({
 export function parseMergePolicy(value: unknown): MergePolicy | undefined {
   if (!isRecord(value)) return undefined;
   const policy: MergePolicy = {};
-  const { minScore, requireProof, resolvedBotThreads, ownerOnly } = value;
+  const { minScore, requireProof, resolvedBotThreads, ownerOnly, answeredReviewRequests } = value;
   if (
     isRecord(minScore) &&
     typeof minScore.reviewer === 'string' &&
@@ -75,6 +77,7 @@ export function parseMergePolicy(value: unknown): MergePolicy | undefined {
     const paths = ownerOnly.paths.filter((path): path is string => typeof path === 'string' && Boolean(path.trim()));
     if (paths.length > 0 && ownerOnly.owner.trim()) policy.ownerOnly = { paths, owner: ownerOnly.owner.trim() };
   }
+  if (answeredReviewRequests === true) policy.answeredReviewRequests = true;
   return Object.keys(policy).length > 0 ? policy : undefined;
 }
 
@@ -132,11 +135,35 @@ function lastScore(
   return { score: Number(match[1]), total: Number(match[2]), ...(last.commit && { commit: last.commit }) };
 }
 
+/**
+ * The bots that a comment asks for a review after their last review, such as "@sakuga-review review
+ * balanced". The comment must start a line with the mention, and its author must not be that bot: a
+ * bot can quote its own command. An agent can post as a bot, so a request of another bot counts. A
+ * bot is a bot login of a review or a comment of the pull request.
+ */
+export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comments'>): string[] {
+  const logins = [
+    ...facts.reviews.map((review) => review.user?.login),
+    ...facts.comments.map((post) => post.user?.login),
+  ];
+  const bots = [...new Set(logins.filter((login): login is string => Boolean(login) && isBotLogin(login!)))];
+  return bots.filter((bot) => {
+    const lastReview = facts.reviews
+      .filter((review) => review.user?.login === bot)
+      .reduce((last, review) => (review.submitted_at > last ? review.submitted_at : last), '');
+    const name = bot.replace(/\[bot\]$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const mention = new RegExp(`^\\s*@${name}(?![\\w-])`, 'im');
+    return facts.comments.some(
+      (post) => post.user && post.user.login !== bot && post.created_at > lastReview && mention.test(post.body),
+    );
+  });
+}
+
 /** Returns the rules of the policy that the pull request misses, in the order of the settings file. */
 export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts): PolicyMiss[] {
   if (!policy) return [];
   const misses: PolicyMiss[] = [];
-  const { minScore, requireProof, resolvedBotThreads, ownerOnly } = policy;
+  const { minScore, requireProof, resolvedBotThreads, ownerOnly, answeredReviewRequests } = policy;
   if (minScore) {
     const last = lastScore(minScore.reviewer, facts);
     if (!last) misses.push({ rule: 'minScore', note: `no score from ${minScore.reviewer}` });
@@ -169,5 +196,8 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
         note: owned ? `${ownerOnly.owner} merges` : `${ownerOnly.owner} merges: more than ${files!.length} files`,
       });
   }
+  if (answeredReviewRequests)
+    for (const bot of unansweredRequests(facts))
+      misses.push({ rule: 'answeredReviewRequests', note: `review asked of ${displayName(bot)}, no answer yet` });
   return misses;
 }
