@@ -56,6 +56,8 @@ test('the output keeps the same keys, in the same order', () => {
     'state',
     'stalled',
     'idleMinutes',
+    'mergedBy',
+    'mergedAt',
     'error',
     'checks',
     'reviewers',

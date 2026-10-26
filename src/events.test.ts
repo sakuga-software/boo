@@ -18,6 +18,8 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   state: 'awaiting review',
   stalled: false,
   idleMinutes: null,
+  mergedBy: null,
+  mergedAt: null,
   error: null,
   checks: { passed: 2, failing: [], running: 0, skipped: 0, quota: 0 },
   reviewers: [],
@@ -90,6 +92,21 @@ test('a pull request enters the list, and others leave it merged or unlisted', (
   );
 });
 
+test('only a merged pull request says who merged it', () => {
+  const events = diffReports(
+    byKey(report(1), report(2)),
+    [report(1, { state: 'merged', mergedBy: null }), report(2, { state: 'closed' })],
+    AT,
+  );
+  assert.deepEqual(
+    events.map(({ at: _at, ...rest }) => rest),
+    [
+      { pr: 'acme/web#1', event: 'left', reason: 'merged', mergedBy: null, mergedAt: null },
+      { pr: 'acme/web#2', event: 'left', reason: 'closed' },
+    ],
+  );
+});
+
 test('the first read gives a snapshot line also for a pull request that merged since the list', () => {
   assert.deepEqual(
     diffReports(undefined, [report(1, { state: 'merged' })], AT).map(({ event }) => event),
@@ -148,8 +165,9 @@ test('the watch reads a pull request that left the search once more, to give the
     fetchPullRequest: async (target) => {
       fetched.push(target.number);
       return snapshot({
-        status: target.number === 2 && lists.length === 0 ? 'merged' : 'open',
         branch: `b${target.number}`,
+        ...(target.number === 2 &&
+          lists.length === 0 && { status: 'merged', mergedBy: 'octocat', mergedAt: '2026-10-24T11:59:00Z' }),
       });
     },
     readOwners: async () => new Map(),
@@ -173,6 +191,14 @@ test('the watch reads a pull request that left the search once more, to give the
       ['acme/web#2', 'left'],
     ],
   );
+  const { at: _at, ...left } = events.at(-1)!;
+  assert.deepEqual(left, {
+    pr: 'acme/web#2',
+    event: 'left',
+    reason: 'merged',
+    mergedBy: 'octocat',
+    mergedAt: '2026-10-24T11:59:00Z',
+  });
   assert.deepEqual(fetched, [1, 2, 1, 2]);
 });
 

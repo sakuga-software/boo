@@ -111,6 +111,9 @@ export interface PullRequestReport {
   stalled: boolean;
   /** The minutes since the commit time of the head commit. */
   idleMinutes: number | null;
+  /** The login that merged the pull request, and when. Null if it is not merged. */
+  mergedBy: string | null;
+  mergedAt: string | null;
   error: string | null;
   checks: { passed: number; failing: string[]; running: number; skipped: number; quota: number };
   reviewers: {
@@ -225,6 +228,8 @@ export function buildReport(
         afterMinutes: settings.stalledAfterMinutes,
         now,
       }),
+      mergedBy: snapshot?.mergedBy ?? null,
+      mergedAt: snapshot?.mergedAt ?? null,
       error: error ?? null,
       checks: summary
         ? {

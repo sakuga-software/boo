@@ -13,7 +13,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'head'; from: string | null; to: string | null }
   | ({ event: 'review'; reviewer: string; reviewedAt: string | null } & Omit<Reviewer, 'login' | 'at'>)
   | { event: 'check'; check: string; to: 'failing' | 'not failing' }
-  | { event: 'left'; reason: string }
+  | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
 );
 
 const sameReview = (a: Reviewer, b: Reviewer) =>
@@ -67,7 +67,14 @@ export function diffReports(
     const before = previous?.get(pr);
     if (!previous) events.push({ at, pr, event: 'snapshot', ...report });
     else if (LEFT_STATES.has(report.state)) {
-      if (before) events.push({ at, pr, event: 'left', reason: report.state });
+      if (before)
+        events.push({
+          at,
+          pr,
+          event: 'left',
+          reason: report.state,
+          ...(report.state === 'merged' && { mergedBy: report.mergedBy, mergedAt: report.mergedAt }),
+        });
     } else if (!before) events.push({ at, pr, event: 'entered', ...report });
     else events.push(...changesOf(before, report, at));
   }
