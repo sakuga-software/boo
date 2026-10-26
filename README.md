@@ -459,6 +459,12 @@ reviewer, so each install works under its own name (`sakuga-review[bot]` at Saku
   has the same check, and that check passed or still runs. A push and a change of base can start a
   workflow twice, and a concurrency rule cancels one run. The details show
   `⊘ e2e · cancelled by a newer run`.
+- A GitHub Actions workflow whose last run on the head commit has not ended counts as one running
+  check, with the name of the workflow, if no check of that run runs. A queued run has no check yet,
+  and a run between two jobs can have only finished checks: without this rule, the pull request
+  could show `ready to merge` before its CI starts. Only the last run of each workflow counts. A
+  queued run replaces the checks of an older cancelled run of the same workflow. The check suites of
+  the other apps do not count: many of them stay queued for ever.
 - Each failing check shows its cause in the details: `✖ Migrations · fails on main too` if the same
   check fails on the last commit of the base branch, else `✖ Migrations · fails here only`. A check
   that fails on the base branch too still counts as failing: the pull request cannot merge green.

@@ -171,6 +171,7 @@ query(${VARIABLES}) {
     reviews(last: 100) { ${OLDER} nodes { ${REVIEW_FIELDS} } }
     comments(last: 100) { ${OLDER} nodes { ${COMMENT_FIELDS} } }
     commits(last: 1) { nodes { commit { message committedDate authors(first: 10) { nodes { user { login } } }
+      checkSuites(first: 100) { nodes { status workflowRun { databaseId workflow { name } } } }
       statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
     ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }' : ''}
     ${files ? 'files(first: 100) { nodes { path } }' : ''}
@@ -257,6 +258,7 @@ interface PullRequestNode {
         message?: string;
         committedDate?: string;
         authors?: { nodes: { user: { login: string } | null }[] };
+        checkSuites?: { nodes: SuiteNode[] } | null;
         statusCheckRollup: { contexts: Page<ContextNode> } | null;
       };
     }[];
@@ -328,6 +330,41 @@ function toCheck(node: ContextNode): Check {
   };
 }
 
+interface SuiteNode {
+  status: string;
+  workflowRun: { databaseId: number; workflow: { name: string } } | null;
+}
+
+/**
+ * Adds one running check for each workflow whose last run on the commit has no running check yet. A
+ * queued run has no check run, so the rollup lists only the workflows that started. A run that is
+ * between two jobs can also have only finished checks. The suites of the apps that are not GitHub
+ * Actions have no workflow run: many stay QUEUED for ever, so they do not count.
+ */
+export function withUnfinishedRuns(checks: Check[], suites: readonly SuiteNode[]): Check[] {
+  const lastRuns = new Map<string, { run: number; status: string }>();
+  for (const { status, workflowRun } of suites) {
+    if (!workflowRun) continue;
+    const known = lastRuns.get(workflowRun.workflow.name);
+    if (!known || known.run < workflowRun.databaseId)
+      lastRuns.set(workflowRun.workflow.name, { run: workflowRun.databaseId, status });
+  }
+  const unfinished = [...lastRuns].filter(
+    ([, { run, status }]) =>
+      status !== 'COMPLETED' && !checks.some((check) => check.run === run && check.state === 'pending'),
+  );
+  return [
+    ...checks,
+    ...unfinished.map(([workflow, { run }]): Check => ({
+      name: workflow,
+      state: 'pending',
+      workflow,
+      run,
+      wholeRun: true,
+    })),
+  ];
+}
+
 function statusOf(pull: PullRequestNode): PullRequestStatus {
   if (pull.merged || pull.state === 'MERGED') return 'merged';
   if (pull.state === 'CLOSED') return 'closed';
@@ -354,7 +391,10 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
     mergeState: pull.mergeStateStatus.toLowerCase(),
     reviews: pull.reviews.nodes.map(toReview).filter((review) => review !== null),
     comments: pull.comments.nodes.map(toComment),
-    checks: (pull.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []).map(toCheck),
+    checks: withUnfinishedRuns(
+      (commit?.statusCheckRollup?.contexts.nodes ?? []).map(toCheck),
+      commit?.checkSuites?.nodes ?? [],
+    ),
     baseChecks: (pull.baseRef?.target?.statusCheckRollup?.contexts.nodes ?? []).map(toCheck),
     requested: pull.reviewRequests.nodes
       .map(({ requestedReviewer: reviewer }) =>

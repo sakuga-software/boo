@@ -21,6 +21,8 @@ export interface Check {
   run?: number;
   /** The run of the check stopped before its end, for example because of a concurrency rule. */
   cancelled?: boolean;
+  /** The check stands for a whole workflow run that does not run its jobs yet: queued, or waiting. */
+  wholeRun?: boolean;
 }
 
 export type ReviewerStatus =
@@ -291,7 +293,7 @@ export interface ChecksSummary {
 
 /**
  * True if a run of the same workflow on the same commit has the same check, and that check passed or
- * still runs. A push and a change of base can start a workflow twice, and a concurrency rule cancels one run.
+ * still runs. A newer run that does not run its jobs yet replaces each check. A push and a change of base can start a workflow twice, and a concurrency rule cancels one run.
  */
 function replacedByNewerRun(check: Check, checks: readonly Check[]): boolean {
   if (!check.cancelled || !check.workflow) return false;
@@ -299,7 +301,7 @@ function replacedByNewerRun(check: Check, checks: readonly Check[]): boolean {
     (other) =>
       other.workflow === check.workflow &&
       other.run !== check.run &&
-      other.name === check.name &&
+      (other.name === check.name || other.wholeRun) &&
       (other.state === 'success' || other.state === 'pending'),
   );
 }
