@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Comment, Review } from './decide.js';
-import { globToRegExp, parseMergePolicy, policyMisses, type PolicyFacts } from './policy.js';
+import { globToRegExp, parseMergePolicy, policyMisses, unansweredRequests, type PolicyFacts } from './policy.js';
 import { parseSettings } from './settings.js';
 
 const at = (minutes: number) => new Date(Date.parse('2026-10-24T12:00:00Z') - minutes * 60_000).toISOString();
@@ -69,6 +69,39 @@ test('an open thread of a bot misses the rule, an open thread of a person does n
   ]);
 });
 
+test('a review asked of a bot after its last review holds the merge until the bot answers', () => {
+  const policy = { answeredReviewRequests: true };
+  const reviewed = review(SAKUGA, 'head', 'Score de confiance : 4/5', 10);
+  const ask = comment('mathieu', '@sakuga-review review balanced', 5);
+  assert.deepEqual(policyMisses(policy, facts({ reviews: [reviewed], comments: [ask] })), [
+    { rule: 'answeredReviewRequests', note: 'review asked of sakuga-review, no answer yet' },
+  ]);
+  const answer = review(SAKUGA, 'head', 'Score de confiance : 3/5', 1);
+  assert.deepEqual(policyMisses(policy, facts({ reviews: [reviewed, answer], comments: [ask] })), []);
+  assert.deepEqual(policyMisses({}, facts({ reviews: [reviewed], comments: [ask] })), []);
+});
+
+test('only a request at the start of a line, after the last review, and not of the bot itself counts', () => {
+  const reviewed = review(SAKUGA, 'head', 'Score de confiance : 4/5', 10);
+  const quoted = comment(SAKUGA, 'Commentez `@sakuga-review review heavy`.\n@sakuga-review review heavy', 9);
+  const before = comment('mathieu', '@sakuga-review review', 20);
+  const inText = comment('mathieu', 'Thanks to @sakuga-review for the review.', 5);
+  const otherBot = comment('mathieu', '@sakuga-review-bis review', 5);
+  const thanks = comment('mathieu', '@sakuga-review merci, c’est corrigé.\nA review of the code follows.', 5);
+  assert.deepEqual(
+    unansweredRequests({ reviews: [reviewed], comments: [quoted, before, inText, otherBot, thanks] }),
+    [],
+  );
+  const full = comment('mathieu', '@sakuga-review full review', 4);
+  assert.deepEqual(unansweredRequests({ reviews: [reviewed], comments: [full] }), [SAKUGA]);
+  assert.deepEqual(
+    unansweredRequests({ reviews: [], comments: [quoted, comment('mathieu', 'Please.\n  @Sakuga-Review review', 1)] }),
+    [SAKUGA],
+  );
+  const agent = comment('sakuga-agent[bot]', '@sakuga-review review balanced', 1);
+  assert.deepEqual(unansweredRequests({ reviews: [reviewed], comments: [agent] }), [SAKUGA]);
+});
+
 test('a change to an owned path needs the owner, and @me is the user of boo', () => {
   const ownerOnly = { paths: ['.github/workflows/**', '**/migrations/**', '**/auth/**'], owner: 'mathieu' };
   const touches = (file: string, viewer?: string) =>
@@ -107,12 +140,14 @@ test('the settings drop a rule with an invalid field, and keep the others', () =
       requireProof: '\\.gif',
       resolvedBotThreads: true,
       ownerOnly: { paths: ['**/auth/**', 3], owner: '@me' },
+      answeredReviewRequests: true,
     }),
     {
       minScore: { reviewer: 'sakuga-review', score: 4, onHead: true },
       requireProof: '\\.gif',
       resolvedBotThreads: true,
       ownerOnly: { paths: ['**/auth/**'], owner: '@me' },
+      answeredReviewRequests: true,
     },
   );
   assert.deepEqual(
