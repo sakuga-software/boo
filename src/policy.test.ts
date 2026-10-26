@@ -87,7 +87,13 @@ test('only a request at the start of a line, after the last review, and not of t
   const before = comment('mathieu', '@sakuga-review review', 20);
   const inText = comment('mathieu', 'Thanks to @sakuga-review for the review.', 5);
   const otherBot = comment('mathieu', '@sakuga-review-bis review', 5);
-  assert.deepEqual(unansweredRequests({ reviews: [reviewed], comments: [quoted, before, inText, otherBot] }), []);
+  const thanks = comment('mathieu', '@sakuga-review merci, c’est corrigé.\nA review of the code follows.', 5);
+  assert.deepEqual(
+    unansweredRequests({ reviews: [reviewed], comments: [quoted, before, inText, otherBot, thanks] }),
+    [],
+  );
+  const full = comment('mathieu', '@sakuga-review full review', 4);
+  assert.deepEqual(unansweredRequests({ reviews: [reviewed], comments: [full] }), [SAKUGA]);
   assert.deepEqual(
     unansweredRequests({ reviews: [], comments: [quoted, comment('mathieu', 'Please.\n  @Sakuga-Review review', 1)] }),
     [SAKUGA],

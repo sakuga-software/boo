@@ -137,7 +137,8 @@ function lastScore(
 
 /**
  * The bots that a comment asks for a review after their last review, such as "@sakuga-review review
- * balanced". The comment must start a line with the mention, and its author must not be that bot: a
+ * balanced". A line of the comment must start with the mention and contain the word "review". A thank
+ * you to the bot is not a request. The author of the comment must not be that bot: a
  * bot can quote its own command. An agent can post as a bot, so a request of another bot counts. A
  * bot is a bot login of a review or a comment of the pull request.
  */
@@ -152,7 +153,7 @@ export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comment
       .filter((review) => review.user?.login === bot)
       .reduce((last, review) => (review.submitted_at > last ? review.submitted_at : last), '');
     const name = bot.replace(/\[bot\]$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const mention = new RegExp(`^\\s*@${name}(?![\\w-])`, 'im');
+    const mention = new RegExp(`^\\s*@${name}(?![\\w-])[^\\n]*\\breview\\b`, 'im');
     return facts.comments.some(
       (post) => post.user && post.user.login !== bot && post.created_at > lastReview && mention.test(post.body),
     );
