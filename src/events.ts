@@ -9,7 +9,7 @@ type Reviewer = PullRequestReport['reviewers'][number];
 /** One line of `boo --watch --events`. `pr` is "owner/repo#number". */
 export type WatchEvent = { at: string; pr: string } & (
   | ({ event: 'snapshot' | 'entered' } & PullRequestReport)
-  | { event: 'state'; from: string; to: string; failing: string[] }
+  | { event: 'state'; from: string; to: string; failing: string[]; error?: string }
   | { event: 'head'; from: string | null; to: string | null }
   | ({ event: 'review'; reviewer: string; reviewedAt: string | null } & Omit<Reviewer, 'login' | 'at'>)
   | { event: 'check'; check: string; to: 'failing' | 'not failing' }
@@ -29,7 +29,15 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
   const pr = `${after.repo}#${after.number}`;
   const events: WatchEvent[] = [];
   if (before.state !== after.state)
-    events.push({ at, pr, event: 'state', from: before.state, to: after.state, failing: after.checks.failing });
+    events.push({
+      at,
+      pr,
+      event: 'state',
+      from: before.state,
+      to: after.state,
+      failing: after.checks.failing,
+      ...(after.error && { error: after.error }),
+    });
   // A read that failed has no data. Its other differences are not changes of the pull request.
   if (after.error) return events;
   if (before.headSha !== after.headSha) events.push({ at, pr, event: 'head', from: before.headSha, to: after.headSha });
@@ -93,6 +101,33 @@ function keepLastData(previous: ReadonlyMap<string, PullRequestReport> | undefin
   return report.error && last ? { ...last, state: report.state, error: report.error } : report;
 }
 
+/** GitHub fails one read now and then. A pull request goes to `error` only after this count of failed reads in a row. */
+export const ERROR_AFTER_READS = 2;
+
+/**
+ * Gives the last report in place of a failed read, until the pull request has `ERROR_AFTER_READS`
+ * failed reads in a row. `failures` keeps the count of each pull request from one read to the next.
+ */
+export function holdErrors(
+  previous: ReadonlyMap<string, PullRequestReport> | undefined,
+  reports: readonly PullRequestReport[],
+  failures: Map<string, number>,
+): PullRequestReport[] {
+  const keys = new Set(reports.map((report) => `${report.repo}#${report.number}`));
+  for (const key of failures.keys()) if (!keys.has(key)) failures.delete(key);
+  return reports.map((report) => {
+    const key = `${report.repo}#${report.number}`;
+    if (!report.error) {
+      failures.delete(key);
+      return report;
+    }
+    const count = (failures.get(key) ?? 0) + 1;
+    failures.set(key, count);
+    const last = previous?.get(key);
+    return last && !last.error && count < ERROR_AFTER_READS ? last : report;
+  });
+}
+
 export interface WatchSources {
   listPullRequests(): Promise<PullRequest[]>;
   fetchPullRequest(pr: PullRequest): Promise<PullRequestSnapshot>;
@@ -135,6 +170,7 @@ export async function watchEvents(
   onListError: (error: unknown) => void,
 ): Promise<void> {
   let previous: Map<string, PullRequestReport> | undefined;
+  const failures = new Map<string, number>();
   let tracked = new Map<string, PullRequest>();
   while (!signal.aborted) {
     try {
@@ -151,8 +187,12 @@ export async function watchEvents(
         read.filter((report) => goneKeys.has(keyOfReport(report)) && report.error).map(keyOfReport),
       );
       // A pull request that left the search result but is still open gives `left` with "unlisted".
-      const reports = read.filter((report) => !goneKeys.has(keyOfReport(report)) || LEFT_STATES.has(report.state));
       const before = previous && new Map([...previous].filter(([key]) => !unread.has(key)));
+      const reports = holdErrors(
+        before,
+        read.filter((report) => !goneKeys.has(keyOfReport(report)) || LEFT_STATES.has(report.state)),
+        failures,
+      );
       // A stop during the read must not write the events of that read.
       if (signal.aborted) return;
       for (const event of diffReports(before, reports, now.toISOString())) {
