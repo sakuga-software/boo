@@ -68,6 +68,8 @@ import {
 export interface Options {
   org: string;
   authors: string[];
+  /** The full names of the watched repositories. Empty or undefined: every repository of the organization. */
+  repos?: string[];
   since?: string;
   watch: boolean;
   dryRun: boolean;
@@ -1270,7 +1272,7 @@ export function App(props: AppProps) {
       {rows?.length === 0 && (
         <Text dimColor>
           No open pull request by {authors.join(' or ')}
-          {options.org ? ` in ${options.org}` : ''}
+          {scopeOf(options) === 'all organizations' ? '' : ` in ${scopeOf(options)}`}
           {options.since ? ` since ${formatDay(options.since)}` : ''}.
         </Text>
       )}
@@ -1388,6 +1390,9 @@ export function Ghost({ mood, background = 'unknown' }: { mood: Mood; background
   );
 }
 
+const scopeOf = ({ org, repos = [] }: Pick<Options, 'org' | 'repos'>) =>
+  repos.length > 0 ? repos.join(', ') : org || 'all organizations';
+
 export function Header({ options, mood, now, nextCheckAt, rate }: HeaderProps) {
   const status =
     !options.watch || mood === 'done' || mood === 'failed'
@@ -1395,7 +1400,7 @@ export function Header({ options, mood, now, nextCheckAt, rate }: HeaderProps) {
       : `${nextCheckAt ? `next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : 'checking…'}${options.interactive ? '' : ' · Ctrl+C to quit'}`;
   const scope = [
     options.authors.join(' + '),
-    options.org || 'all organizations',
+    scopeOf(options),
     options.since && `since ${formatDay(options.since)}`,
   ].filter(Boolean);
   return (

@@ -30,6 +30,8 @@ export interface PullRequest {
 export interface SearchOptions {
   org: string;
   authors: string[];
+  /** The full names of the repositories to watch. Empty or undefined: every repository of the organization. */
+  repos?: string[];
   since?: string;
 }
 
@@ -43,9 +45,9 @@ interface SearchResult {
 }
 
 /** The GitHub search has no OR between two authors: each author is one search. */
-export async function listPullRequests({ org, authors, since }: SearchOptions): Promise<PullRequest[]> {
+export async function listPullRequests({ org, authors, repos = [], since }: SearchOptions): Promise<PullRequest[]> {
   const searches = await Promise.all(
-    authors.map((author) => searchPullRequests({ org, author, ...(since && { since }) })),
+    authors.map((author) => searchPullRequests({ org, author, repos, ...(since && { since }) })),
   );
   return mergeSearches(searches).map((result) => ({
     repo: result.repository.nameWithOwner,
@@ -53,6 +55,12 @@ export async function listPullRequests({ org, authors, since }: SearchOptions): 
     title: result.title,
     url: result.url,
   }));
+}
+
+/** The search takes the owner and the repositories with AND: a repository of another owner gives nothing. */
+export function searchScope(org: string, repos: string[]): string[] {
+  if (repos.length > 0) return repos.flatMap((repo) => ['--repo', repo]);
+  return org ? ['--owner', org] : [];
 }
 
 export function mergeSearches<T extends Pick<SearchResult, 'url' | 'isDraft' | 'updatedAt'>>(searches: T[][]): T[] {
@@ -63,16 +71,18 @@ export function mergeSearches<T extends Pick<SearchResult, 'url' | 'isDraft' | '
 async function searchPullRequests({
   org,
   author,
+  repos,
   since,
 }: {
   org: string;
   author: string;
+  repos: string[];
   since?: string;
 }): Promise<SearchResult[]> {
   const output = await gh([
     'search',
     'prs',
-    ...(org ? ['--owner', org] : []),
+    ...searchScope(org, repos),
     '--author',
     author,
     '--state',

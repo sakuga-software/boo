@@ -42,6 +42,8 @@ export interface CustomBot {
 export type Settings = Record<SettingKey, boolean> & {
   /** The authors of the listed pull requests: a login, "@me", or "app/<slug>" for a GitHub App. */
   authors: string[];
+  /** The repositories to watch, as "owner/name" or as "name" in the organization. Undefined: every repository. */
+  repos?: string[];
   /** The switches of each review bot, by the id of the bot. */
   bots: Record<string, BotSwitches>;
   customBots: CustomBot[];
@@ -128,6 +130,27 @@ export function parseAuthors(value: unknown): string[] | undefined {
   return authors.length > 0 ? authors : undefined;
 }
 
+const REPO = /^(?:[\w.-]+\/)?[\w.-]+$/;
+
+/** Reads a list of repositories from any JSON value. Returns undefined if the value is not a list with one repository or more. */
+export function parseRepos(value: unknown): string[] | undefined {
+  const repos = parseAuthors(value)?.filter((repo) => REPO.test(repo));
+  return repos && repos.length > 0 ? repos : undefined;
+}
+
+/** Gives the full name of each repository. A name with no owner takes the organization. */
+export function resolveRepos(repos: string[], org: string): string[] {
+  return [
+    ...new Set(
+      repos.map((repo) => {
+        if (repo.includes('/')) return repo;
+        if (!org) throw new Error(`The repository "${repo}" needs an owner ("owner/${repo}"), because --org is "all".`);
+        return `${org}/${repo}`;
+      }),
+    ),
+  ];
+}
+
 /** Reads the settings from any JSON value. A missing or invalid value keeps its default. */
 export function parseSettings(value: unknown): Settings {
   const settings: Settings = {
@@ -146,6 +169,8 @@ export function parseSettings(value: unknown): Settings {
     if (typeof stored === 'boolean') settings[key] = stored;
   }
   settings.authors = parseAuthors((value as Record<string, unknown>).authors) ?? settings.authors;
+  const repos = parseRepos((value as Record<string, unknown>).repos);
+  if (repos) settings.repos = repos;
   settings.bots = parseSwitches((value as Record<string, unknown>).bots);
   settings.agentPrompts = parsePrompts((value as Record<string, unknown>).agentPrompts);
   const mergePolicy = parseMergePolicy((value as Record<string, unknown>).mergePolicy);
