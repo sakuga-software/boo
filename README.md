@@ -22,8 +22,8 @@ The package installs the `boo` command. To run the sources of a clone instead:
 ```sh
 git clone https://github.com/sakuga-software/boo.git
 cd boo
-pnpm install          # the prepare script builds dist/
-ln -sf "$PWD/dist/cli.js" ~/.local/bin/boo
+pnpm install          # the prepare script builds packages/cli/dist/
+ln -sf "$PWD/packages/cli/dist/cli.js" ~/.local/bin/boo
 ```
 
 Requires Node 22 or later and an authenticated `gh` (`gh auth status`). The Copilot review request
@@ -646,6 +646,9 @@ every command for the agent and every merge.
 
 ## Development
 
+The repository is a pnpm workspace. The CLI, which npm publishes, is in `packages/cli`. The scripts
+of the root run in that package, except the lint and the format, which read the whole repository.
+
 ```sh
 pnpm dev -- --dry-run   # run the sources with tsx
 pnpm test               # the tests, with the dashboard rendered by ink-testing-library
@@ -666,8 +669,8 @@ checks that the title of a pull request follows the convention of the commits.
 
 A GitHub release publishes the package on npm (`.github/workflows/publish.yml`):
 
-1. In a pull request, change `version` in `package.json` (`npm version minor --no-git-tag-version`),
-   then merge it.
+1. In a pull request, change `version` in `packages/cli/package.json`
+   (`npm version minor --no-git-tag-version` in that folder), then merge it.
 2. Optional: run the workflow by hand on `main` (Actions → Publish → Run workflow). It does all the
    checks and shows what npm would publish, with no publish.
 3. Create a release on `main` with the tag `v` + that version, for example `v1.2.0`.
@@ -676,12 +679,13 @@ The workflow refuses a tag that does not match the version, and a version that i
 A first job runs the checks and packs the tarball, with no right to publish. A second job publishes
 that tarball with npm trusted publishing: npm trusts the OIDC token of the workflow, so the
 repository keeps no npm token, and the package gets a signed provenance. The second job installs
-nothing, so no script of a dependency runs next to that token.
+nothing, so no script of a dependency runs next to that token. The package gets the `README.md` and
+the `LICENSE` of the root: its `prepack` script copies them.
 
 ## Demo
 
 The GIF uses the real interface and the real decision logic with a fake GitHub
-(`demo/demo.tsx`). The fake GitHub plays a timeline: a CodeRabbit review in progress, a bot that
+(`packages/cli/demo/demo.tsx`). The fake GitHub plays a timeline: a CodeRabbit review in progress, a bot that
 shows its progress, a Copilot quota refusal, a CodeRabbit quota that comes back and a retry, a
 merged pull request, a new pull request, then the reviews. At the end, it unfolds the first pull
 request with `e`, selects another one and unfolds it with `→`, shows the list of the review bots with `b`,
@@ -691,5 +695,5 @@ fake local session works on, opens the commands for the agent with `a`, and send
 then `Enter`. To see it live, run `pnpm demo`. To record the GIF again (requires vhs, ttyd and ffmpeg):
 
 ```sh
-demo/record.sh
+packages/cli/demo/record.sh
 ```

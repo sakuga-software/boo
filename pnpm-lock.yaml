@@ -7,6 +7,18 @@ settings:
 importers:
 
   .:
+    devDependencies:
+      husky:
+        specifier: ^9.1.7
+        version: 9.1.7
+      oxfmt:
+        specifier: ^0.72.0
+        version: 0.72.0
+      oxlint:
+        specifier: ^1.87.0
+        version: 1.87.0
+
+  packages/cli:
     dependencies:
       ink:
         specifier: ^7.1.1
@@ -27,18 +39,9 @@ importers:
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
-      husky:
-        specifier: ^9.1.7
-        version: 9.1.7
       ink-testing-library:
         specifier: ^4.0.0
         version: 4.0.0(@types/react@19.3.0)
-      oxfmt:
-        specifier: ^0.72.0
-        version: 0.72.0
-      oxlint:
-        specifier: ^1.87.0
-        version: 1.87.0
       tsx:
         specifier: ^4.23.15
         version: 4.23.15

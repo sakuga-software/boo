@@ -1,0 +1,64 @@
+{
+  "name": "@sakuga-software/boo",
+  "version": "1.2.0",
+  "description": "Watches your open pull requests: the approval, the reviewers of every provider, the checks, and the review quotas",
+  "keywords": [
+    "claude-code",
+    "cli",
+    "code-review",
+    "coderabbit",
+    "github",
+    "pull-requests",
+    "tui"
+  ],
+  "homepage": "https://github.com/sakuga-software/boo#readme",
+  "bugs": {
+    "url": "https://github.com/sakuga-software/boo/issues"
+  },
+  "license": "MIT",
+  "author": "Sakuga",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sakuga-software/boo.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "boo": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc && chmod +x dist/cli.js",
+    "prepare": "pnpm build",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json && tsc -p demo/tsconfig.json",
+    "test": "tsx --tsconfig tsconfig.test.json --test src/*.test.ts src/*.test.tsx",
+    "test:coverage": "tsx --tsconfig tsconfig.test.json --test --experimental-test-coverage --test-coverage-exclude=\"src/**/*.test.*\" --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=75 src/*.test.ts src/*.test.tsx",
+    "check:pack": "node scripts/check-pack.mjs",
+    "check": "pnpm typecheck && pnpm test:coverage && pnpm check:pack",
+    "demo": "tsx --tsconfig demo/tsconfig.json demo/demo.tsx",
+    "prepack": "node -e \"for (const f of ['README.md', 'LICENSE']) fs.copyFileSync('../../' + f, f)\""
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "ink-spinner": "^5.0.0",
+    "meow": "^14.1.0",
+    "react": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "ink-testing-library": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
