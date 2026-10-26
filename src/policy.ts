@@ -4,7 +4,7 @@ import type { Comment, Review } from './decide.js';
 /** The rules that a team adds to "ready to merge", from the `mergePolicy` of the settings file. */
 export interface MergePolicy {
   /** The last confidence score of `reviewer` must be at least `score`, from a review of the head commit if `onHead`. */
-  minScore?: { reviewer: string; score: number; onHead: boolean };
+  minScore?: { reviewer: string; score: number; onHead: boolean; deepest?: ReviewLevels };
   /** A regular expression that the description or a comment must match: a link to a recording, or a reason. */
   requireProof?: string;
   /** Every review thread that a bot starts must be resolved. */
@@ -13,6 +13,15 @@ export interface MergePolicy {
   ownerOnly?: { paths: string[]; owner: string };
   /** A review that a comment asks of a bot after its last review must come before the merge. */
   answeredReviewRequests?: boolean;
+}
+
+/**
+ * The levels of the reviews of a bot, from the lightest to the deepest. The first group of `pattern`
+ * gives the level of a review. A review with no level, or with an unknown level, is the lightest.
+ */
+export interface ReviewLevels {
+  pattern: string;
+  levels: string[];
 }
 
 export type PolicyRule = 'minScore' | 'requireProof' | 'resolvedBotThreads' | 'ownerOnly' | 'answeredReviewRequests';
@@ -57,6 +66,15 @@ export const extraFields = (policy: MergePolicy | undefined) => ({
   files: Boolean(policy?.ownerOnly),
 });
 
+function parseLevels(value: unknown): ReviewLevels | undefined {
+  if (!isRecord(value) || typeof value.pattern !== 'string' || !compiles(value.pattern)) return undefined;
+  if (!/\((?!\?)/.test(value.pattern)) return undefined;
+  const levels = Array.isArray(value.levels)
+    ? value.levels.filter((level): level is string => typeof level === 'string' && Boolean(level.trim()))
+    : [];
+  return levels.length > 0 ? { pattern: value.pattern, levels: levels.map((level) => level.trim()) } : undefined;
+}
+
 /** Reads the merge policy from any JSON value. A rule with a missing or invalid field is dropped. */
 export function parseMergePolicy(value: unknown): MergePolicy | undefined {
   if (!isRecord(value)) return undefined;
@@ -68,8 +86,15 @@ export function parseMergePolicy(value: unknown): MergePolicy | undefined {
     minScore.reviewer.trim() &&
     typeof minScore.score === 'number' &&
     minScore.score > 0
-  )
-    policy.minScore = { reviewer: minScore.reviewer.trim(), score: minScore.score, onHead: minScore.onHead === true };
+  ) {
+    const deepest = parseLevels(minScore.deepest);
+    policy.minScore = {
+      reviewer: minScore.reviewer.trim(),
+      score: minScore.score,
+      onHead: minScore.onHead === true,
+      ...(deepest && { deepest }),
+    };
+  }
   if (typeof requireProof === 'string' && requireProof.trim() && compiles(requireProof))
     policy.requireProof = requireProof;
   if (resolvedBotThreads === true) policy.resolvedBotThreads = true;
@@ -108,12 +133,18 @@ const sameLogin = (a: string, b: string) =>
 // Greptile writes "Confidence Score: 4/5", and Sakuga Review writes "Score de confiance : 4/5".
 const CONFIDENCE = /(?:confidence score|score de confiance)\W{0,6}(\d{1,2})\s*\/\s*(\d{1,2})/i;
 
-/** The last score of the reviewer, and the commit of its review. A comment has no commit. */
-function lastScore(
-  reviewer: string,
-  facts: PolicyFacts,
-): { score: number; total: number; commit?: string } | undefined {
-  const posts = [
+interface ScoredPost {
+  body: string;
+  at: string;
+  /** The commit of a review. A comment has no commit. */
+  commit?: string;
+  score: number;
+  total: number;
+}
+
+/** The posts of the reviewer that give a score, from the oldest to the newest. */
+function scoredPosts(reviewer: string, facts: PolicyFacts): ScoredPost[] {
+  return [
     ...facts.reviews.map((review) => ({
       login: review.user?.login,
       body: review.body ?? '',
@@ -127,12 +158,39 @@ function lastScore(
       commit: undefined as string | undefined,
     })),
   ]
-    .filter((post) => post.login && sameLogin(post.login, reviewer) && CONFIDENCE.test(post.body))
+    .flatMap(({ login, body, at, commit }) => {
+      const match = login && sameLogin(login, reviewer) ? CONFIDENCE.exec(body) : null;
+      if (!match) return [];
+      return [{ body, at, ...(commit && { commit }), score: Number(match[1]), total: Number(match[2]) }];
+    })
     .sort((a, b) => a.at.localeCompare(b.at));
-  const last = posts.at(-1);
-  const match = last && CONFIDENCE.exec(last.body);
-  if (!last || !match) return undefined;
-  return { score: Number(match[1]), total: Number(match[2]), ...(last.commit && { commit: last.commit }) };
+}
+
+/**
+ * The score that the rule reads. With no levels, the last score. With levels, the deepest level of
+ * all the scored posts counts. The score is the lowest of that level on the head commit if `onHead`,
+ * else on the commit of the last post of that level.
+ */
+function scoreOf(
+  minScore: NonNullable<MergePolicy['minScore']>,
+  facts: PolicyFacts,
+): { post?: ScoredPost; level?: string } {
+  const posts = scoredPosts(minScore.reviewer, facts);
+  const { deepest } = minScore;
+  if (!deepest) return { post: posts.at(-1) };
+  const pattern = new RegExp(deepest.pattern, 'i');
+  const levels = deepest.levels.map((level) => level.toLowerCase());
+  const depth = (post: ScoredPost) => levels.indexOf(pattern.exec(post.body)?.[1]?.toLowerCase() ?? '');
+  const bottom = Math.max(...posts.map(depth));
+  const deep = posts.filter((post) => depth(post) === bottom);
+  const level = bottom >= 0 ? deepest.levels[bottom] : undefined;
+  const commit = minScore.onHead ? facts.head : deep.at(-1)?.commit;
+  const counted = commit ? deep.filter((post) => post.commit === commit) : deep.slice(-1);
+  const post = counted.reduce<ScoredPost | undefined>(
+    (low, next) => (!low || next.score < low.score ? next : low),
+    undefined,
+  );
+  return { ...(post ? { post } : { post: deep.at(-1) }), ...(level && { level }) };
 }
 
 /**
@@ -166,14 +224,15 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
   const misses: PolicyMiss[] = [];
   const { minScore, requireProof, resolvedBotThreads, ownerOnly, answeredReviewRequests } = policy;
   if (minScore) {
-    const last = lastScore(minScore.reviewer, facts);
-    if (!last) misses.push({ rule: 'minScore', note: `no score from ${minScore.reviewer}` });
-    else if (minScore.onHead && last.commit !== facts.head)
-      misses.push({ rule: 'minScore', note: `no score from ${minScore.reviewer} on head` });
-    else if (last.score < minScore.score)
+    const { post, level } = scoreOf(minScore, facts);
+    const from = `${level ? `${level} ` : ''}score from ${minScore.reviewer}`;
+    if (!post) misses.push({ rule: 'minScore', note: `no ${from}` });
+    else if (minScore.onHead && post.commit !== facts.head)
+      misses.push({ rule: 'minScore', note: `no ${from} on head` });
+    else if (post.score < minScore.score)
       misses.push({
         rule: 'minScore',
-        note: `score ${last.score}/${last.total}${minScore.onHead ? ' on head' : ''}, ${minScore.score} needed`,
+        note: `${level ? `${level} ` : ''}score ${post.score}/${post.total}${minScore.onHead ? ' on head' : ''}, ${minScore.score} needed`,
       });
   }
   if (requireProof) {
