@@ -6,7 +6,8 @@ import { requestText, type Request } from './actions.js';
 import { detectAgent, type Agent } from './agents.js';
 import { cachedRead, cacheDir, DiskCache } from './cache.js';
 import type { Comment, Review } from './decide.js';
-import type { Check, CheckState } from './reviewers.js';
+import type { OpenThread } from './policy.js';
+import { isBotLogin, type Check, type CheckState } from './reviewers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -125,8 +126,8 @@ export interface PullRequestSnapshot {
   agent?: Agent;
   /** The description of the pull request. */
   body?: string;
-  /** The first author of each review thread that is not resolved. Undefined if the query did not read the threads. */
-  openThreads?: string[];
+  /** The review threads that are not resolved. Undefined if the query did not read the threads. */
+  openThreads?: OpenThread[];
   /** The changed files. Undefined if the query did not read them. */
   files?: string[];
   /** The commit time of the head commit. A rebase or an amend gives a new time. */
@@ -180,7 +181,7 @@ query(${VARIABLES}) {
     commits(last: 1) { nodes { commit { message committedDate authors(first: 10) { nodes { user { login } } }
       checkSuites(first: 100) { nodes { status workflowRun { databaseId workflow { name } } } }
       statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
-    ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }' : ''}
+    ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } latest: comments(last: 5) { nodes { author { login __typename } body } } } }' : ''}
     ${files ? 'files(first: 100) { nodes { path } }' : ''}
   } }
 }`;
@@ -258,7 +259,13 @@ interface PullRequestNode {
   reviewRequests: { nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[] };
   reviews: Page<ReviewNode>;
   comments: Page<CommentNode>;
-  reviewThreads?: { nodes: { isResolved: boolean; comments: { nodes: { author: Actor | null }[] } }[] };
+  reviewThreads?: {
+    nodes: {
+      isResolved: boolean;
+      comments: { nodes: { author: Actor | null }[] };
+      latest?: { nodes: { author: Actor | null; body: string }[] };
+    }[];
+  };
   files?: { nodes: { path: string }[] };
   commits: {
     nodes: {
@@ -422,7 +429,13 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
     ...(pull.reviewThreads && {
       openThreads: pull.reviewThreads.nodes
         .filter((thread) => !thread.isResolved)
-        .map((thread) => loginOf(thread.comments.nodes[0]?.author ?? null) ?? ''),
+        .map((thread): OpenThread => {
+          const lastBotComment = thread.latest?.nodes.findLast((node) => isBotLogin(loginOf(node.author) ?? ''))?.body;
+          return {
+            author: loginOf(thread.comments.nodes[0]?.author ?? null) ?? '',
+            ...(lastBotComment !== undefined && { lastBotComment }),
+          };
+        }),
     }),
     ...(pull.files && { files: pull.files.nodes.map((file) => file.path) }),
     ...(commit?.committedDate && { headAt: commit.committedDate }),

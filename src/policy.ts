@@ -7,8 +7,11 @@ export interface MergePolicy {
   minScore?: { reviewer: string; score: number; onHead: boolean; deepest?: ReviewLevels };
   /** A regular expression that the description or a comment must match: a link to a recording, or a reason. */
   requireProof?: string;
-  /** Every review thread that a bot starts must be resolved. */
-  resolvedBotThreads?: boolean;
+  /**
+   * Every review thread that a bot starts must be resolved. A thread whose last bot comment contains
+   * `goneMarker` counts as resolved: the bot says that its finding is gone.
+   */
+  resolvedBotThreads?: true | { goneMarker: string };
   /** Only `owner` merges a pull request that changes a file under one of `paths`. `@me` is the user of boo. */
   ownerOnly?: { paths: string[]; owner: string };
   /** A review that a comment asks of a bot after its last review must come before the merge. */
@@ -32,14 +35,21 @@ export interface PolicyMiss {
   note: string;
 }
 
+/** A review thread that is not resolved. */
+export interface OpenThread {
+  /** The author of the first comment. */
+  author: string;
+  /** The body of the last comment of a bot, in the last comments of the thread. */
+  lastBotComment?: string;
+}
+
 /** The facts of a pull request that the rules read. */
 export interface PolicyFacts {
   head: string;
   body: string;
   reviews: readonly Review[];
   comments: readonly Comment[];
-  /** The authors of the review threads that are not resolved. */
-  openThreads: readonly string[];
+  openThreads: readonly OpenThread[];
   /** The changed files. Undefined if GitHub gave no list. */
   files?: readonly string[] | undefined;
   /** The count of changed files. The list can hold fewer: the query reads the first 100. */
@@ -98,6 +108,12 @@ export function parseMergePolicy(value: unknown): MergePolicy | undefined {
   if (typeof requireProof === 'string' && requireProof.trim() && compiles(requireProof))
     policy.requireProof = requireProof;
   if (resolvedBotThreads === true) policy.resolvedBotThreads = true;
+  else if (
+    isRecord(resolvedBotThreads) &&
+    typeof resolvedBotThreads.goneMarker === 'string' &&
+    resolvedBotThreads.goneMarker.trim()
+  )
+    policy.resolvedBotThreads = { goneMarker: resolvedBotThreads.goneMarker.trim() };
   if (isRecord(ownerOnly) && Array.isArray(ownerOnly.paths) && typeof ownerOnly.owner === 'string') {
     const paths = ownerOnly.paths.filter((path): path is string => typeof path === 'string' && Boolean(path.trim()));
     if (paths.length > 0 && ownerOnly.owner.trim()) policy.ownerOnly = { paths, owner: ownerOnly.owner.trim() };
@@ -241,7 +257,10 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
       misses.push({ rule: 'requireProof', note: 'no proof' });
   }
   if (resolvedBotThreads) {
-    const open = facts.openThreads.filter(isBotLogin).length;
+    const marker = resolvedBotThreads === true ? undefined : resolvedBotThreads.goneMarker;
+    const open = facts.openThreads.filter(
+      (thread) => isBotLogin(thread.author) && !(marker && thread.lastBotComment?.includes(marker)),
+    ).length;
     if (open > 0) misses.push({ rule: 'resolvedBotThreads', note: `${open} open bot thread${open === 1 ? '' : 's'}` });
   }
   if (ownerOnly && ownerOnly.owner !== '@me') {
