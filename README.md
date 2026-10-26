@@ -137,15 +137,16 @@ merges nothing. Each line has `at`, `pr` (`owner/repo#number`) and `event`:
 | ---------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `snapshot` | The first read, one line for each pull request                 | The keys of `--json`                                                                                                   |
 | `entered`  | A pull request enters the list                                 | The keys of `--json`                                                                                                   |
-| `state`    | The state changes                                              | `from`, `to`, `failing`                                                                                                |
+| `state`    | The state changes                                              | `from`, `to`, `failing`, and `error` with the message of GitHub if `to` is `error`                                     |
 | `head`     | A new head commit                                              | `from`, `to`                                                                                                           |
 | `review`   | A reviewer has a new mark, verdict, score or review            | `reviewer`, then the keys of `reviewers[]` in `--json`, with `reviewedAt` for `at`                                     |
 | `check`    | A check starts to fail, or stops (it passed, or it runs again) | `check`, `to`: `failing` or `not failing`                                                                              |
 | `left`     | A pull request leaves the list                                 | `reason`: `merged`, `closed`, `draft`, or `unlisted` if it is still open; for `merged`, also `mergedBy` and `mergedAt` |
 
-If GitHub does not give a pull request, its line says `"to":"error"`, and the next read that works
-says `"from":"error"`. A list that GitHub does not give writes an error on stderr, and the watch
-goes on.
+GitHub fails one read now and then. A pull request goes to `error` only after two failed reads in a
+row: until then it keeps its last state, and gives no event. Then its line says `"to":"error"`, with
+the message of GitHub in `error`, and the next read that works says `"from":"error"`. A list that
+GitHub does not give writes an error on stderr, and the watch goes on.
 
 ## What a row shows
 

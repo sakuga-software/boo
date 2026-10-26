@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { diffReports, watchEvents, type WatchEvent, type WatchSources } from './events.js';
+import { diffReports, holdErrors, watchEvents, type WatchEvent, type WatchSources } from './events.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import type { PullRequestReport } from './report.js';
 import { DEFAULT_SETTINGS } from './settings.js';
@@ -130,7 +130,7 @@ test('the read after an error gives the changes since the last data that worked'
 test('a read that failed gives only the change of state, not changes of data', () => {
   const failed = report(1, { state: 'error', error: 'HTTP 502', headSha: null, reviewers: [] });
   assert.deepEqual(diffReports(byKey(report(1, { reviewers: [review()] })), [failed], AT), [
-    { at: AT, pr: 'acme/web#1', event: 'state', from: 'awaiting review', to: 'error', failing: [] },
+    { at: AT, pr: 'acme/web#1', event: 'state', from: 'awaiting review', to: 'error', failing: [], error: 'HTTP 502' },
   ]);
 });
 
@@ -202,8 +202,8 @@ test('the watch reads a pull request that left the search once more, to give the
   assert.deepEqual(fetched, [1, 2, 1, 2]);
 });
 
-test('the watch keeps the last data through a failed read', async () => {
-  const reads = ['open', 'fail', 'approved'];
+test('the watch keeps the last data through two failed reads, and the error event gives the message', async () => {
+  const reads = ['open', 'fail', 'fail', 'approved'];
   const abort = new AbortController();
   const approval = { user: { login: 'alice' }, commit_id: 'abc', submitted_at: AT, state: 'APPROVED' };
   const sources: WatchSources = {
@@ -230,6 +230,18 @@ test('the watch keeps the last data through a failed read', async () => {
     events.map((event) => (event.event === 'state' ? `state ${event.from} → ${event.to}` : event.event)),
     ['snapshot', 'state awaiting review → error', 'state error → ready to merge', 'review'],
   );
+  assert.equal(events[1]?.event === 'state' && events[1].error, 'HTTP 502');
+});
+
+test('one failed read between two good reads gives no event', () => {
+  const failures = new Map<string, number>();
+  const good = byKey(report(1));
+  const failed = report(1, { state: 'error', error: 'HTTP 502' });
+  assert.deepEqual(holdErrors(good, [failed], failures), [report(1)]);
+  assert.deepEqual(holdErrors(good, [report(1)], failures), [report(1)]);
+  assert.deepEqual(holdErrors(good, [failed], failures), [report(1)]);
+  assert.deepEqual(holdErrors(good, [failed], failures), [failed]);
+  assert.deepEqual(holdErrors(undefined, [failed], new Map()), [failed]);
 });
 
 test('an abort during a read stops the watch at once, not after the interval', async () => {
