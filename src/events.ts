@@ -14,6 +14,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | ({ event: 'review'; reviewer: string; reviewedAt: string | null } & Omit<Reviewer, 'login' | 'at'>)
   | { event: 'check'; check: string; to: 'failing' | 'not failing' }
   | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
+  | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
 );
 
 const sameReview = (a: Reviewer, b: Reviewer) =>
@@ -48,6 +49,9 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     const { login, at: reviewedAt, ...review } = reviewer;
     events.push({ at, pr, event: 'review', reviewer: login, ...review, reviewedAt });
   }
+  const restack = after.stack.restack;
+  if (restack && restack.at !== before.stack.restack?.at)
+    events.push({ at, pr, event: 'restack', oldBase: restack.oldBase, base: after.base, parent: before.stack.parent });
   const failingBefore = new Set(before.checks.failing);
   const failingAfter = new Set(after.checks.failing);
   for (const check of failingAfter)

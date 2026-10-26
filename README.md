@@ -76,7 +76,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
       "at": "2026-10-24T09:12:00.000Z"
     }
   ],
-  "stack": { "parent": null, "position": 1, "size": 2 },
+  "stack": { "parent": null, "position": 1, "size": 2, "restack": null },
   "agent": {
     "kind": "claude",
     "session": "web-2",
@@ -109,7 +109,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
 | `reviewers[].verdict`    | The verdict that stands over all the commits, or `null`.                                                                                                                                                                                                                                            |
 | `reviewers[].score`      | The last confidence score of the reviewer, or `null`.                                                                                                                                                                                                                                               |
 | `reviewers[].at`         | The time of the last review of the reviewer, or `null`.                                                                                                                                                                                                                                             |
-| `stack`                  | The listed pull request that this one merges into (`owner/repo#number`), its place from the bottom (`null` if the stack forks), and the size of the stack.                                                                                                                                          |
+| `stack`                  | The listed pull request that this one merges into (`owner/repo#number`), its place from the bottom (`null` if the stack forks), and the size of the stack. `restack` is `{ "oldBase", "at" }` if the pull request needs a rebase after its parent merged (see [Stacks](#stacks)), else `null`.      |
 | `agent.kind`             | `claude`, `copilot`, `codex`, `cursor`, `devin` or `null`. A local session makes it `claude`.                                                                                                                                                                                                       |
 | `agent.subAgent`         | The sub-agent of the session that changed the pull request last, as `{ "id", "description", "state", "error" }`, or `null`. `state` is `working`, `done`, `failed` or `stopped`; `error` tells why a failed sub-agent stopped, for example `rate limit`. See [Sub-agents](#sub-agents).             |
 | `agent.sessionState`     | `working`, `idle`, `waiting`, or `none` if no session on this machine linked the pull request.                                                                                                                                                                                                      |
@@ -133,15 +133,16 @@ merges nothing. Each line has `at`, `pr` (`owner/repo#number`) and `event`:
 {"at":"…","pr":"acme/web#480","event":"left","reason":"merged","mergedBy":"octocat","mergedAt":"…"}
 ```
 
-| `event`    | When                                                           | Other keys                                                                                                             |
-| ---------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `snapshot` | The first read, one line for each pull request                 | The keys of `--json`                                                                                                   |
-| `entered`  | A pull request enters the list                                 | The keys of `--json`                                                                                                   |
-| `state`    | The state changes                                              | `from`, `to`, `failing`, and `error` with the message of GitHub if `to` is `error`                                     |
-| `head`     | A new head commit                                              | `from`, `to`                                                                                                           |
-| `review`   | A reviewer has a new mark, verdict, score or review            | `reviewer`, then the keys of `reviewers[]` in `--json`, with `reviewedAt` for `at`                                     |
-| `check`    | A check starts to fail, or stops (it passed, or it runs again) | `check`, `to`: `failing` or `not failing`                                                                              |
-| `left`     | A pull request leaves the list                                 | `reason`: `merged`, `closed`, `draft`, or `unlisted` if it is still open; for `merged`, also `mergedBy` and `mergedAt` |
+| `event`    | When                                                                | Other keys                                                                                                             |
+| ---------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `snapshot` | The first read, one line for each pull request                      | The keys of `--json`                                                                                                   |
+| `entered`  | A pull request enters the list                                      | The keys of `--json`                                                                                                   |
+| `state`    | The state changes                                                   | `from`, `to`, `failing`, and `error` with the message of GitHub if `to` is `error`                                     |
+| `head`     | A new head commit                                                   | `from`, `to`                                                                                                           |
+| `review`   | A reviewer has a new mark, verdict, score or review                 | `reviewer`, then the keys of `reviewers[]` in `--json`, with `reviewedAt` for `at`                                     |
+| `check`    | A check starts to fail, or stops (it passed, or it runs again)      | `check`, `to`: `failing` or `not failing`                                                                              |
+| `left`     | A pull request leaves the list                                      | `reason`: `merged`, `closed`, `draft`, or `unlisted` if it is still open; for `merged`, also `mergedBy` and `mergedAt` |
+| `restack`  | GitHub moved the pull request to a new base after its parent merged | `oldBase`, `base`, `parent`: the pull request that it was stacked on, or `null` if it was not listed                   |
 
 GitHub fails one read now and then. A pull request goes to `error` only after two failed reads in a
 row: until then it keeps its last state, and gives no event. Then its line says `"to":"error"`, with
@@ -245,6 +246,11 @@ each one comes after the pull request that it merges into:
 - A pull request whose base is not the default branch, but no listed pull request, shows that base:
   `on feat/x`.
 - The details of a stacked pull request give the state of the pull request under it.
+- After the pull request under it merges and GitHub deletes its branch, GitHub moves the stacked
+  pull request to the next base. A squash merge leaves the commits of the merged pull request in
+  the stacked one, so it shows `parent merged · rebase`, with the old base in the details, until a
+  new commit comes (`git rebase --onto <base> <old base>`). GitHub tells this move as an event of
+  the pull request, so the check needs no history: `--json` gives it too.
 - Before you merge a stacked pull request, the confirmation warns that the merge lands in the
   branch under it, not in the default branch.
 - If the pull request under it is hidden, such as a merged one, the stacked pull request shows as a

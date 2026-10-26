@@ -430,6 +430,9 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     additions: 190,
     deletions: 65,
     changedFiles: 12,
+    timelineItems: {
+      nodes: [{ __typename: 'AutomaticBaseChangeSucceededEvent', oldBase: 'feat-0', createdAt: ago(3) }],
+    },
     author: { login: 'Mheaus', __typename: 'User' },
     reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'Bot', login: 'greptile-apps' } }] },
     reviews: {
@@ -507,6 +510,7 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
   assert.deepEqual(snapshot.changes, { additions: 190, deletions: 65, files: 12 });
   assert.deepEqual(snapshot.requested, ['greptile-apps[bot]']);
   assert.deepEqual([snapshot.mergedBy, snapshot.mergedAt], ['mergify[bot]', ago(1)]);
+  assert.deepEqual(snapshot.restack, { oldBase: 'feat-0', at: ago(3) });
   assert.deepEqual(
     snapshot.comments.map((comment: Comment) => [comment.id, comment.user?.login]),
     [
