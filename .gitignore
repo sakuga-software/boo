@@ -1,3 +1,6 @@
 node_modules
 dist
-demo/frames
+**/demo/frames
+# prepack copies these from the root of the repository into the package.
+packages/cli/README.md
+packages/cli/LICENSE

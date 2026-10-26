@@ -1,8 +1,8 @@
 name: Publish
 
 # A GitHub release publishes the package on npm. The tag of the release must be the version of
-# package.json with a "v" before it, for example v1.2.0. A manual run checks the package and
-# publishes nothing.
+# packages/cli/package.json with a "v" before it, for example v1.2.0. A manual run checks the
+# package and publishes nothing.
 #
 # npm trusts this workflow (trusted publishing, OIDC): the repository keeps no npm token. The two
 # jobs split the trust. `pack` installs the dependencies, runs the checks and packs the tarball, with
@@ -47,7 +47,7 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          version="$(node -p 'require("./package.json").version')"
+          version="$(node -p 'require("./packages/cli/package.json").version')"
           if [ "$TAG" != "v$version" ]; then
             echo "::error::The tag $TAG does not match the version $version of package.json (expected v$version)."
             exit 1
@@ -72,16 +72,18 @@ jobs:
       - name: Check the package
         run: pnpm check:pack
 
+      # The prepack script copies the README and the LICENSE of the root into the package.
       - name: Pack
-        run: pnpm pack --pack-destination tarball
+        working-directory: packages/cli
+        run: pnpm pack --pack-destination ../../tarball
 
       - name: Show what npm would publish
         env:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          name=$(node -p 'require("./package.json").name')
-          version=$(node -p 'require("./package.json").version')
+          name=$(node -p 'require("./packages/cli/package.json").name')
+          version=$(node -p 'require("./packages/cli/package.json").version')
           # A version on npm can never be replaced. Only E404 means « not there »: any other failure
           # of the registry stops the job and shows its error.
           if found=$(npm view "$name@$version" version 2>npm-view.log); then
