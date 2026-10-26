@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
+import { isBotLogin } from './reviewers.js';
 import { buildReport, keyOf, type PullRequestReport, type ReportInput } from './report.js';
 import type { Owner } from './sessions.js';
 import type { Settings } from './settings.js';
@@ -15,7 +16,76 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'check'; check: string; to: 'failing' | 'not failing' }
   | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
+  | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
 );
+
+/** A comment of a person on a pull request: a conversation comment, the body of a review, or a line comment. */
+export interface PersonComment {
+  id: string;
+  author: string;
+  createdAt: string;
+  body: string;
+  thread: boolean;
+}
+
+const BODY_LENGTH = 200;
+
+/**
+ * The comments of the people on a pull request. A bot, the author of the pull request and the
+ * ignored logins are not people here: an agent posts as the author or as a bot. A comment with an
+ * ignored marker is not a comment of a person: an agent can post with the account of a person.
+ */
+export function personComments(
+  snapshot: PullRequestSnapshot,
+  { ignoreLogins = [], ignoreMarkers = [] }: Partial<NonNullable<Settings['commentEvents']>> = {},
+): PersonComment[] {
+  const skip = new Set([snapshot.author, ...ignoreLogins].map((login) => login.toLowerCase()));
+  const person = (login: string | undefined): login is string =>
+    Boolean(login) && !isBotLogin(login!) && !skip.has(login!.toLowerCase());
+  const marked = (body: string) => ignoreMarkers.some((marker) => body.includes(marker));
+  const comments: PersonComment[] = [];
+  for (const comment of snapshot.comments)
+    if (person(comment.user?.login))
+      comments.push({
+        id: `comment:${comment.id ?? comment.created_at}`,
+        author: comment.user!.login,
+        createdAt: comment.created_at,
+        body: comment.body,
+        thread: false,
+      });
+  for (const review of snapshot.reviews) {
+    if (!person(review.user?.login)) continue;
+    const author = review.user!.login;
+    if (review.body?.trim())
+      comments.push({
+        id: `review:${author}:${review.submitted_at}`,
+        author,
+        createdAt: review.submitted_at,
+        body: review.body,
+        thread: false,
+      });
+    for (const line of review.lineComments ?? [])
+      comments.push({ id: `line:${line.id}`, author, createdAt: line.created_at, body: line.body, thread: true });
+  }
+  return comments.filter(({ body }) => !marked(body)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Gives one `comment` event for each comment of a person that `seen` does not hold, and adds it to `seen`. */
+export function newComments(
+  pr: string,
+  comments: readonly PersonComment[],
+  seen: Set<string>,
+  at: string,
+): WatchEvent[] {
+  const events: WatchEvent[] = [];
+  for (const { id, author, createdAt, body, thread } of comments) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const text = body.length > BODY_LENGTH ? `${body.slice(0, BODY_LENGTH - 1)}…` : body;
+    events.push({ at, pr, event: 'comment', author, createdAt, body: text, thread });
+  }
+  return events;
+}
 
 const sameReview = (a: Reviewer, b: Reviewer) =>
   a.mark === b.mark &&
@@ -147,6 +217,15 @@ export async function readReport(
   settings: Settings,
   now: Date,
 ): Promise<PullRequestReport[]> {
+  return (await readAll(prs, sources, settings, now)).reports;
+}
+
+async function readAll(
+  prs: readonly PullRequest[],
+  sources: WatchSources,
+  settings: Settings,
+  now: Date,
+): Promise<{ inputs: ReportInput[]; reports: PullRequestReport[] }> {
   const inputs = await Promise.all(
     prs.map(async (pr): Promise<ReportInput> => {
       try {
@@ -159,7 +238,7 @@ export async function readReport(
   // The session records are internal to Claude Code. If they are unreadable, the output shows no session.
   const owners = await sources.readOwners().catch(() => new Map<string, Owner>());
   const viewer = settings.mergePolicy?.ownerOnly ? await sources.viewerLogin?.() : undefined;
-  return buildReport(inputs, owners, settings, now, viewer);
+  return { inputs, reports: buildReport(inputs, owners, settings, now, viewer) };
 }
 
 /**
@@ -176,13 +255,15 @@ export async function watchEvents(
   let previous: Map<string, PullRequestReport> | undefined;
   const failures = new Map<string, number>();
   let tracked = new Map<string, PullRequest>();
+  // The comments of people that the watch knows, by pull request. The first read of a pull request gives no comment event.
+  const seenComments = new Map<string, Set<string>>();
   while (!signal.aborted) {
     try {
       const listed = await sources.listPullRequests();
       const listedKeys = new Set(listed.map(keyOf));
       const gone = [...tracked.values()].filter((pr) => !listedKeys.has(keyOf(pr)));
       const now = new Date();
-      const read = await readReport([...listed, ...gone], sources, settings, now);
+      const { inputs, reports: read } = await readAll([...listed, ...gone], sources, settings, now);
       const keyOfReport = (report: PullRequestReport) => `${report.repo}#${report.number}`;
       const goneKeys = new Set(gone.map(keyOf));
       // A pull request that left the search result and that GitHub did not give is read again at the
@@ -199,7 +280,16 @@ export async function watchEvents(
       );
       // A stop during the read must not write the events of that read.
       if (signal.aborted) return;
-      for (const event of diffReports(before, reports, now.toISOString())) {
+      const events = diffReports(before, reports, now.toISOString());
+      for (const { pr, snapshot } of inputs) {
+        if (snapshot?.status !== 'open') continue;
+        const key = keyOf(pr);
+        const comments = personComments(snapshot, settings.commentEvents);
+        const seen = seenComments.get(key);
+        if (seen) events.push(...newComments(key, comments, seen, now.toISOString()));
+        else seenComments.set(key, new Set(comments.map((comment) => comment.id)));
+      }
+      for (const event of events) {
         if (signal.aborted) return;
         await emit(event);
       }

@@ -44,6 +44,8 @@ export type Settings = Record<SettingKey, boolean> & {
   authors: string[];
   /** The repositories to watch, as "owner/name" or as "name" in the organization. Undefined: every repository. */
   repos?: string[];
+  /** The comments that give no `comment` event: their author, or a marker in their text, such as the marker of an agent reply. */
+  commentEvents?: { ignoreLogins: string[]; ignoreMarkers: string[] };
   /** The switches of each review bot, by the id of the bot. */
   bots: Record<string, BotSwitches>;
   customBots: CustomBot[];
@@ -171,6 +173,12 @@ export function parseSettings(value: unknown): Settings {
   settings.authors = parseAuthors((value as Record<string, unknown>).authors) ?? settings.authors;
   const repos = parseRepos((value as Record<string, unknown>).repos);
   if (repos) settings.repos = repos;
+  const commentEvents = (value as Record<string, unknown>).commentEvents;
+  if (isRecord(commentEvents)) {
+    const ignoreLogins = parseAuthors(commentEvents.ignoreLogins) ?? [];
+    const ignoreMarkers = parseAuthors(commentEvents.ignoreMarkers) ?? [];
+    if (ignoreLogins.length + ignoreMarkers.length > 0) settings.commentEvents = { ignoreLogins, ignoreMarkers };
+  }
   settings.bots = parseSwitches((value as Record<string, unknown>).bots);
   settings.agentPrompts = parsePrompts((value as Record<string, unknown>).agentPrompts);
   const mergePolicy = parseMergePolicy((value as Record<string, unknown>).mergePolicy);

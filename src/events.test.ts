@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { diffReports, holdErrors, watchEvents, type WatchEvent, type WatchSources } from './events.js';
+import {
+  diffReports,
+  holdErrors,
+  newComments,
+  personComments,
+  watchEvents,
+  type WatchEvent,
+  type WatchSources,
+} from './events.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import type { PullRequestReport } from './report.js';
 import { DEFAULT_SETTINGS } from './settings.js';
@@ -324,5 +332,89 @@ test('a pull request that left the search and that GitHub did not give is read a
   assert.deepEqual(
     events.map((event) => (event.event === 'left' ? `left ${event.reason}` : event.event)),
     ['snapshot', 'left merged'],
+  );
+});
+
+test('the comments of people give one event each, and a bot, the author and an ignored login give none', () => {
+  const said = (login: string, body: string, minutes: number, id = minutes) => ({
+    id,
+    user: { login },
+    body,
+    created_at: `2026-10-24T11:${String(minutes).padStart(2, '0')}:00Z`,
+    updated_at: `2026-10-24T11:${String(minutes).padStart(2, '0')}:00Z`,
+  });
+  const read = snapshot({
+    author: 'me',
+    comments: [said('octocat', 'Why this?', 10), said('me', 'Done.', 11), said('sakuga-agent[bot]', 'Fixed.', 12)],
+    reviews: [
+      {
+        user: { login: 'alice' },
+        commit_id: 'abc',
+        submitted_at: '2026-10-24T11:20:00Z',
+        state: 'COMMENTED',
+        body: '',
+        lineComments: [{ id: 7, body: 'x'.repeat(300), created_at: '2026-10-24T11:20:00Z' }],
+      },
+      { user: { login: 'bob' }, commit_id: 'abc', submitted_at: '2026-10-24T11:30:00Z', body: 'Looks fine.' },
+    ],
+  });
+  const comments = personComments(read, { ignoreLogins: ['BOB'] });
+  assert.deepEqual(
+    comments.map(({ id, author, thread }) => [id, author, thread]),
+    [
+      ['comment:10', 'octocat', false],
+      ['line:7', 'alice', true],
+    ],
+  );
+  const seen = new Set(['comment:10']);
+  const events = newComments('acme/web#1', comments, seen, AT);
+  assert.deepEqual(
+    events.map(({ at: _at, ...rest }) => rest),
+    [
+      {
+        pr: 'acme/web#1',
+        event: 'comment',
+        author: 'alice',
+        createdAt: '2026-10-24T11:20:00Z',
+        body: `${'x'.repeat(199)}…`,
+        thread: true,
+      },
+    ],
+  );
+  assert.deepEqual(newComments('acme/web#1', comments, seen, AT), []);
+  const reply = snapshot({ comments: [said('octocat', 'Applied.\n<!-- claude-reply -->', 40)] });
+  assert.equal(personComments(reply).length, 1);
+  assert.deepEqual(personComments(reply, { ignoreMarkers: ['<!-- claude-reply -->'] }), []);
+});
+
+test('the watch gives no comment event at the first read of a pull request, then one for each new comment', async () => {
+  const comment = (id: number) => ({
+    id,
+    user: { login: 'octocat' },
+    body: `c${id}`,
+    created_at: AT,
+    updated_at: AT,
+  });
+  const reads = [[comment(1)], [comment(1), comment(2)]];
+  const abort = new AbortController();
+  const sources: WatchSources = {
+    listPullRequests: async () => [pr(1)],
+    fetchPullRequest: async () => snapshot({ author: 'me', comments: reads.shift() ?? [comment(1), comment(2)] }),
+    readOwners: async () => new Map(),
+  };
+  const events: WatchEvent[] = [];
+  await watchEvents(
+    sources,
+    DEFAULT_SETTINGS,
+    { intervalMs: 0, signal: abort.signal },
+    async (event) => {
+      events.push(event);
+      if (event.event === 'comment') abort.abort();
+    },
+    (error) => assert.fail(String(error)),
+  );
+  assert.deepEqual(
+    events.map((event) => (event.event === 'comment' ? `comment ${event.body}` : event.event)),
+    ['snapshot', 'comment c2'],
   );
 });
