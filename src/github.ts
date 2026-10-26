@@ -133,6 +133,9 @@ export interface PullRequestSnapshot {
   headAt?: string;
   /** The size of the change. */
   changes?: { additions: number; deletions: number; files: number };
+  /** The login that merged the pull request. Undefined if it is not merged, or if GitHub does not give the account. */
+  mergedBy?: string;
+  mergedAt?: string;
 }
 
 const REVIEW_FIELDS =
@@ -159,7 +162,7 @@ const queryOf = ({ threads, files }: ExtraFields) => `
 query(${VARIABLES}) {
   rateLimit { limit remaining resetAt }
   ${PULL} {
-    state isDraft merged mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
+    state isDraft merged mergedAt mergedBy { login __typename } mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
     additions deletions changedFiles
     baseRepository { defaultBranchRef { name } }
     baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { ${CONTEXT_FIELDS} } } } } } }
@@ -229,6 +232,8 @@ interface PullRequestNode {
   state: 'OPEN' | 'CLOSED' | 'MERGED';
   isDraft: boolean;
   merged: boolean;
+  mergedAt?: string | null;
+  mergedBy?: Actor | null;
   mergeStateStatus: string;
   headRefOid: string;
   headRefName: string;
@@ -370,6 +375,8 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
     ...(pull.changedFiles !== undefined && {
       changes: { additions: pull.additions ?? 0, deletions: pull.deletions ?? 0, files: pull.changedFiles },
     }),
+    ...(pull.mergedBy && { mergedBy: loginOf(pull.mergedBy)! }),
+    ...(pull.mergedAt && { mergedAt: pull.mergedAt }),
   };
 }
 

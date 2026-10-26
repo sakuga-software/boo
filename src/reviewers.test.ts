@@ -418,6 +418,8 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     state: 'OPEN',
     isDraft: false,
     merged: false,
+    mergedBy: bot('mergify'),
+    mergedAt: ago(1),
     mergeStateStatus: 'UNSTABLE',
     headRefOid: 'head',
     headRefName: 'mathieu/feature',
@@ -504,6 +506,7 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
   assert.equal(snapshot.agent?.id, 'claude');
   assert.deepEqual(snapshot.changes, { additions: 190, deletions: 65, files: 12 });
   assert.deepEqual(snapshot.requested, ['greptile-apps[bot]']);
+  assert.deepEqual([snapshot.mergedBy, snapshot.mergedAt], ['mergify[bot]', ago(1)]);
   assert.deepEqual(
     snapshot.comments.map((comment: Comment) => [comment.id, comment.user?.login]),
     [

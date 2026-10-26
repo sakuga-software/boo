@@ -87,6 +87,7 @@ interface Row {
   posted?: { request: Request; url: string };
   error?: string;
   left?: LeftStatus;
+  merged?: { by?: string; at?: string };
   fetched?: Omit<PullRequestSnapshot, 'status'>;
 }
 
@@ -366,7 +367,8 @@ export function App(props: AppProps) {
           extra: extraFields(settingsRef.current.mergePolicy),
         });
         if (status !== 'open') {
-          update(pr, { left: status, activity: undefined, error: undefined });
+          const merged = status === 'merged' ? { by: state.mergedBy, at: state.mergedAt } : undefined;
+          update(pr, { left: status, merged, activity: undefined, error: undefined });
           return undefined;
         }
         update(pr, { fetched: state, left: undefined, activity: undefined, error: undefined });
@@ -1835,6 +1837,13 @@ function detailLines(row: Row, view: View, agent: AgentInfo | undefined, layout:
           · {changes.files} file{changes.files === 1 ? '' : 's'}
           {headAt && ` · last commit ${formatAgo(now, new Date(headAt))}`}
         </Text>
+      </Text>,
+    ]);
+  if (row.merged)
+    section('merged', [
+      <Text key="merged" dimColor>
+        {row.merged.by ? `by ${row.merged.by}` : 'by an unknown account'}
+        {row.merged.at && ` · ${formatAgo(now, new Date(row.merged.at))}`}
       </Text>,
     ]);
   if (layout.agent && agent) section('agent', agentLines(agent));

@@ -62,6 +62,8 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
   "state": "checks failing",
   "stalled": false,
   "idleMinutes": 12,
+  "mergedBy": null,
+  "mergedAt": null,
   "error": null,
   "checks": { "passed": 8, "failing": ["Migrations"], "running": 0, "skipped": 1, "quota": 0 },
   "reviewers": [
@@ -99,6 +101,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `state`                  | The words of the human output: `conflicts`, `changes requested`, `checks failing`, `ready to merge`, `approved`, `reviewing`, `reviewed`, `quota`, `awaiting review`. Also `merged`, `closed` or `draft` for a pull request that left the list, and `error` if GitHub did not answer (see `error`). |
 | `stalled`, `idleMinutes` | `stalled` is `true` for a stalled pull request (see [Stalled pull requests](#stalled-pull-requests)). `idleMinutes` gives the minutes since the commit time of the head commit, or `null`.                                                                                                          |
+| `mergedBy`, `mergedAt`   | The login that merged the pull request (a GitHub App ends with `[bot]`), and the time of the merge. `null` if it is not merged.                                                                                                                                                                     |
 | `headSha`, `base`        | The head commit and the base branch. `null` if GitHub did not answer.                                                                                                                                                                                                                               |
 | `checks`                 | The counts of the checks of the head commit, and the names of the checks that fail. `quota` counts the checks of a reviewer that refused for quota: they do not fail.                                                                                                                               |
 | `reviewers[].mark`       | `approved`, `changes requested`, `commented`, `reviewing`, `quota`, `to retry`, `requested`, `stale` (an older commit only), `skipped` or `paused`.                                                                                                                                                 |
@@ -127,18 +130,18 @@ merges nothing. Each line has `at`, `pr` (`owner/repo#number`) and `event`:
 {"at":"…","pr":"acme/web#480","event":"state","from":"approved","to":"checks failing","failing":["Migrations"]}
 {"at":"…","pr":"acme/web#480","event":"check","check":"Migrations","to":"failing"}
 {"at":"…","pr":"acme/web#480","event":"review","reviewer":"sakuga-review[bot]","mark":"approved","onHead":true,"verdict":"approved","score":{"score":4,"total":5},"reviewedAt":"…"}
-{"at":"…","pr":"acme/web#480","event":"left","reason":"merged"}
+{"at":"…","pr":"acme/web#480","event":"left","reason":"merged","mergedBy":"octocat","mergedAt":"…"}
 ```
 
-| `event`    | When                                                           | Other keys                                                                         |
-| ---------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `snapshot` | The first read, one line for each pull request                 | The keys of `--json`                                                               |
-| `entered`  | A pull request enters the list                                 | The keys of `--json`                                                               |
-| `state`    | The state changes                                              | `from`, `to`, `failing`                                                            |
-| `head`     | A new head commit                                              | `from`, `to`                                                                       |
-| `review`   | A reviewer has a new mark, verdict, score or review            | `reviewer`, then the keys of `reviewers[]` in `--json`, with `reviewedAt` for `at` |
-| `check`    | A check starts to fail, or stops (it passed, or it runs again) | `check`, `to`: `failing` or `not failing`                                          |
-| `left`     | A pull request leaves the list                                 | `reason`: `merged`, `closed`, `draft`, or `unlisted` if it is still open           |
+| `event`    | When                                                           | Other keys                                                                                                             |
+| ---------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `snapshot` | The first read, one line for each pull request                 | The keys of `--json`                                                                                                   |
+| `entered`  | A pull request enters the list                                 | The keys of `--json`                                                                                                   |
+| `state`    | The state changes                                              | `from`, `to`, `failing`                                                                                                |
+| `head`     | A new head commit                                              | `from`, `to`                                                                                                           |
+| `review`   | A reviewer has a new mark, verdict, score or review            | `reviewer`, then the keys of `reviewers[]` in `--json`, with `reviewedAt` for `at`                                     |
+| `check`    | A check starts to fail, or stops (it passed, or it runs again) | `check`, `to`: `failing` or `not failing`                                                                              |
+| `left`     | A pull request leaves the list                                 | `reason`: `merged`, `closed`, `draft`, or `unlisted` if it is still open; for `merged`, also `mergedBy` and `mergedAt` |
 
 If GitHub does not give a pull request, its line says `"to":"error"`, and the next read that works
 says `"from":"error"`. A list that GitHub does not give writes an error on stderr, and the watch
@@ -186,6 +189,7 @@ between two sections:
 
 - **changes**: the lines added and removed, the count of changed files, and the age of the last
   commit.
+- **merged**: for a merged pull request, the account that merged it and the age of the merge.
 - **agent**: the agent, then the name, the sub-agent, the state and the folder of its local
   session, or the page of its cloud session.
 - **reviewers**: the reviewers that reviewed the last commit out of all the reviewers, the count of
