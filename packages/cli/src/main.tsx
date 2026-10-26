@@ -35,7 +35,7 @@ const cli = meow(
         --events              With --watch: print each change as one JSON line
                               (NDJSON), and post nothing; see the docs
     -h, --help                Show this help
-        --version             Show the version
+    -v, --version             Show the version
 
   States of a pull request, from the first that applies
     conflicts          GitHub reports a conflict with the base branch
@@ -177,6 +177,7 @@ const cli = meow(
       json: { type: 'boolean', default: false },
       events: { type: 'boolean', default: false },
       help: { type: 'boolean', shortFlag: 'h' },
+      version: { type: 'boolean', shortFlag: 'v' },
     },
   },
 );
