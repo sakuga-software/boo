@@ -459,7 +459,10 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
           submittedAt: ago(4),
           body: '',
           commit: { oid: 'head' },
-          comments: { totalCount: 11, nodes: [{ replyTo: { id: 'y' } }] },
+          comments: {
+            totalCount: 11,
+            nodes: [{ replyTo: { id: 'y' }, databaseId: 9, body: 'A line.', createdAt: ago(4) }],
+          },
         },
       ],
     },
@@ -532,6 +535,10 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     { author: 'sakuga-review[bot]' },
     { author: 'alice' },
   ]);
+  assert.deepEqual(
+    snapshot.reviews.map((item) => item.lineComments),
+    [undefined, undefined, [{ id: 9, body: 'A line.', created_at: ago(4) }]],
+  );
   assert.deepEqual(
     snapshot.comments.map((comment: Comment) => [comment.id, comment.user?.login]),
     [

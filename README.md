@@ -143,6 +143,18 @@ merges nothing. Each line has `at`, `pr` (`owner/repo#number`) and `event`:
 | `check`    | A check starts to fail, or stops (it passed, or it runs again)      | `check`, `to`: `failing` or `not failing`                                                                              |
 | `left`     | A pull request leaves the list                                      | `reason`: `merged`, `closed`, `draft`, or `unlisted` if it is still open; for `merged`, also `mergedBy` and `mergedAt` |
 | `restack`  | GitHub moved the pull request to a new base after its parent merged | `oldBase`, `base`, `parent`: the pull request that it was stacked on, or `null` if it was not listed                   |
+| `comment`  | A person writes a comment, a review or a line comment               | `author`, `createdAt`, `body` (the first 200 characters), `thread`: `true` for a line comment                          |
+
+A `comment` event comes from a person, so that the agent of the pull request reads it at once. A
+bot, the author of the pull request (an agent often posts as the author) and the logins of
+`commentEvents.ignoreLogins` in the settings file give none. A comment that contains a marker of
+`commentEvents.ignoreMarkers` gives none either: an agent can post with the account of a person, and
+mark its replies. The first read of a pull request gives no `comment` event. The watch reads the text
+of the line comments only with `--events`: the first 10 of each review.
+
+```json
+{ "commentEvents": { "ignoreLogins": ["my-agent-account"], "ignoreMarkers": ["<!-- claude-reply -->"] } }
+```
 
 GitHub fails one read now and then. A pull request goes to `error` only after two failed reads in a
 row: until then it keeps its last state, and gives no event. Then its line says `"to":"error"`, with

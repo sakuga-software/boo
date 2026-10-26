@@ -144,8 +144,8 @@ export interface PullRequestSnapshot {
   restack?: { oldBase: string; at: string };
 }
 
-const REVIEW_FIELDS =
-  'author { login __typename } state submittedAt body commit { oid } comments(first: 10) { totalCount nodes { replyTo { id } } }';
+const reviewFields = (lineComments?: boolean) =>
+  `author { login __typename } state submittedAt body commit { oid } comments(first: 10) { totalCount nodes { replyTo { id }${lineComments ? ' databaseId body createdAt' : ''} } }`;
 const COMMENT_FIELDS = 'databaseId author { login __typename } body createdAt updatedAt';
 const CONTEXT_FIELDS =
   '__typename ... on CheckRun { name status conclusion checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state description }';
@@ -156,15 +156,17 @@ const VARIABLES = '$owner: String!, $name: String!, $number: Int!';
 
 // The first query reads the newest reviews and comments, and the first checks. A long pull request
 // needs more pages: the decisions depend on old verdicts and on the first CodeRabbit comment.
-/** The parts of a pull request that only a merge policy reads. Each one costs GraphQL points. */
+/** The parts of a pull request that only a merge policy or the events read. Each one costs GraphQL points or bytes. */
 export interface ExtraFields {
   /** The authors of the review threads that are not resolved: the first 100 threads. */
   threads?: boolean;
   /** The changed files: the first 100. */
   files?: boolean;
+  /** The text of the line comments: the first 10 of each review. */
+  lineComments?: boolean;
 }
 
-const queryOf = ({ threads, files }: ExtraFields) => `
+const queryOf = ({ threads, files, lineComments }: ExtraFields) => `
 query(${VARIABLES}) {
   rateLimit { limit remaining resetAt }
   ${PULL} {
@@ -176,7 +178,7 @@ query(${VARIABLES}) {
     baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { ${CONTEXT_FIELDS} } } } } } }
     author { login __typename }
     reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
-    reviews(last: 100) { ${OLDER} nodes { ${REVIEW_FIELDS} } }
+    reviews(last: 100) { ${OLDER} nodes { ${reviewFields(lineComments)} } }
     comments(last: 100) { ${OLDER} nodes { ${COMMENT_FIELDS} } }
     commits(last: 1) { nodes { commit { message committedDate authors(first: 10) { nodes { user { login } } }
       checkSuites(first: 100) { nodes { status workflowRun { databaseId workflow { name } } } }
@@ -186,8 +188,10 @@ query(${VARIABLES}) {
   } }
 }`;
 
+const reviewsPage = (lineComments?: boolean) =>
+  `query(${VARIABLES}, $cursor: String!) { ${PULL} { page: reviews(last: 100, before: $cursor) { ${OLDER} nodes { ${reviewFields(lineComments)} } } } } }`;
+
 const PAGE_QUERIES = {
-  reviews: `query(${VARIABLES}, $cursor: String!) { ${PULL} { page: reviews(last: 100, before: $cursor) { ${OLDER} nodes { ${REVIEW_FIELDS} } } } } }`,
   comments: `query(${VARIABLES}, $cursor: String!) { ${PULL} { page: comments(last: 100, before: $cursor) { ${OLDER} nodes { ${COMMENT_FIELDS} } } } } }`,
   contexts: `query(${VARIABLES}, $cursor: String!) { ${PULL} { commits(last: 1) { nodes { commit { statusCheckRollup {
     page: contexts(first: 100, after: $cursor) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } } } } }`,
@@ -212,7 +216,10 @@ interface ReviewNode {
   submittedAt: string | null;
   body: string;
   commit: { oid: string } | null;
-  comments: { totalCount: number; nodes: { replyTo: { id: string } | null }[] };
+  comments: {
+    totalCount: number;
+    nodes: { replyTo: { id: string } | null; databaseId?: number; body?: string; createdAt?: string }[];
+  };
 }
 
 interface PageInfo {
@@ -319,6 +326,13 @@ function toReview(node: ReviewNode): Review | null {
     state: node.state,
     body: node.body,
     threadReply,
+    ...(comments.some((comment) => comment.body !== undefined) && {
+      lineComments: comments.map((comment) => ({
+        id: comment.databaseId ?? 0,
+        body: comment.body ?? '',
+        created_at: comment.createdAt ?? node.submittedAt!,
+      })),
+    }),
   };
 }
 
@@ -579,8 +593,8 @@ export async function fetchPullRequest(
 }
 
 /** The cache key of a read. A read with fewer fields must not answer a read that needs the threads or the files. */
-export const readKey = (pr: PullRequest, { threads, files }: ExtraFields) =>
-  `pr-${pr.repo}#${pr.number}${threads ? '+threads' : ''}${files ? '+files' : ''}`;
+export const readKey = (pr: PullRequest, { threads, files, lineComments }: ExtraFields) =>
+  `pr-${pr.repo}#${pr.number}${threads ? '+threads' : ''}${files ? '+files' : ''}${lineComments ? '+lines' : ''}`;
 
 async function readPullRequest(pr: PullRequest, extra: ExtraFields): Promise<PullRequestSnapshot> {
   const [owner = '', name = ''] = pr.repo.split('/');
@@ -590,7 +604,7 @@ async function readPullRequest(pr: PullRequest, extra: ExtraFields): Promise<Pul
   const page = (value: unknown) => (value as Pages).page;
   const rollup = pull.commits.nodes[0]?.commit.statusCheckRollup;
   const [reviews, comments, contexts] = await Promise.all([
-    allNodes(pull.reviews, 'older', PAGE_QUERIES.reviews, variables, page),
+    allNodes(pull.reviews, 'older', reviewsPage(extra.lineComments), variables, page),
     allNodes(pull.comments, 'older', PAGE_QUERIES.comments, variables, page),
     rollup
       ? allNodes(rollup.contexts, 'newer', PAGE_QUERIES.contexts, variables, (next) =>

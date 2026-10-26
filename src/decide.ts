@@ -22,6 +22,8 @@ export interface Review {
   body?: string;
   /** The review only holds replies in review threads. GitHub adds one such review for each reply. */
   threadReply?: boolean;
+  /** The line comments of the review. Undefined if the query did not read their text. */
+  lineComments?: { id: number; body: string; created_at: string }[];
 }
 
 export type Verdict = 'approved' | 'changes requested' | 'commented';

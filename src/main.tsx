@@ -205,7 +205,11 @@ try {
 
 const sources: WatchSources = {
   listPullRequests: () => listPullRequests({ org, authors, repos, ...(since && { since }) }),
-  fetchPullRequest: (pr) => fetchPullRequest(pr, { extra: extraFields(settings.mergePolicy) }),
+  // Only the events read the text of the line comments: the other modes do not need the bytes.
+  fetchPullRequest: (pr) =>
+    fetchPullRequest(pr, {
+      extra: { ...extraFields(settings.mergePolicy), ...(cli.flags.events && { lineComments: true }) },
+    }),
   readOwners: () => readOwners(new LinkIndex()),
   viewerLogin,
 };

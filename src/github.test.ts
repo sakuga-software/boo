@@ -23,8 +23,9 @@ test('a cached read without the fields of the merge policy does not answer a rea
     readKey(pr, { threads: true }),
     readKey(pr, { files: true }),
     readKey(pr, { threads: true, files: true }),
+    readKey(pr, { lineComments: true }),
   ];
-  assert.equal(new Set(keys).size, 4);
+  assert.equal(new Set(keys).size, 5);
   assert.equal(readKey(pr, { threads: false, files: false }), readKey(pr, {}));
 });
 

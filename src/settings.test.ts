@@ -100,3 +100,19 @@ test('the repositories keep the valid names, and a name with no owner takes the 
   assert.deepEqual(resolveRepos(['boo', 'acme/web', 'sakuga/boo'], 'sakuga'), ['sakuga/boo', 'acme/web']);
   assert.throws(() => resolveRepos(['boo'], ''), /needs an owner/);
 });
+
+test('the comment events keep the valid logins and markers', () => {
+  assert.deepEqual(
+    parseSettings({ commentEvents: { ignoreLogins: [' alice ', 3, ''], ignoreMarkers: 'x' } }).commentEvents,
+    {
+      ignoreLogins: ['alice'],
+      ignoreMarkers: [],
+    },
+  );
+  assert.deepEqual(parseSettings({ commentEvents: { ignoreMarkers: ['<!-- claude-reply -->'] } }).commentEvents, {
+    ignoreLogins: [],
+    ignoreMarkers: ['<!-- claude-reply -->'],
+  });
+  assert.equal(parseSettings({ commentEvents: { ignoreLogins: [] } }).commentEvents, undefined);
+  assert.equal(parseSettings({ commentEvents: ['alice'] }).commentEvents, undefined);
+});
