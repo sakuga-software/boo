@@ -1,0 +1,84 @@
+---
+title: boo
+description: The control tower for the pull requests of your coding agents. One line for each pull request, every reviewer and every quota, and the agent that works on it.
+template: splash
+hero:
+  title: The control tower for the pull requests of your agents
+  tagline: Your coding agents open the pull requests. Review bots answer, run out of quota, and leave red checks. boo shows each pull request on one line, knows the agent that owns it, and tells you or your orchestrator what to do next.
+  image:
+    file: ../../../../../docs/demo.gif
+    alt: boo --watch on simulated data
+  actions:
+    - text: Get started
+      link: getting-started/
+      icon: right-arrow
+    - text: GitHub
+      link: https://github.com/sakuga-software/boo
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard, Steps } from '@astrojs/starlight/components';
+
+```sh
+npm install --global @sakuga-software/boo
+boo --watch
+```
+
+## Built for agents that open pull requests
+
+<CardGrid stagger>
+  <Card title="Knows the agent of each pull request" icon="seti:pipeline">
+    Claude Code, Copilot, Codex, Cursor or Devin. A local Claude Code session shows its name and its state, and a
+    sub-agent that opened the pull request shows its task: working, done, or failed with its error.
+  </Card>
+  <Card title="Talks to the agent" icon="comment">
+    `a` sends a prompt to the session that owns the pull request: rebase, review, fix or test. The session reads it
+    after its current turn.
+  </Card>
+  <Card title="Feeds your orchestrator" icon="seti:json">
+    `--json` gives the state of each pull request. `--watch --events` streams each change as NDJSON: a state, a review,
+    a check, a comment of a person, a merge, a stack to rebase.
+  </Card>
+  <Card title="Guards the merge" icon="approve-check">
+    A merge policy keeps an agent from merging too early: a minimum score from the deepest review, a proof, resolved bot
+    threads, an answer to a review that was asked for, files that only their owner merges.
+  </Card>
+  <Card title="Reads every reviewer" icon="magnifier">
+    Bots and people, with no list to keep. A quota refusal is not a review, a red check of a refused bot is not a
+    failure, and a queued CI run still runs.
+  </Card>
+  <Card title="Spots the work that stopped" icon="warning">
+    A red pull request with no agent at work and no new commit is `stalled`. A stacked pull request whose parent merged
+    asks for a rebase.
+  </Card>
+</CardGrid>
+
+## How a team uses it
+
+<Steps>
+
+1. **Agents open the pull requests.** Your Claude Code sessions, their sub-agents, or a GitHub App
+   such as Copilot. `boo --author @me --author app/my-agent` lists them all.
+
+2. **boo watches them.** One GraphQL query for each pull request, shared between all the runs on the
+   machine. It retries CodeRabbit by itself when its quota comes back.
+
+3. **The orchestrator follows the stream.** `boo --watch --events` tells it which pull request turned
+   red, which reviewer answered, and which person wrote a comment that the agent must read.
+
+4. **A person merges.** `m` merges the pull request that is ready, and refuses one that misses a rule
+   of the team.
+
+</Steps>
+
+<CardGrid>
+  <LinkCard
+    title="Agents and sessions"
+    href="agents/"
+    description="The agent, the session and the sub-agent of a pull request."
+  />
+  <LinkCard title="Scripts and orchestrators" href="automation/" description="The JSON output and the event stream." />
+  <LinkCard title="Merge policy" href="merge-policy/" description="The rules before ready to merge." />
+  <LinkCard title="The list" href="the-list/" description="What a row and its details show." />
+</CardGrid>

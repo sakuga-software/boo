@@ -35,6 +35,8 @@ jobs:
           - { name: pack, script: 'check:pack' }
           # `engines` accepts Node 22. The other jobs run the Node of .nvmrc.
           - { name: test (Node 22), script: test, node: '22' }
+          # The site: Astro checks the content and the links of the sidebar when it builds.
+          - { name: site, script: 'site:build' }
 
     steps:
       - name: Checkout code
@@ -65,7 +67,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      # The prepare script builds dist/ here.
+      # The prepare script builds packages/cli/dist/ here.
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

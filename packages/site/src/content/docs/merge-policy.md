@@ -1,0 +1,35 @@
+---
+title: Merge policy
+description: The rules that a team adds before ready to merge, so that an agent cannot merge too early.
+---
+
+"Ready to merge" means approved, green and mergeable for GitHub. A team can add its own rules in
+`mergePolicy` in the settings file. A pull request that misses a rule shows `approved`, not
+`ready to merge`, and its details give a note for each rule: `merge policy: no proof`. `m` refuses
+to merge it and names the rules. `--json` gives the misses in `policy`.
+
+```json
+{
+  "mergePolicy": {
+    "minScore": { "reviewer": "sakuga-review", "score": 4, "onHead": true },
+    "requireProof": "\\.(gif|webm|mp4)|No /tfp:",
+    "resolvedBotThreads": true,
+    "ownerOnly": { "paths": [".github/workflows/**", "**/migrations/**", "**/auth/**"], "owner": "mathieu" },
+    "answeredReviewRequests": true
+  }
+}
+```
+
+| Rule                     | The pull request needs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Note                                                                                                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `minScore`               | A last confidence score of `reviewer` of at least `score`. With `onHead`, the score must come from a review of the head commit; a comment, such as the summary of Greptile, has no commit. With `deepest`, the deepest level of the reviews counts: ``{ "pattern": "Niveau `(\\w+)`", "levels": ["lite", "balanced", "heavy"] }`` gives the level of a review by the first group of `pattern`, and `levels` goes from the lightest to the deepest. The score is then the lowest score of that level, on the head commit with `onHead`, else on the commit of the last review of that level. A light review after a deep one does not replace it. | `no score from sakuga-review`, `no score from sakuga-review on head`, `score 3/5 on head, 4 needed`, `no heavy score from sakuga-review on head`, `heavy score 3/5 on head, 4 needed` |
+| `requireProof`           | A match of this regular expression (case insensitive) in the description or in a comment: a link to a recording, or a reason with no test.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `no proof`                                                                                                                                                                            |
+| `resolvedBotThreads`     | No unresolved review thread that a bot starts (the first 100 threads). With `{ "goneMarker": "sakuga-review:gone" }` in place of `true`, a thread whose last comment is a bot comment with the marker counts as resolved: the bot says that its finding is gone. A reply of a person after it opens the thread again.                                                                                                                                                                                                                                                                                                                            | `2 open bot threads`                                                                                                                                                                  |
+| `ownerOnly`              | If the pull request changes a file under one of `paths` (globs: `*` in a name, `**` for any folders), only `owner` merges it. The query reads the first 100 files: with more, only `owner` merges. `@me` is the account of `gh`, so a shared file names the owner by login.                                                                                                                                                                                                                                                                                                                                                                      | `mathieu merges`                                                                                                                                                                      |
+| `answeredReviewRequests` | An answer of each bot that a comment asked for a review after its last review: a line that starts with the mention of the bot and contains the word `review`, such as `@sakuga-review review balanced`. A thank you to the bot is not a request. A review of that bot after the comment answers it. The comment of the bot itself does not count, but the comment of an agent that posts as a bot does.                                                                                                                                                                                                                                          | `review asked of sakuga-review, no answer yet`                                                                                                                                        |
+
+Some bots write in a thread that its finding is gone, but an agent may have no right to resolve the
+thread. Sakuga Review writes the marker `<!-- sakuga-review:gone -->` in that comment.
+
+A rule with a missing or invalid field is dropped. `resolvedBotThreads` and `ownerOnly` make each
+query read the threads or the files, and cost about one GraphQL point more for each pull request.

@@ -1,0 +1,19 @@
+/* The mauve of the ghost. The dark theme takes the background of the demo. */
+:root {
+  --sl-color-accent-low: #2e2440;
+  --sl-color-accent: #8f6bd1;
+  --sl-color-accent-high: #e4d4fc;
+  --sl-color-black: #1e1e2e;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #ece2fd;
+  --sl-color-accent: #7347c2;
+  --sl-color-accent-high: #3b1f73;
+  --sl-color-black: #ffffff;
+}
+
+.hero img {
+  border-radius: 0.75rem;
+  box-shadow: 0 1rem 3rem rgb(0 0 0 / 0.35);
+}
