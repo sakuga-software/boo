@@ -6,7 +6,7 @@ import { fetchPullRequest, listPullRequests, viewerLogin } from './github.js';
 import { readReport, watchEvents, type WatchSources } from './events.js';
 import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
-import { loadSettings, parseAuthors, saveSettings, settingsPath } from './settings.js';
+import { loadSettings, parseAuthors, parseRepos, resolveRepos, saveSettings, settingsPath } from './settings.js';
 import { detectBackground } from './theme.js';
 
 const DEFAULT_ORG = 'sakuga-software';
@@ -22,6 +22,9 @@ const cli = meow(
   Options
     -s, --since <YYYY-MM-DD>  Only the pull requests created on or after this date
     -o, --org <org>           GitHub organization, or "all"   (default: ${DEFAULT_ORG})
+    -r, --repo <repo>         Only this repository: owner/name, or name in the
+                              organization; repeat it for more repositories
+                              (default: "repos" in the settings file, else all)
     -a, --author <login>      Pull request author; repeat it for more authors, and
                               write app/<slug> for a GitHub App
                               (default: "authors" in the settings file, else @me)
@@ -151,6 +154,7 @@ const cli = meow(
     $ boo --org all
     $ boo --dry-run --since 2026-09-15
     $ boo --author @me --author app/my-agent
+    $ boo --repo boo --repo acme/web
     $ boo --json | jq '.[] | select(.state == "checks failing") | .url'
     $ boo --watch --events | jq -c 'select(.event == "state")'
 
@@ -164,6 +168,7 @@ const cli = meow(
       since: { type: 'string', shortFlag: 's' },
       org: { type: 'string', shortFlag: 'o', default: DEFAULT_ORG },
       author: { type: 'string', shortFlag: 'a', isMultiple: true },
+      repo: { type: 'string', shortFlag: 'r', isMultiple: true },
       watch: { type: 'boolean', shortFlag: 'w', default: false },
       dryRun: { type: 'boolean', shortFlag: 'n', default: false },
       json: { type: 'boolean', default: false },
@@ -182,9 +187,22 @@ const org = cli.flags.org === 'all' ? '' : cli.flags.org;
 
 const settings = await loadSettings();
 const authors = parseAuthors(cli.flags.author) ?? settings.authors;
+const repoFlags = cli.flags.repo ?? [];
+const badRepo = repoFlags.find((repo) => !parseRepos([repo]));
+if (badRepo !== undefined) {
+  console.error(`--repo expects owner/name or name, got "${badRepo}".`);
+  process.exit(2);
+}
+let repos: string[];
+try {
+  repos = resolveRepos(repoFlags.length > 0 ? repoFlags : (settings.repos ?? []), org);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
 
 const sources: WatchSources = {
-  listPullRequests: () => listPullRequests({ org, authors, ...(since && { since }) }),
+  listPullRequests: () => listPullRequests({ org, authors, repos, ...(since && { since }) }),
   fetchPullRequest: (pr) => fetchPullRequest(pr, { extra: extraFields(settings.mergePolicy) }),
   readOwners: () => readOwners(new LinkIndex()),
   viewerLogin,
@@ -227,7 +245,7 @@ const background = process.stdout.isTTY
 const { watch, dryRun } = cli.flags;
 const app = render(
   <App
-    options={{ watch, dryRun, org, authors, ...(since && { since }), interactive, background }}
+    options={{ watch, dryRun, org, authors, repos, ...(since && { since }), interactive, background }}
     settings={settings}
     saveSettings={saveSettings}
   />,

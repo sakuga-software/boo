@@ -37,6 +37,7 @@ boo --watch             # stay open until Ctrl+C, and refresh
 boo --org all           # all organizations; the default organization is sakuga-software
 boo --since 2026-09-15  # only the pull requests created on or after this date
 boo --author @me --author app/my-agent  # the pull requests of these authors, for this run
+boo --repo boo --repo acme/web  # only these repositories: owner/name, or name in the organization
 boo --dry-run           # post and merge nothing
 boo --json              # print the state as JSON for a script, and post nothing
 boo --watch --events    # print each change as one JSON line, and post nothing
@@ -355,6 +356,14 @@ An author is a login, `@me` (the account of `gh`), or `app/<slug>` for a GitHub 
 
 ```json
 { "authors": ["@me", "app/my-agent"] }
+```
+
+The key `repos` limits the list to some repositories. A repository is `owner/name`, or `name` in the
+organization of `--org`. With no `repos`, the tool lists every repository of the organization.
+`--repo` replaces the list at the start of one run. A repository of another owner counts too.
+
+```json
+{ "repos": ["boo", "acme/web"] }
 ```
 
 ### Review bots

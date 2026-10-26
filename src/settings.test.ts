@@ -3,7 +3,15 @@ import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { DEFAULT_SETTINGS, loadSettings, parseAuthors, parseSettings, saveSettings, settingsPath } from './settings.js';
+import {
+  DEFAULT_SETTINGS,
+  loadSettings,
+  parseAuthors,
+  parseSettings,
+  resolveRepos,
+  saveSettings,
+  settingsPath,
+} from './settings.js';
 
 test('the merged, closed and draft pull requests are hidden by default', () => {
   assert.deepEqual(
@@ -83,4 +91,12 @@ test('stalledAfterMinutes takes a positive whole number of minutes, else 30', ()
   assert.equal(parseSettings({ stalledAfterMinutes: 45 }).stalledAfterMinutes, 45);
   for (const stored of [0, -5, 2.5, '45', null])
     assert.equal(parseSettings({ stalledAfterMinutes: stored }).stalledAfterMinutes, 30);
+});
+
+test('the repositories keep the valid names, and a name with no owner takes the organization', () => {
+  assert.deepEqual(parseSettings({ repos: ['acme/web', 'boo', 'a/b/c', 'two words', 3] }).repos, ['acme/web', 'boo']);
+  assert.equal(parseSettings({ repos: ['a/b/c'] }).repos, undefined);
+  assert.equal(parseSettings({}).repos, undefined);
+  assert.deepEqual(resolveRepos(['boo', 'acme/web', 'sakuga/boo'], 'sakuga'), ['sakuga/boo', 'acme/web']);
+  assert.throws(() => resolveRepos(['boo'], ''), /needs an owner/);
 });

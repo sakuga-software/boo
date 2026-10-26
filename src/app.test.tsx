@@ -66,10 +66,22 @@ function fakeGitHub(snapshots: Map<number, PullRequestSnapshot | Error>, extra: 
   return { gitHub, merges };
 }
 
-function start(gitHub: GitHub, settings: Settings = DEFAULT_SETTINGS, owners = new Map<string, Owner>()) {
+function start(
+  gitHub: GitHub,
+  settings: Settings = DEFAULT_SETTINGS,
+  owners = new Map<string, Owner>(),
+  repos?: string[],
+) {
   return render(
     <App
-      options={{ org: 'acme', authors: ['@me'], watch: true, dryRun: false, interactive: true }}
+      options={{
+        org: 'acme',
+        authors: ['@me'],
+        ...(repos && { repos }),
+        watch: true,
+        dryRun: false,
+        interactive: true,
+      }}
       gitHub={gitHub}
       sessions={{ readOwners: async () => owners, send: async () => {} }}
       settings={settings}
@@ -189,6 +201,21 @@ test('a read that fails after a good read counts as an error, not as its old sta
   await press(app, 'r');
   const frame = await frameWith(app, '1 error');
   assert.doesNotMatch(frame, /1 ready to merge/);
+});
+
+test('the header and the empty list name the watched repositories, and the search gets them', async (t) => {
+  const searches: (string[] | undefined)[] = [];
+  const { gitHub } = fakeGitHub(new Map(), {
+    listPullRequests: async ({ repos }) => {
+      searches.push(repos);
+      return [];
+    },
+  });
+  const app = start(gitHub, DEFAULT_SETTINGS, new Map(), ['acme/web', 'other/api']);
+  t.after(() => app.unmount());
+  const frame = await frameWith(app, 'No open pull request by @me in acme/web, other/api.');
+  assert.match(frame, /@me · acme\/web, other\/api/);
+  assert.deepEqual(searches[0], ['acme/web', 'other/api']);
 });
 
 test('low GraphQL points slow the refresh down, and the header says so', async (t) => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mergeSearches, readKey } from './github.js';
+import { mergeSearches, readKey, searchScope } from './github.js';
 
 const result = (url: string, updatedAt: string, isDraft = false) => ({ url, updatedAt, isDraft });
 
@@ -25,4 +25,10 @@ test('a cached read without the fields of the merge policy does not answer a rea
   ];
   assert.equal(new Set(keys).size, 4);
   assert.equal(readKey(pr, { threads: false, files: false }), readKey(pr, {}));
+});
+
+test('the repositories replace the owner in the search, so a repository of another owner still counts', () => {
+  assert.deepEqual(searchScope('acme', []), ['--owner', 'acme']);
+  assert.deepEqual(searchScope('', []), []);
+  assert.deepEqual(searchScope('acme', ['acme/web', 'other/api']), ['--repo', 'acme/web', '--repo', 'other/api']);
 });
