@@ -1,0 +1,16 @@
+{
+  "name": "@sakuga-software/boo-site",
+  "private": true,
+  "description": "The landing page and the documentation of boo, built with Astro Starlight.",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.42.7",
+    "astro": "^7.2.10",
+    "sharp": "^0.35.3"
+  }
+}

@@ -31,9 +31,9 @@ const cli = meow(
     -w, --watch               Stay open until Ctrl+C, and refresh the list once a minute
     -n, --dry-run             Show the state, but post and merge nothing
         --json                Print the state as JSON, one object for each pull
-                              request, and post nothing; see the README for the keys
+                              request, and post nothing; the docs give the keys
         --events              With --watch: print each change as one JSON line
-                              (NDJSON), and post nothing; see the README
+                              (NDJSON), and post nothing; see the docs
     -h, --help                Show this help
         --version             Show the version
 
@@ -44,7 +44,7 @@ const cli = meow(
     checks failing     a check of the last commit fails; a check of a run that
                        a newer run of the same workflow replaces does not count
     ready to merge     approved, every check passes, GitHub can merge, and the
-                       "mergePolicy" of the settings file passes (see the README)
+                       "mergePolicy" of the settings file passes (see the docs)
     approved           approved, but a check runs or a rule blocks the merge; a
                        workflow run that is queued or between two jobs runs too
     reviewing          a reviewer reviews the pull request now
@@ -161,6 +161,7 @@ const cli = meow(
     $ boo --watch --events | jq -c 'select(.event == "state")'
 
   Requires an authenticated gh (gh auth status).
+  Docs: https://sakuga-software.github.io/boo/
 `,
   {
     importMeta: import.meta,

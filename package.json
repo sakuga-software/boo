@@ -1,7 +1,7 @@
 {
   "name": "boo-workspace",
   "private": true,
-  "description": "The workspace of boo: the CLI in packages/cli.",
+  "description": "The workspace of boo: the CLI in packages/cli, the site in packages/site.",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -16,7 +16,9 @@
     "test:coverage": "pnpm --filter @sakuga-software/boo test:coverage",
     "check:pack": "pnpm --filter @sakuga-software/boo check:pack",
     "check": "pnpm lint && pnpm format && pnpm typecheck && pnpm test:coverage && pnpm check:pack",
-    "demo": "pnpm --filter @sakuga-software/boo demo"
+    "demo": "pnpm --filter @sakuga-software/boo demo",
+    "site:dev": "pnpm --filter @sakuga-software/boo-site dev",
+    "site:build": "pnpm --filter @sakuga-software/boo-site build"
   },
   "devDependencies": {
     "husky": "^9.1.7",
