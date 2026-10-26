@@ -54,6 +54,29 @@ test('a score in a comment has no commit: it passes only a rule without onHead',
   assert.equal(policyMisses({ minScore: { reviewer: 'greptile-apps', score: 4, onHead: true } }, scored).length, 1);
 });
 
+test('with levels, the deepest level counts, with its lowest score on head', () => {
+  const deepest = { pattern: 'Niveau `(\\w+)`', levels: ['lite', 'balanced', 'heavy'] };
+  const rule = { minScore: { ...minScore, deepest } };
+  const scored = (commit: string, score: number, level: string, minutesAgo: number) =>
+    review(SAKUGA, commit, `Score de confiance : ${score}/5\nNiveau \`${level}\``, minutesAgo);
+  const older = [scored('old', 3, 'lite', 40), scored('old', 3, 'heavy', 30)];
+  const lite = scored('head', 4, 'lite', 10);
+  assert.deepEqual(policyMisses({ minScore }, facts({ reviews: [...older, lite] })), []);
+  assert.deepEqual(policyMisses(rule, facts({ reviews: [...older, lite] })), [
+    { rule: 'minScore', note: 'no heavy score from sakuga-review on head' },
+  ]);
+  const heavy = [scored('head', 5, 'heavy', 5), scored('head', 3, 'heavy', 2)];
+  assert.deepEqual(policyMisses(rule, facts({ reviews: [...older, lite, ...heavy] })), [
+    { rule: 'minScore', note: 'heavy score 3/5 on head, 4 needed' },
+  ]);
+  assert.deepEqual(policyMisses(rule, facts({ reviews: [...older, lite, heavy[0]!] })), []);
+  const offHead = { minScore: { ...minScore, onHead: false, deepest } };
+  assert.deepEqual(policyMisses(offHead, facts({ reviews: [...older, lite] })), [
+    { rule: 'minScore', note: 'heavy score 3/5, 4 needed' },
+  ]);
+  assert.deepEqual(policyMisses(rule, facts({ reviews: [review(SAKUGA, 'head', 'Score de confiance : 4/5', 1)] })), []);
+});
+
 test('the proof can be in the description or in a comment', () => {
   const policy = { requireProof: '\\.(gif|webm|mp4)|No /tfp:' };
   assert.deepEqual(policyMisses(policy, facts({ body: 'A change.' })), [{ rule: 'requireProof', note: 'no proof' }]);
@@ -134,6 +157,20 @@ test('a glob matches like a shell glob, with ** for any folders', () => {
 test('the settings drop a rule with an invalid field, and keep the others', () => {
   assert.equal(parseMergePolicy(undefined), undefined);
   assert.equal(parseMergePolicy({ requireProof: '(' }), undefined);
+  const levels = (deepest: unknown) => parseMergePolicy({ minScore: { reviewer: 'r', score: 4, deepest } })?.minScore;
+  assert.deepEqual(levels({ pattern: 'Level (\\w+)', levels: [' lite', 'heavy', 3] }), {
+    reviewer: 'r',
+    score: 4,
+    onHead: false,
+    deepest: { pattern: 'Level (\\w+)', levels: ['lite', 'heavy'] },
+  });
+  for (const invalid of [
+    true,
+    { pattern: 'Level \\w+', levels: ['a'] },
+    { pattern: '(', levels: ['a'] },
+    { pattern: '(a)' },
+  ])
+    assert.equal(levels(invalid)?.deepest, undefined);
   assert.deepEqual(
     parseMergePolicy({
       minScore: { reviewer: 'sakuga-review', score: 4, onHead: true },
