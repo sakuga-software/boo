@@ -8,7 +8,7 @@ import {
   type Review,
   type Verdict,
 } from './decide.js';
-import { policyMisses, type MergePolicy, type PolicyMiss } from './policy.js';
+import { policyMisses, type MergePolicy, type OpenThread, type PolicyMiss } from './policy.js';
 
 export type CheckState = 'pending' | 'success' | 'failure' | 'skipped';
 
@@ -69,7 +69,7 @@ export interface PullRequestFacts {
   coderabbit?: Decision;
   /** The facts that only the merge policy reads. */
   body?: string;
-  openThreads?: string[];
+  openThreads?: OpenThread[];
   files?: string[];
   changes?: { files: number };
   policy?: MergePolicy | undefined;

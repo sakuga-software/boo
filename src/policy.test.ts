@@ -85,9 +85,25 @@ test('the proof can be in the description or in a comment', () => {
 });
 
 test('an open thread of a bot misses the rule, an open thread of a person does not', () => {
-  const policy = { resolvedBotThreads: true };
-  assert.deepEqual(policyMisses(policy, facts({ openThreads: ['alice'] })), []);
-  assert.deepEqual(policyMisses(policy, facts({ openThreads: ['alice', 'coderabbitai[bot]', 'Copilot'] })), [
+  const policy = { resolvedBotThreads: true } as const;
+  const threads = (...authors: string[]) => authors.map((author) => ({ author }));
+  assert.deepEqual(policyMisses(policy, facts({ openThreads: threads('alice') })), []);
+  assert.deepEqual(policyMisses(policy, facts({ openThreads: threads('alice', 'coderabbitai[bot]', 'Copilot') })), [
+    { rule: 'resolvedBotThreads', note: '2 open bot threads' },
+  ]);
+});
+
+test('a bot thread whose last bot comment has the gone marker counts as resolved', () => {
+  const gone = 'Ce constat n’apparaît plus au commit abc. <!-- sakuga-review:gone -->';
+  const openThreads = [
+    { author: SAKUGA, lastBotComment: gone },
+    { author: SAKUGA, lastBotComment: 'Still there.' },
+    { author: 'alice', lastBotComment: gone },
+  ];
+  assert.deepEqual(policyMisses({ resolvedBotThreads: { goneMarker: 'sakuga-review:gone' } }, facts({ openThreads })), [
+    { rule: 'resolvedBotThreads', note: '1 open bot thread' },
+  ]);
+  assert.deepEqual(policyMisses({ resolvedBotThreads: true }, facts({ openThreads })), [
     { rule: 'resolvedBotThreads', note: '2 open bot threads' },
   ]);
 });
@@ -191,4 +207,9 @@ test('the settings drop a rule with an invalid field, and keep the others', () =
     parseSettings({ mergePolicy: { minScore: { reviewer: 'x', score: 'high' } } }).mergePolicy,
     undefined,
   );
+  assert.deepEqual(parseMergePolicy({ resolvedBotThreads: { goneMarker: ' sakuga-review:gone ' } }), {
+    resolvedBotThreads: { goneMarker: 'sakuga-review:gone' },
+  });
+  assert.equal(parseMergePolicy({ resolvedBotThreads: { goneMarker: '' } }), undefined);
+  assert.equal(parseMergePolicy({ resolvedBotThreads: false }), undefined);
 });
