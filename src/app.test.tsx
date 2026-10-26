@@ -190,6 +190,15 @@ test('an unfolded merged pull request says who merged it', async (t) => {
   await frameWith(app, 'by octocat · 3 min ago');
 });
 
+test('a pull request that GitHub moved after its parent merged asks for a rebase', async (t) => {
+  const { gitHub } = fakeGitHub(new Map([[1, approved({ restack: { oldBase: 'feat-0', at: ago(5) } })]]));
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  await frameWith(app, 'parent merged · rebase');
+  await press(app, 'e');
+  await frameWith(app, 'rebase on main: its parent on feat-0 merged');
+});
+
 test('a pull request that GitHub does not answer keeps its row, with the error, and the footer counts it', async (t) => {
   const { gitHub } = fakeGitHub(new Map([[1, new Error('HTTP 502')]]));
   const app = start(gitHub);

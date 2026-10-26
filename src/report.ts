@@ -124,7 +124,13 @@ export interface PullRequestReport {
     score: { score: number; total: number } | null;
     at: string | null;
   }[];
-  stack: { parent: string | null; position: number | null; size: number };
+  stack: {
+    parent: string | null;
+    position: number | null;
+    size: number;
+    /** The old base, if GitHub moved the pull request after its parent merged and no commit came since. */
+    restack: { oldBase: string; at: string } | null;
+  };
   agent: {
     kind: string | null;
     session: string | null;
@@ -248,7 +254,12 @@ export function buildReport(
         score: confidence.get(reviewer.login) ?? null,
         at: reviewer.lastReviewAt?.toISOString() ?? null,
       })),
-      stack: { parent: place.parent ?? null, position: place.position ?? null, size: place.size },
+      stack: {
+        parent: place.parent ?? null,
+        position: place.position ?? null,
+        size: place.size,
+        restack: snapshot?.restack ?? null,
+      },
       agent: {
         // A local session is always Claude Code, whatever agent wrote the pull request.
         kind: session ? 'claude' : (agent?.id ?? null),

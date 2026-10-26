@@ -23,7 +23,7 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   error: null,
   checks: { passed: 2, failing: [], running: 0, skipped: 0, quota: 0 },
   reviewers: [],
-  stack: { parent: null, position: 1, size: 1 },
+  stack: { parent: null, position: 1, size: 1, restack: null },
   agent: { kind: null, session: null, subAgent: null, sessionState: 'none', cloudSession: null },
   notes: { merge: null, retries: [], coderabbit: null },
   policy: [],
@@ -78,6 +78,17 @@ test('a new head commit and a new verdict give one event each', () => {
       reviewedAt: '2026-10-24T11:58:00.000Z',
     },
   ]);
+});
+
+test('a pull request that GitHub moved after its parent merged gives one restack event', () => {
+  const restack = { oldBase: 'feat-a', at: '2026-10-24T11:59:00Z' };
+  const stacked = report(2, { base: 'feat-a', stack: { parent: 'acme/web#1', position: 2, size: 2, restack: null } });
+  const moved = report(2, { stack: { parent: null, position: 1, size: 1, restack } });
+  assert.deepEqual(
+    diffReports(byKey(stacked), [moved], AT).map(({ at: _at, ...rest }) => rest),
+    [{ pr: 'acme/web#2', event: 'restack', oldBase: 'feat-a', base: 'main', parent: 'acme/web#1' }],
+  );
+  assert.deepEqual(diffReports(byKey(moved), [moved], AT), []);
 });
 
 test('a pull request enters the list, and others leave it merged or unlisted', () => {

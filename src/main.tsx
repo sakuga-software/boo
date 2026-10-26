@@ -61,7 +61,8 @@ const cli = meow(
     request shows after it, under the bottom of the stack, with one indent and
     a line: "on #921 · 2/3" is its place in the stack. A pull request on
     another base shows that base ("on feat/x"). The settings can turn the
-    grouping off.
+    grouping off. "parent merged · rebase" marks a pull request that GitHub
+    moved to a new base after its parent merged, with no commit since.
 
   Stalled
     zZ marks a pull request that is conflicts, changes requested or checks

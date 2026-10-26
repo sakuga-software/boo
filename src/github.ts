@@ -136,6 +136,11 @@ export interface PullRequestSnapshot {
   /** The login that merged the pull request. Undefined if it is not merged, or if GitHub does not give the account. */
   mergedBy?: string;
   mergedAt?: string;
+  /**
+   * GitHub moved the pull request to a new base after its base branch was deleted, and no commit came
+   * after that. A squash merge of the parent leaves its commits in this pull request: it needs a rebase.
+   */
+  restack?: { oldBase: string; at: string };
 }
 
 const REVIEW_FIELDS =
@@ -164,6 +169,8 @@ query(${VARIABLES}) {
   ${PULL} {
     state isDraft merged mergedAt mergedBy { login __typename } mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
     additions deletions changedFiles
+    timelineItems(itemTypes: [AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, PULL_REQUEST_COMMIT], last: 1) {
+      nodes { __typename ... on AutomaticBaseChangeSucceededEvent { oldBase createdAt } } }
     baseRepository { defaultBranchRef { name } }
     baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { ${CONTEXT_FIELDS} } } } } } }
     author { login __typename }
@@ -244,6 +251,7 @@ interface PullRequestNode {
   additions?: number;
   deletions?: number;
   changedFiles?: number;
+  timelineItems?: { nodes: { __typename: string; oldBase?: string; createdAt?: string }[] };
   baseRepository: { defaultBranchRef: { name: string } | null } | null;
   baseRef?: { target: { statusCheckRollup?: { contexts: Page<ContextNode> } | null } | null } | null;
   author: Actor | null;
@@ -365,6 +373,12 @@ export function withUnfinishedRuns(checks: Check[], suites: readonly SuiteNode[]
   ];
 }
 
+function restackOf(pull: PullRequestNode): { restack?: { oldBase: string; at: string } } {
+  const last = pull.timelineItems?.nodes.at(-1);
+  if (last?.__typename !== 'AutomaticBaseChangeSucceededEvent' || !last.oldBase || !last.createdAt) return {};
+  return { restack: { oldBase: last.oldBase, at: last.createdAt } };
+}
+
 function statusOf(pull: PullRequestNode): PullRequestStatus {
   if (pull.merged || pull.state === 'MERGED') return 'merged';
   if (pull.state === 'CLOSED') return 'closed';
@@ -412,6 +426,7 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
     }),
     ...(pull.files && { files: pull.files.nodes.map((file) => file.path) }),
     ...(commit?.committedDate && { headAt: commit.committedDate }),
+    ...restackOf(pull),
     ...(pull.changedFiles !== undefined && {
       changes: { additions: pull.additions ?? 0, deletions: pull.deletions ?? 0, files: pull.changedFiles },
     }),

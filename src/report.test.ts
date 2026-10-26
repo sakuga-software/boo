@@ -67,7 +67,7 @@ test('the output keeps the same keys, in the same order', () => {
     'policy',
   ]);
   assert.deepEqual(Object.keys(first!.checks), ['passed', 'failing', 'running', 'skipped', 'quota']);
-  assert.deepEqual(Object.keys(first!.stack), ['parent', 'position', 'size']);
+  assert.deepEqual(Object.keys(first!.stack), ['parent', 'position', 'size', 'restack']);
   assert.deepEqual(Object.keys(first!.agent), ['kind', 'session', 'subAgent', 'sessionState', 'cloudSession']);
   assert.deepEqual(Object.keys(first!.notes), ['merge', 'retries', 'coderabbit']);
 });
@@ -139,8 +139,8 @@ test('a stacked pull request follows its base, with its place in the stack', () 
   assert.deepEqual(
     reports.map(({ number, stack }) => ({ number, stack })),
     [
-      { number: 1, stack: { parent: null, position: 1, size: 2 } },
-      { number: 2, stack: { parent: 'acme/web#1', position: 2, size: 2 } },
+      { number: 1, stack: { parent: null, position: 1, size: 2, restack: null } },
+      { number: 2, stack: { parent: 'acme/web#1', position: 2, size: 2, restack: null } },
     ],
   );
 });

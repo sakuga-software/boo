@@ -1523,6 +1523,8 @@ function notesOf(row: Row, context: DescribeContext): string[] {
       headAt &&
       `stalled: no session works on it, and the last commit is ${formatAgo(context.now, new Date(headAt))}`,
     context.stack,
+    row.fetched?.restack &&
+      `rebase on ${row.fetched.base}: its parent on ${row.fetched.restack.oldBase} merged, and its commits are still here`,
     row.summary && MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
     ...(context.retries ?? []).map(({ bot, at }) => `${bot.name} retry at ${formatTime(at)}`),
     row.summary && coderabbitDetail(row.decision, context),
@@ -1560,6 +1562,7 @@ function stackDetail(row: Row, parent: Row, parentView: View, options: Options):
 
 /** The place of the pull request in its stack, or the base branch if it is not the default branch. */
 function stackHint(row: Row, place: Placement, rows: Map<string, Row>): string | undefined {
+  if (row.fetched?.restack) return 'parent merged · rebase';
   if (place.parent) {
     const parent = rows.get(place.parent)!;
     return `on #${parent.pr.number}${place.position ? ` · ${place.position}/${place.size}` : ''}`;
