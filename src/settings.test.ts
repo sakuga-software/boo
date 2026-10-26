@@ -109,6 +109,10 @@ test('the comment events keep the valid logins and markers', () => {
       ignoreMarkers: [],
     },
   );
+  assert.deepEqual(parseSettings({ commentEvents: { ignoreMarkers: ['<!-- claude-reply -->'] } }).commentEvents, {
+    ignoreLogins: [],
+    ignoreMarkers: ['<!-- claude-reply -->'],
+  });
   assert.equal(parseSettings({ commentEvents: { ignoreLogins: [] } }).commentEvents, undefined);
   assert.equal(parseSettings({ commentEvents: ['alice'] }).commentEvents, undefined);
 });
