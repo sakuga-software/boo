@@ -181,7 +181,7 @@ query(${VARIABLES}) {
     commits(last: 1) { nodes { commit { message committedDate authors(first: 10) { nodes { user { login } } }
       checkSuites(first: 100) { nodes { status workflowRun { databaseId workflow { name } } } }
       statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
-    ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } latest: comments(last: 5) { nodes { author { login __typename } body } } } }' : ''}
+    ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } latest: comments(last: 1) { nodes { author { login __typename } body } } } }' : ''}
     ${files ? 'files(first: 100) { nodes { path } }' : ''}
   } }
 }`;
@@ -430,7 +430,8 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
       openThreads: pull.reviewThreads.nodes
         .filter((thread) => !thread.isResolved)
         .map((thread): OpenThread => {
-          const lastBotComment = thread.latest?.nodes.findLast((node) => isBotLogin(loginOf(node.author) ?? ''))?.body;
+          const last = thread.latest?.nodes.at(-1);
+          const lastBotComment = last && isBotLogin(loginOf(last.author) ?? '') ? last.body : undefined;
           return {
             author: loginOf(thread.comments.nodes[0]?.author ?? null) ?? '',
             ...(lastBotComment !== undefined && { lastBotComment }),

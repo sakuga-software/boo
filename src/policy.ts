@@ -8,8 +8,8 @@ export interface MergePolicy {
   /** A regular expression that the description or a comment must match: a link to a recording, or a reason. */
   requireProof?: string;
   /**
-   * Every review thread that a bot starts must be resolved. A thread whose last bot comment contains
-   * `goneMarker` counts as resolved: the bot says that its finding is gone.
+   * Every review thread that a bot starts must be resolved. A thread whose last comment is a bot
+   * comment that contains `goneMarker` counts as resolved: the bot says that its finding is gone.
    */
   resolvedBotThreads?: true | { goneMarker: string };
   /** Only `owner` merges a pull request that changes a file under one of `paths`. `@me` is the user of boo. */
@@ -39,7 +39,7 @@ export interface PolicyMiss {
 export interface OpenThread {
   /** The author of the first comment. */
   author: string;
-  /** The body of the last comment of a bot, in the last comments of the thread. */
+  /** The body of the last comment of the thread, if a bot wrote it. A reply of a person after the bot clears it. */
   lastBotComment?: string;
 }
 

@@ -469,13 +469,12 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
         {
           isResolved: false,
           comments: { nodes: [{ author: bot('sakuga-review') }] },
-          latest: {
-            nodes: [
-              { author: bot('sakuga-review'), body: 'P1: a finding.' },
-              { author: bot('sakuga-review'), body: 'Gone. <!-- sakuga-review:gone -->' },
-              { author: { login: 'Mheaus', __typename: 'User' }, body: 'Thanks.' },
-            ],
-          },
+          latest: { nodes: [{ author: bot('sakuga-review'), body: 'Gone. <!-- sakuga-review:gone -->' }] },
+        },
+        {
+          isResolved: false,
+          comments: { nodes: [{ author: bot('sakuga-review') }] },
+          latest: { nodes: [{ author: { login: 'Mheaus', __typename: 'User' }, body: 'No, it is still there.' }] },
         },
         { isResolved: true, comments: { nodes: [{ author: bot('greptile-apps') }] } },
         { isResolved: false, comments: { nodes: [{ author: { login: 'alice', __typename: 'User' } }] } },
@@ -530,6 +529,7 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
   assert.deepEqual(snapshot.restack, { oldBase: 'feat-0', at: ago(3) });
   assert.deepEqual(snapshot.openThreads, [
     { author: 'sakuga-review[bot]', lastBotComment: 'Gone. <!-- sakuga-review:gone -->' },
+    { author: 'sakuga-review[bot]' },
     { author: 'alice' },
   ]);
   assert.deepEqual(
