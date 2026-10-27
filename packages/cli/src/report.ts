@@ -141,6 +141,11 @@ export interface PullRequestReport {
   notes: { merge: string | null; retries: { bot: string; at: string }[]; coderabbit: CoderabbitNote | null };
   /** The rules of the merge policy that the pull request misses. */
   policy: PolicyMiss[];
+  /**
+   * GitHub refuses the GraphQL queries for a rate limit: the report shows the last read that worked,
+   * at `at`. `until` is the time that the queries work again. Null if the read is of now.
+   */
+  stale: { at: string; until: string | null } | null;
 }
 
 export type CoderabbitNote =
@@ -286,6 +291,7 @@ export function buildReport(
         coderabbit: result ? coderabbitNote(result.decision) : null,
       },
       policy: summary?.policy ?? [],
+      stale: snapshot?.stale ? { at: snapshot.stale.at, until: snapshot.stale.until ?? null } : null,
     };
   });
 }

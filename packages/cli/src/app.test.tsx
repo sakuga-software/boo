@@ -245,6 +245,49 @@ test('low GraphQL points slow the refresh down, and the header says so', async (
   await frameWith(app, 'GraphQL 100/5000 left, refresh every 5 min');
 });
 
+test('a read that GitHub refuses for a rate limit keeps the last state of the row, and the header says until when', async (t) => {
+  const until = new Date(now + 30 * 60_000).toISOString();
+  const { gitHub } = fakeGitHub(new Map([[1, approved({ stale: { at: ago(10), until } })]]), {
+    readRateLimit: async () => ({ limit: 5_000, remaining: 0, resetAt: until }),
+  });
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  const frame = await frameWith(app, '1 stale');
+  assert.match(frame, /GitHub refuses the GraphQL queries until/);
+  assert.match(frame, /ready to merge/);
+  assert.doesNotMatch(frame, /error/);
+});
+
+test('a merge whose next read GitHub refuses says that the new status could not be read', async (t) => {
+  const snapshots = new Map<number, PullRequestSnapshot | Error>([[1, approved()]]);
+  const { gitHub } = fakeGitHub(snapshots, {
+    mergePullRequest: async () => {
+      snapshots.set(1, approved({ stale: { at: ago(0), until: new Date(now + 60_000).toISOString() } }));
+    },
+  });
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  await frameWith(app, 'ready to merge');
+  await press(app, 'm');
+  await frameWith(app, 'Merge acme/web#1?');
+  await press(app, 'y');
+  await frameWith(app, 'GitHub accepted the merge of acme/web#1');
+});
+
+test('m refuses to merge a stale pull request: its approval can be old', async (t) => {
+  const until = new Date(now + 30 * 60_000).toISOString();
+  const { gitHub, merges } = fakeGitHub(new Map([[1, approved({ stale: { at: ago(10), until } })]]), {
+    readRateLimit: async () => ({ limit: 5_000, remaining: 0, resetAt: until }),
+  });
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  await frameWith(app, '1 stale');
+  await press(app, 'm');
+  await frameWith(app, 'Cannot merge acme/web#1: its state is from');
+  assert.doesNotMatch(app.lastFrame() ?? '', /Merge acme\/web#1\?/);
+  assert.deepEqual(merges, []);
+});
+
 test('two pull requests of two sub-agents of one session show the two sub-agents', async (t) => {
   const { gitHub } = fakeGitHub(
     new Map([

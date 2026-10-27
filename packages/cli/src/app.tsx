@@ -167,6 +167,8 @@ function stackParent(row: Row, rows: Iterable<Row>): Row | undefined {
   return parent && byKey.get(parent.key);
 }
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+/** The row shows no data of now: its last read failed, or GitHub refused it for a rate limit. No post goes on it. */
+const unread = (row: Row) => Boolean(row.error || row.fetched?.stale);
 const isHidden = (row: Row, settings: Settings, revealed: boolean) =>
   Boolean(row.left) && !revealed && settings[HIDING_SETTING[row.left!]];
 
@@ -178,7 +180,7 @@ const inProgress = (row: Row) =>
 /** `autoPost`: the tool can post a CodeRabbit retry. */
 function needsWatch(row: Row, autoPost: boolean): boolean {
   if (row.left) return false;
-  if (row.error || inProgress(row)) return true;
+  if (unread(row) || inProgress(row)) return true;
   switch (row.decision?.kind) {
     case 'busy':
     case 'pending':
@@ -303,6 +305,7 @@ export function App(props: AppProps) {
   const viewerRef = useRef<string>(undefined);
   const [rate, setRate] = useState<github.RateLimit>();
   const lowRef = useRef(false);
+  const rateRef = useRef<github.RateLimit>(undefined);
   // The rows that show their details: the agent, the reviewers, the checks that fail.
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(() => new Set());
   const unfoldedRef = useRef(unfolded);
@@ -312,7 +315,7 @@ export function App(props: AppProps) {
     isEnabled(settingsRef.current, CODERABBIT) && retriesOn(settingsRef.current, CODERABBIT);
   // A row whose last fetch failed shows old data, so it gets no retry until a fetch works.
   const retriesOf = (row: Row): Retry[] =>
-    !row.summary || row.left || row.error || options.dryRun
+    !row.summary || row.left || unread(row) || options.dryRun
       ? []
       : retried.current.pending(
           keyOf(row.pr),
@@ -452,7 +455,7 @@ export function App(props: AppProps) {
       for (const pr of prs) {
         await exclusive(async () => {
           // A row whose last fetch failed shows old data: its head and its status are not checked.
-          const due = (row: Row) => !row.left && !row.error && row.decision?.kind === 'trigger';
+          const due = (row: Row) => !row.left && !unread(row) && row.decision?.kind === 'trigger';
           const waits = (row: Row) => !due(row) || unanswered(row, lastPosts.current.get(keyOf(pr)));
           if (waits(rowOf(pr))) return;
           // A read from the cache can miss a request that another run of boo just posted. A fresh read sees it.
@@ -509,7 +512,10 @@ export function App(props: AppProps) {
         .filter((decision) => decision?.kind === 'wait')
         .map((decision) => decision.availableAt.getTime());
       const retries = tracked().flatMap((pr) => retriesOf(rowOf(pr)).map(({ at }) => at.getTime()));
-      const ends = [...waits, ...retries].map((end) => end + 2_000 - Date.now());
+      const refusedUntil = github.pointsOutUntil(rateRef.current);
+      const ends = [...waits, ...retries, ...(refusedUntil ? [Date.parse(refusedUntil)] : [])].map(
+        (end) => end + 2_000 - Date.now(),
+      );
       return Math.max(1_000, Math.min(lowRef.current ? SLOW_POLL_MS : timing.watchPollMs, ...ends));
     }
 
@@ -521,6 +527,7 @@ export function App(props: AppProps) {
       const rate = await gitHub.readRateLimit?.().catch(() => undefined);
       if (signal.aborted) return;
       lowRef.current = github.lowOnPoints(rate);
+      rateRef.current = rate;
       setRate(rate);
     }
 
@@ -896,8 +903,17 @@ export function App(props: AppProps) {
     return `The ${request.bot.name} quota ${back}: ${request.bot.name} will likely refuse.`;
   }
 
-  /** Shows why the merge policy refuses the merge. Returns true if it refuses. */
-  function refusePolicy(row: Row, key: string): boolean {
+  /** Shows why boo refuses the merge: a stale state, or the merge policy. Returns true if it refuses. */
+  function refuseMerge(row: Row, key: string): boolean {
+    const stale = row.fetched?.stale;
+    if (stale) {
+      const back = stale.until ? ` until ${formatTime(new Date(stale.until))}` : '';
+      setFlash({
+        text: `Cannot merge ${key}: its state is from ${formatTime(new Date(stale.at))}, and GitHub refuses the queries${back}.`,
+        color: 'yellow',
+      });
+      return true;
+    }
     const misses = row.summary?.policy ?? [];
     if (misses.length === 0) return false;
     setFlash({
@@ -916,7 +932,7 @@ export function App(props: AppProps) {
       return;
     }
     if (action.merge) {
-      if (refusePolicy(row, key)) return;
+      if (refuseMerge(row, key)) return;
       const head = row.fetched?.head;
       if (!head) {
         setFlash({ text: `Cannot merge ${key}: its state is not fetched yet.`, color: 'yellow' });
@@ -992,7 +1008,7 @@ export function App(props: AppProps) {
     }
     if (pending.action.merge) {
       // A refresh while the prompt waits can bring a new miss, such as a lower score on a new head.
-      if (refusePolicy(row, pending.key)) return;
+      if (refuseMerge(row, pending.key)) return;
       const head = pending.head;
       if (!head || merging.current.has(pending.key)) return;
       merging.current.add(pending.key);
@@ -1006,9 +1022,10 @@ export function App(props: AppProps) {
             await controls.current?.refresh(row.pr, true);
             const after = rowsRef.current.get(pending.key);
             if (after?.left === 'merged') setFlash({ text: `Merged ${pending.key}.`, color: 'green' });
-            else if (after?.error) {
+            else if (after && unread(after)) {
+              const why = after.error ?? 'GitHub refuses the queries (rate limit)';
               setFlash({
-                text: `GitHub accepted the merge of ${pending.key}, but its new status could not be read: ${after.error}`,
+                text: `GitHub accepted the merge of ${pending.key}, but its new status could not be read: ${why}`,
                 color: 'yellow',
               });
             } else
@@ -1396,6 +1413,7 @@ const scopeOf = ({ org, repos = [] }: Pick<Options, 'org' | 'repos'>) =>
   repos.length > 0 ? repos.join(', ') : org || 'all organizations';
 
 export function Header({ options, mood, now, nextCheckAt, rate }: HeaderProps) {
+  const refusedUntil = github.pointsOutUntil(rate, now);
   const status =
     !options.watch || mood === 'done' || mood === 'failed'
       ? ' '
@@ -1422,11 +1440,18 @@ export function Header({ options, mood, now, nextCheckAt, rate }: HeaderProps) {
         </Text>
         <Text wrap="truncate-end">
           <Text dimColor>{status}</Text>
-          {github.lowOnPoints(rate) && (
+          {refusedUntil ? (
             <Text color="yellow">
-              {status.trim() && ' · '}GraphQL {rate!.remaining}/{rate!.limit} left
-              {options.watch && `, refresh every ${SLOW_POLL_MS / 60_000} min`}
+              {status.trim() && ' · '}GitHub refuses the GraphQL queries until {formatTime(new Date(refusedUntil))}: the
+              rows show their last state
             </Text>
+          ) : (
+            github.lowOnPoints(rate) && (
+              <Text color="yellow">
+                {status.trim() && ' · '}GraphQL {rate!.remaining}/{rate!.limit} left
+                {options.watch && `, refresh every ${SLOW_POLL_MS / 60_000} min`}
+              </Text>
+            )
           )}
         </Text>
       </Box>
@@ -1440,6 +1465,8 @@ interface View {
   color: string;
   /** The lines of the notes section of an unfolded row. */
   notes?: string[];
+  /** The view shows the last read that worked, not the state of now. */
+  stale?: boolean;
 }
 
 const spinner = (color: string) => (
@@ -1548,7 +1575,18 @@ function describe(row: Row, context: DescribeContext): View {
   if (!row.summary)
     return { icon: spinner('gray'), label: 'checking', color: 'gray', ...(stack && { notes: [stack] }) };
   const { icon, ...view } = OVERALL_VIEWS[row.summary.overall];
-  return { ...view, icon: icon(), notes: notesOf(row, context) };
+  const stale = row.fetched?.stale;
+  if (!stale) return { ...view, icon: icon(), notes: notesOf(row, context) };
+  const back = stale.until ? `, GitHub answers again at ${formatTime(new Date(stale.until))}` : '';
+  return {
+    ...view,
+    icon: icon(),
+    stale: true,
+    notes: [
+      `stale: the state of ${formatTime(new Date(stale.at))}. GitHub refuses the queries (rate limit)${back}`,
+      ...notesOf(row, context),
+    ],
+  };
 }
 
 const shortName = (pr: PullRequest, options: Options) =>
@@ -2028,7 +2066,7 @@ function RowView({
         </Box>
         {layout.label && (
           <Box width={LABEL_WIDTH} flexShrink={0}>
-            <Text color={view.color} bold>
+            <Text color={view.color} bold={!view.stale} dimColor={view.stale}>
               {view.label}
             </Text>
           </Box>
@@ -2118,6 +2156,7 @@ function Footer({ rows, triggered, done, listError, options }: FooterProps) {
   const active = rows.filter((row) => !row.left);
   // A row whose last read failed keeps the summary of an older read. Its row shows the error, not that summary.
   const read = active.filter((row) => !row.error);
+  const stale = read.filter((row) => row.fetched?.stale).length;
   const countLeft = (status: LeftStatus) => rows.filter((row) => row.left === status).length;
   const waiting = active.filter((row) => row.decision?.kind === 'wait').length;
   const parts: [number, string, string][] = [
@@ -2127,6 +2166,7 @@ function Footer({ rows, triggered, done, listError, options }: FooterProps) {
       OVERALL_VIEWS[overall].color,
     ]),
     [active.length - read.length, 'error', 'red'],
+    [stale, 'stale', 'yellow'],
     [triggered, 'retried', 'blue'],
     [countLeft('merged'), 'merged', 'magenta'],
     [countLeft('closed'), 'closed', 'red'],

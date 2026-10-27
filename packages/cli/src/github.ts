@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { requestText, type Request } from './actions.js';
 import { detectAgent, type Agent } from './agents.js';
-import { cachedRead, cacheDir, DiskCache } from './cache.js';
+import { cachedRead, cacheDir, DiskCache, type ReadCache } from './cache.js';
 import type { Comment, Review } from './decide.js';
 import type { OpenThread } from './policy.js';
 import { isBotLogin, type Check, type CheckState } from './reviewers.js';
@@ -142,6 +142,11 @@ export interface PullRequestSnapshot {
    * after that. A squash merge of the parent leaves its commits in this pull request: it needs a rebase.
    */
   restack?: { oldBase: string; at: string };
+  /**
+   * GitHub refuses the GraphQL queries for a rate limit, so this is the last read that worked, at `at`.
+   * `until` is the time that the queries work again, if GitHub tells it.
+   */
+  stale?: { at: string; until?: string };
 }
 
 const reviewFields = (lineComments?: boolean) =>
@@ -475,6 +480,31 @@ export interface RateLimit {
 /** True if less than 20 % of the GraphQL points remain. The watch then slows down until the reset. */
 export const lowOnPoints = (rate: RateLimit | undefined) => Boolean(rate && rate.remaining < rate.limit * 0.2);
 
+// A read with its pages costs a few points. Below this count, a read can fail half way.
+const POINTS_FLOOR = 10;
+
+/** Returns the time that the queries work again, if a query fails now for a rate limit. */
+export function pointsOutUntil(rate: RateLimit | undefined, now = new Date()): string | undefined {
+  return rate && rate.remaining < POINTS_FLOOR && new Date(rate.resetAt) > now ? rate.resetAt : undefined;
+}
+
+/** GitHub refuses the query because of a rate limit: the GraphQL points, or a secondary limit. */
+export class QuotaError extends Error {
+  constructor(
+    message: string,
+    readonly until?: string,
+  ) {
+    super(message);
+  }
+}
+
+export const isRateLimited = (message: string) => /rate limit/i.test(message);
+
+const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+const quotaMessage = (until: string | undefined) =>
+  `GitHub refuses the GraphQL queries of this account${until ? ` until ${clock(until)}` : ''}: rate limit`;
+
 let accountCache: Promise<DiskCache | undefined> | undefined;
 
 /**
@@ -506,12 +536,41 @@ export async function readRateLimit(now = new Date()): Promise<RateLimit | undef
   return stored && new Date(stored.value.resetAt) > now ? stored.value : undefined;
 }
 
+// GitHub asks to wait at least one minute after a secondary rate limit.
+const SECONDARY_WAIT_MS = 60_000;
+
+/**
+ * Records that the queries fail until the returned time, so that no run of boo on this machine sends
+ * one before. If points remain, the limit is a secondary limit, which stops for one minute.
+ */
+async function recordRefusal(now = Date.now()): Promise<string | undefined> {
+  try {
+    // The REST endpoint of the rate limits costs no point, so it answers when GraphQL refuses.
+    const { limit, remaining, reset } = JSON.parse(await gh(['api', 'rate_limit', '--jq', '.resources.graphql'])) as {
+      limit: number;
+      remaining: number;
+      reset: number;
+    };
+    const until = remaining < POINTS_FLOOR ? reset * 1000 : now + SECONDARY_WAIT_MS;
+    const rate = { limit, remaining: Math.min(remaining, POINTS_FLOOR - 1), resetAt: new Date(until).toISOString() };
+    await cache.set(RATE_KEY, rate);
+    return rate.resetAt;
+  } catch {
+    return undefined;
+  }
+}
+
 async function graphql(query: string, variables: Variables): Promise<PullRequestNode> {
   const args = Object.entries(variables).flatMap(([key, value]) => [
     typeof value === 'number' ? '-F' : '-f',
     `${key}=${value}`,
   ]);
-  const response = JSON.parse(await gh(['api', 'graphql', ...args, '-f', `query=${query}`])) as {
+  const output = await gh(['api', 'graphql', ...args, '-f', `query=${query}`]).catch(async (error: Error) => {
+    if (!isRateLimited(error.message)) throw error;
+    const until = await recordRefusal();
+    throw new QuotaError(quotaMessage(until), until);
+  });
+  const response = JSON.parse(output) as {
     data?: { rateLimit?: RateLimit; repository: { pullRequest: PullRequestNode | null } | null };
     errors?: { message: string }[];
   };
@@ -589,7 +648,34 @@ export async function fetchPullRequest(
   pr: PullRequest,
   { maxAgeMs = CACHE_TTL_MS, extra = {} }: { maxAgeMs?: number; extra?: ExtraFields } = {},
 ): Promise<PullRequestSnapshot> {
-  return cachedRead(cache, readKey(pr, extra), maxAgeMs, () => readPullRequest(pr, extra));
+  return readOrLast(cache, readKey(pr, extra), maxAgeMs, async () => {
+    const until = pointsOutUntil(await readRateLimit());
+    if (until) throw new QuotaError(quotaMessage(until), until);
+    return readPullRequest(pr, extra);
+  });
+}
+
+/**
+ * Reads with `cachedRead`. If `read` fails with a `QuotaError`, returns the last cached value of any
+ * age, marked `stale`. With no cached value, the error stays.
+ */
+export async function readOrLast(
+  store: ReadCache,
+  key: string,
+  maxAgeMs: number,
+  read: () => Promise<PullRequestSnapshot>,
+): Promise<PullRequestSnapshot> {
+  try {
+    return await cachedRead(store, key, maxAgeMs, read);
+  } catch (error) {
+    if (!(error instanceof QuotaError)) throw error;
+    const last = await store.get<PullRequestSnapshot>(key, Infinity);
+    if (!last) throw error;
+    return {
+      ...last.value,
+      stale: { at: new Date(last.at).toISOString(), ...(error.until && { until: error.until }) },
+    };
+  }
 }
 
 /** The cache key of a read. A read with fewer fields must not answer a read that needs the threads or the files. */
