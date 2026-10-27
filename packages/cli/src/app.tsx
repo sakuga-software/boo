@@ -1022,9 +1022,10 @@ export function App(props: AppProps) {
             await controls.current?.refresh(row.pr, true);
             const after = rowsRef.current.get(pending.key);
             if (after?.left === 'merged') setFlash({ text: `Merged ${pending.key}.`, color: 'green' });
-            else if (after?.error) {
+            else if (after && unread(after)) {
+              const why = after.error ?? 'GitHub refuses the queries (rate limit)';
               setFlash({
-                text: `GitHub accepted the merge of ${pending.key}, but its new status could not be read: ${after.error}`,
+                text: `GitHub accepted the merge of ${pending.key}, but its new status could not be read: ${why}`,
                 color: 'yellow',
               });
             } else

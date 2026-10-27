@@ -258,6 +258,22 @@ test('a read that GitHub refuses for a rate limit keeps the last state of the ro
   assert.doesNotMatch(frame, /error/);
 });
 
+test('a merge whose next read GitHub refuses says that the new status could not be read', async (t) => {
+  const snapshots = new Map<number, PullRequestSnapshot | Error>([[1, approved()]]);
+  const { gitHub } = fakeGitHub(snapshots, {
+    mergePullRequest: async () => {
+      snapshots.set(1, approved({ stale: { at: ago(0), until: new Date(now + 60_000).toISOString() } }));
+    },
+  });
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  await frameWith(app, 'ready to merge');
+  await press(app, 'm');
+  await frameWith(app, 'Merge acme/web#1?');
+  await press(app, 'y');
+  await frameWith(app, 'GitHub accepted the merge of acme/web#1');
+});
+
 test('m refuses to merge a stale pull request: its approval can be old', async (t) => {
   const until = new Date(now + 30 * 60_000).toISOString();
   const { gitHub, merges } = fakeGitHub(new Map([[1, approved({ stale: { at: ago(10), until } })]]), {
