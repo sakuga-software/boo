@@ -68,3 +68,9 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
 - If less than 20 % of the GraphQL points of the account remain, the header shows them
   (`GraphQL 312/5000 left, refresh every 5 min`), and the watch reads the list and each pull
   request every 5 minutes until GitHub resets the points. The runs share the count of points too.
+- If GitHub refuses a query for a rate limit, a row keeps the last state that a run of boo read,
+  with its label dimmed, and the footer counts it as `stale`. The header tells when GitHub answers
+  again (`GitHub refuses the GraphQL queries until 11:00: the rows show their last state`). No
+  run on this machine sends a query before that time, and the watch reads again just after it. A
+  stale row gets no automatic retry: its data is old. A pull request that no run read before shows
+  `error`.

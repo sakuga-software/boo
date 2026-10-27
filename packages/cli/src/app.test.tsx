@@ -245,6 +245,19 @@ test('low GraphQL points slow the refresh down, and the header says so', async (
   await frameWith(app, 'GraphQL 100/5000 left, refresh every 5 min');
 });
 
+test('a read that GitHub refuses for a rate limit keeps the last state of the row, and the header says until when', async (t) => {
+  const until = new Date(now + 30 * 60_000).toISOString();
+  const { gitHub } = fakeGitHub(new Map([[1, approved({ stale: { at: ago(10), until } })]]), {
+    readRateLimit: async () => ({ limit: 5_000, remaining: 0, resetAt: until }),
+  });
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  const frame = await frameWith(app, '1 stale');
+  assert.match(frame, /GitHub refuses the GraphQL queries until/);
+  assert.match(frame, /ready to merge/);
+  assert.doesNotMatch(frame, /error/);
+});
+
 test('two pull requests of two sub-agents of one session show the two sub-agents', async (t) => {
   const { gitHub } = fakeGitHub(
     new Map([
