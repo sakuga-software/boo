@@ -590,6 +590,8 @@ async function recordRefusal(now = Date.now()): Promise<string | undefined> {
     await cache.set(RATE_KEY, rate);
     return rate.resetAt;
   } catch {
+    // With no reset time, wait as for a secondary limit: else each poll sends a query that fails.
+    await cache.set(RATE_KEY, { limit: 0, remaining: 0, resetAt: new Date(now + SECONDARY_WAIT_MS).toISOString() });
     return undefined;
   }
 }

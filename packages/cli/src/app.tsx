@@ -521,10 +521,12 @@ export function App(props: AppProps) {
 
     const tracked = () => [...rowsRef.current.values()].map((row) => row.pr);
 
-    // A fresh read asks for GitHub, so it skips the probe.
+    // A fresh read asks for GitHub, so it skips the probe. A read can change the points, or meet a
+    // refusal: the next delay and the header read the points after each refresh.
     async function refreshAll(prs: PullRequest[], fresh = false) {
       if (!fresh) await gitHub.probePullRequests?.(prs).catch(() => {});
       await Promise.all(prs.map((pr) => refresh(pr, fresh)));
+      await readPoints();
     }
 
     const cacheAge = () => (lowRef.current ? SLOW_POLL_MS : github.CACHE_TTL_MS);
@@ -550,7 +552,6 @@ export function App(props: AppProps) {
       selectedRef.current ??= [...rowsRef.current.keys()][0];
       setSelected(selectedRef.current);
       await refreshAll([...added, ...plan.recheck.map((key) => rowsRef.current.get(key)!.pr)], fresh);
-      await readPoints();
     }
 
     async function run() {
