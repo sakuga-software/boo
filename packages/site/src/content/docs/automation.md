@@ -50,7 +50,9 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
     "merge": "blocked by the branch protection rules",
     "retries": [{ "bot": "Copilot", "at": "2026-10-24T10:00:00.000Z" }],
     "coderabbit": null
-  }
+  },
+  "policy": [],
+  "stale": null
 }
 ```
 

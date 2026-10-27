@@ -58,9 +58,13 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
   review again comes back into the watch.
 - It reads each pull request again once a minute, and every 30 s while a reviewer reviews or a
   check runs.
-- It reads each pull request with one GraphQL query of cost 1. Ten pull requests cost about
-  600 points an hour, out of the 5,000 of the GraphQL limit. The REST limit, which `gh` commands
-  of your agents use, stays free.
+- Before it reads the pull requests, it probes them: one GraphQL query reads a short state of 50
+  pull requests (the head, the last comment and review, the counts of the checks, the merge state)
+  for 1 to 3 points. It then reads again, with one query of cost 1, only the pull requests whose
+  short state changed, and each pull request at least every 5 minutes. A resolved review thread
+  and a new check on the base branch do not change the short state: they show within these 5
+  minutes. `r`, and the reads after a post or a merge, skip the probe. The REST limit, which `gh`
+  commands of your agents use, stays free.
 - All the runs of boo on this machine share a cache in `~/.cache/boo/` (or under
   `$XDG_CACHE_HOME`): a terminal watch, a scheduled run, the watch of an agent. A pull request that
   another run read less than 30 s ago costs no query. `r`, and the reads after a post or a merge,

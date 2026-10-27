@@ -82,7 +82,7 @@ export class DiskCache {
 
 /** The part of a cache that `cachedRead` uses. */
 export interface ReadCache {
-  get<T>(key: string, maxAgeMs: number): Promise<{ value: T; at: number } | undefined>;
+  get<T>(key: string, maxAgeMs: number, now?: number): Promise<{ value: T; at: number } | undefined>;
   set(key: string, value: unknown): Promise<void>;
 }
 

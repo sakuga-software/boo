@@ -274,6 +274,27 @@ test('a merge whose next read GitHub refuses says that the new status could not 
   await frameWith(app, 'GitHub accepted the merge of acme/web#1');
 });
 
+test('the watch reads again just after GitHub answers, and the header and the row clear at once', async (t) => {
+  const back = Date.now() + 1_000;
+  const refused = () => Date.now() < back;
+  const { gitHub } = fakeGitHub(new Map(), {
+    listPullRequests: async () => [pr(1)],
+    fetchPullRequest: async () =>
+      refused() ? approved({ stale: { at: ago(10), until: new Date(back).toISOString() } }) : approved(),
+    readRateLimit: async () =>
+      refused() ? { limit: 5_000, remaining: 0, resetAt: new Date(back).toISOString() } : undefined,
+  });
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  await frameWith(app, '1 stale');
+  assert.match(app.lastFrame() ?? '', /GitHub refuses the GraphQL queries until/);
+  const end = Date.now() + 6_000;
+  while (Date.now() < end && /stale|refuses/.test(app.lastFrame() ?? '')) await sleep(20);
+  await sleep(100);
+  assert.doesNotMatch(app.lastFrame() ?? '', /stale|refuses|GraphQL \d+\/\d+ left/);
+  assert.match(app.lastFrame() ?? '', /1 ready to merge/);
+});
+
 test('m refuses to merge a stale pull request: its approval can be old', async (t) => {
   const until = new Date(now + 30 * 60_000).toISOString();
   const { gitHub, merges } = fakeGitHub(new Map([[1, approved({ stale: { at: ago(10), until } })]]), {

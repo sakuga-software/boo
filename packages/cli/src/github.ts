@@ -16,8 +16,8 @@ async function gh(args: string[]): Promise<string> {
     const { stdout } = await execFileAsync('gh', args, { maxBuffer: 64 * 1024 * 1024 });
     return stdout;
   } catch (error) {
-    const stderr = (error as { stderr?: string }).stderr?.trim();
-    throw new Error(stderr || (error as Error).message);
+    const { stderr, stdout } = error as { stderr?: string; stdout?: string };
+    throw Object.assign(new Error(stderr?.trim() || (error as Error).message), { stdout });
   }
 }
 
@@ -147,6 +147,8 @@ export interface PullRequestSnapshot {
    * `until` is the time that the queries work again, if GitHub tells it.
    */
   stale?: { at: string; until?: string };
+  /** A hash of the fields that `probePullRequests` reads, at the time of the read. */
+  fingerprint?: string;
 }
 
 const reviewFields = (lineComments?: boolean) =>
@@ -171,10 +173,42 @@ export interface ExtraFields {
   lineComments?: boolean;
 }
 
-const queryOf = ({ threads, files, lineComments }: ExtraFields) => `
+// The probe reads only the fields that change when the pull request changes. Known misses: a
+// review thread that somebody resolves, and the checks of the base branch. A read older than
+// UNCHANGED_MAX_AGE_MS reads all again, so these misses last at most that time.
+const PROBE_FRAGMENT = `fragment Probe on PullRequest {
+  updatedAt headRefOid mergeStateStatus state isDraft
+  probeFirstComment: comments(first: 1) { nodes { updatedAt } }
+  probeLastComment: comments(last: 1) { nodes { updatedAt } }
+  probeLastReview: reviews(last: 1) { nodes { updatedAt } }
+  probeHead: commits(last: 1) { nodes { commit { checkSuites(first: 1) { totalCount } statusCheckRollup { state
+    contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
+  probeBase: baseRef { target { oid } }
+}`;
+const PROBE_KEYS = [
+  'updatedAt',
+  'headRefOid',
+  'mergeStateStatus',
+  'state',
+  'isDraft',
+  'probeFirstComment',
+  'probeLastComment',
+  'probeLastReview',
+  'probeHead',
+  'probeBase',
+] as const;
+
+export const fingerprintOf = (node: Record<string, unknown>) =>
+  createHash('sha256')
+    .update(JSON.stringify(PROBE_KEYS.map((key) => node[key] ?? null)))
+    .digest('hex')
+    .slice(0, 16);
+
+const queryOf = ({ threads, files, lineComments }: ExtraFields) => `${PROBE_FRAGMENT}
 query(${VARIABLES}) {
   rateLimit { limit remaining resetAt }
   ${PULL} {
+    ...Probe
     state isDraft merged mergedAt mergedBy { login __typename } mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
     additions deletions changedFiles
     timelineItems(itemTypes: [AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, PULL_REQUEST_COMMIT], last: 1) {
@@ -556,28 +590,47 @@ async function recordRefusal(now = Date.now()): Promise<string | undefined> {
     await cache.set(RATE_KEY, rate);
     return rate.resetAt;
   } catch {
+    // With no reset time, wait as for a secondary limit: else each poll sends a query that fails.
+    await cache.set(RATE_KEY, { limit: 0, remaining: 0, resetAt: new Date(now + SECONDARY_WAIT_MS).toISOString() });
     return undefined;
   }
 }
 
-async function graphql(query: string, variables: Variables): Promise<PullRequestNode> {
+interface Response<T> {
+  data?: (T & { rateLimit?: RateLimit }) | null;
+  errors?: { message: string }[];
+}
+
+/**
+ * Sends a GraphQL query and records the points that remain. With `partial`, a response with errors
+ * gives the data that GitHub could read: for example, a probe of a pull request that is gone.
+ */
+async function query<T>(text: string, variables: Variables = {}, partial = false): Promise<T | undefined> {
   const args = Object.entries(variables).flatMap(([key, value]) => [
     typeof value === 'number' ? '-F' : '-f',
     `${key}=${value}`,
   ]);
-  const output = await gh(['api', 'graphql', ...args, '-f', `query=${query}`]).catch(async (error: Error) => {
-    if (!isRateLimited(error.message)) throw error;
-    const until = await recordRefusal();
-    throw new QuotaError(quotaMessage(until), until);
-  });
-  const response = JSON.parse(output) as {
-    data?: { rateLimit?: RateLimit; repository: { pullRequest: PullRequestNode | null } | null };
-    errors?: { message: string }[];
-  };
+  // gh exits with an error if the response has errors, but it writes the response on stdout.
+  const output = await gh(['api', 'graphql', ...args, '-f', `query=${text}`]).catch(
+    async (error: Error & { stdout?: string }) => {
+      if (isRateLimited(error.message)) {
+        const until = await recordRefusal();
+        throw new QuotaError(quotaMessage(until), until);
+      }
+      if (partial && error.stdout) return error.stdout;
+      throw error;
+    },
+  );
+  const response = JSON.parse(output) as Response<T>;
   if (response.data?.rateLimit) await cache.set(RATE_KEY, response.data.rateLimit);
-  if (response.errors?.length)
+  if (response.errors?.length && !partial)
     throw new Error(`GitHub GraphQL: ${response.errors.map((error) => error.message).join('; ')}`);
-  const pull = response.data?.repository?.pullRequest;
+  return response.data ?? undefined;
+}
+
+async function graphql(text: string, variables: Variables): Promise<PullRequestNode> {
+  const data = await query<{ repository: { pullRequest: PullRequestNode | null } | null }>(text, variables);
+  const pull = data?.repository?.pullRequest;
   if (!pull)
     throw new Error(
       `${variables.owner}/${variables.name}#${variables.number} is not readable: no such pull request, or no access`,
@@ -648,7 +701,12 @@ export async function fetchPullRequest(
   pr: PullRequest,
   { maxAgeMs = CACHE_TTL_MS, extra = {} }: { maxAgeMs?: number; extra?: ExtraFields } = {},
 ): Promise<PullRequestSnapshot> {
-  return readOrLast(cache, readKey(pr, extra), maxAgeMs, async () => {
+  const key = readKey(pr, extra);
+  if (maxAgeMs > 0) {
+    const unchanged = await unchangedRead(cache, key, probes.get(probeKey(pr)), maxAgeMs);
+    if (unchanged) return unchanged;
+  }
+  return readOrLast(cache, key, maxAgeMs, async () => {
     const until = pointsOutUntil(await readRateLimit());
     if (until) throw new QuotaError(quotaMessage(until), until);
     return readPullRequest(pr, extra);
@@ -678,6 +736,67 @@ export async function readOrLast(
   }
 }
 
+/** The time after which a read of a pull request that the probe finds unchanged reads all again. */
+export const UNCHANGED_MAX_AGE_MS = 5 * 60_000;
+
+/**
+ * Returns the cached read if a probe younger than `maxAgeMs` gives the same fingerprint, and the read
+ * is younger than `UNCHANGED_MAX_AGE_MS`. The cache keeps the time of the read, so the read gets older.
+ */
+export async function unchangedRead(
+  store: ReadCache,
+  key: string,
+  probe: { fingerprint: string; at: number } | undefined,
+  maxAgeMs: number,
+  now = Date.now(),
+): Promise<PullRequestSnapshot | undefined> {
+  if (!probe || now - probe.at >= maxAgeMs) return undefined;
+  const last = await store.get<PullRequestSnapshot>(key, UNCHANGED_MAX_AGE_MS, now);
+  return last?.value.fingerprint === probe.fingerprint ? last.value : undefined;
+}
+
+const probes = new Map<string, { fingerprint: string; at: number }>();
+const probeKey = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
+
+// About 6 connections for each pull request: 50 pull requests cost 3 points.
+const PROBE_BATCH = 50;
+
+/** The query that reads the probe fields of several pull requests, one alias for each. */
+export const probeQuery = (prs: readonly PullRequest[]) => {
+  const aliases = prs.map((pr, index) => {
+    const [owner = '', name = ''] = pr.repo.split('/');
+    return `p${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { pullRequest(number: ${pr.number}) { ...Probe } }`;
+  });
+  return `${PROBE_FRAGMENT}\nquery { rateLimit { limit remaining resetAt }\n${aliases.join('\n')}\n}`;
+};
+
+/**
+ * Reads the probe fields of the pull requests, with one query for each 50. A later
+ * `fetchPullRequest` then reads only the pull requests that changed. A probe that fails changes
+ * nothing: each read reads all.
+ */
+export async function probePullRequests(prs: readonly PullRequest[]): Promise<void> {
+  if (prs.length === 0 || pointsOutUntil(await readRateLimit())) return;
+  const batches = Array.from({ length: Math.ceil(prs.length / PROBE_BATCH) }, (_, index) =>
+    prs.slice(index * PROBE_BATCH, (index + 1) * PROBE_BATCH),
+  );
+  await Promise.all(
+    batches.map(async (batch) => {
+      const at = Date.now();
+      const data = await query<Record<string, { pullRequest: Record<string, unknown> | null } | null>>(
+        probeQuery(batch),
+        {},
+        true,
+      ).catch(() => undefined);
+      batch.forEach((pr, index) => {
+        const node = data?.[`p${index}`]?.pullRequest;
+        if (node) probes.set(probeKey(pr), { fingerprint: fingerprintOf(node), at });
+        else probes.delete(probeKey(pr));
+      });
+    }),
+  );
+}
+
 /** The cache key of a read. A read with fewer fields must not answer a read that needs the threads or the files. */
 export const readKey = (pr: PullRequest, { threads, files, lineComments }: ExtraFields) =>
   `pr-${pr.repo}#${pr.number}${threads ? '+threads' : ''}${files ? '+files' : ''}${lineComments ? '+lines' : ''}`;
@@ -698,7 +817,7 @@ async function readPullRequest(pr: PullRequest, extra: ExtraFields): Promise<Pul
         )
       : Promise.resolve([]),
   ]);
-  return toSnapshot({
+  const snapshot = toSnapshot({
     ...pull,
     reviews: { nodes: reviews },
     comments: { nodes: comments },
@@ -713,6 +832,7 @@ async function readPullRequest(pr: PullRequest, extra: ExtraFields): Promise<Pul
       ],
     },
   });
+  return { ...snapshot, fingerprint: fingerprintOf(pull as unknown as Record<string, unknown>) };
 }
 
 /**

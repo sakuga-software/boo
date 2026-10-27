@@ -2,7 +2,7 @@ import { render } from 'ink';
 import meow from 'meow';
 import { homedir } from 'node:os';
 import { App } from './app.js';
-import { fetchPullRequest, listPullRequests, viewerLogin } from './github.js';
+import { fetchPullRequest, listPullRequests, probePullRequests, viewerLogin } from './github.js';
 import { readReport, watchEvents, type WatchSources } from './events.js';
 import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
@@ -212,6 +212,7 @@ const sources: WatchSources = {
     fetchPullRequest(pr, {
       extra: { ...extraFields(settings.mergePolicy), ...(cli.flags.events && { lineComments: true }) },
     }),
+  probePullRequests,
   readOwners: () => readOwners(new LinkIndex()),
   viewerLogin,
 };

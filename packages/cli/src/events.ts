@@ -205,6 +205,8 @@ export function holdErrors(
 export interface WatchSources {
   listPullRequests(): Promise<PullRequest[]>;
   fetchPullRequest(pr: PullRequest): Promise<PullRequestSnapshot>;
+  /** Reads a short state of each pull request, so that `fetchPullRequest` reads only the ones that changed. */
+  probePullRequests?(prs: readonly PullRequest[]): Promise<void>;
   readOwners(): Promise<Map<string, Owner>>;
   /** The login of the user of boo. Only the "ownerOnly" rule of the merge policy reads it. */
   viewerLogin?(): Promise<string | undefined>;
@@ -226,6 +228,7 @@ async function readAll(
   settings: Settings,
   now: Date,
 ): Promise<{ inputs: ReportInput[]; reports: PullRequestReport[] }> {
+  await sources.probePullRequests?.(prs).catch(() => {});
   const inputs = await Promise.all(
     prs.map(async (pr): Promise<ReportInput> => {
       try {
