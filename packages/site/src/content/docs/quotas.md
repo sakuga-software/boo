@@ -72,5 +72,5 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
   with its label dimmed, and the footer counts it as `stale`. The header tells when GitHub answers
   again (`GitHub refuses the GraphQL queries until 11:00: the rows show their last state`). No
   run on this machine sends a query before that time, and the watch reads again just after it. A
-  stale row gets no automatic retry: its data is old. A pull request that no run read before shows
+  stale row gets no automatic retry, and `m` refuses to merge it: its data is old. A pull request that no run read before shows
   `error`.

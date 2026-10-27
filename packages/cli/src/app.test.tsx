@@ -258,6 +258,20 @@ test('a read that GitHub refuses for a rate limit keeps the last state of the ro
   assert.doesNotMatch(frame, /error/);
 });
 
+test('m refuses to merge a stale pull request: its approval can be old', async (t) => {
+  const until = new Date(now + 30 * 60_000).toISOString();
+  const { gitHub, merges } = fakeGitHub(new Map([[1, approved({ stale: { at: ago(10), until } })]]), {
+    readRateLimit: async () => ({ limit: 5_000, remaining: 0, resetAt: until }),
+  });
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  await frameWith(app, '1 stale');
+  await press(app, 'm');
+  await frameWith(app, 'Cannot merge acme/web#1: its state is from');
+  assert.doesNotMatch(app.lastFrame() ?? '', /Merge acme\/web#1\?/);
+  assert.deepEqual(merges, []);
+});
+
 test('two pull requests of two sub-agents of one session show the two sub-agents', async (t) => {
   const { gitHub } = fakeGitHub(
     new Map([

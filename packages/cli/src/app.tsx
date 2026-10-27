@@ -903,8 +903,17 @@ export function App(props: AppProps) {
     return `The ${request.bot.name} quota ${back}: ${request.bot.name} will likely refuse.`;
   }
 
-  /** Shows why the merge policy refuses the merge. Returns true if it refuses. */
-  function refusePolicy(row: Row, key: string): boolean {
+  /** Shows why boo refuses the merge: a stale state, or the merge policy. Returns true if it refuses. */
+  function refuseMerge(row: Row, key: string): boolean {
+    const stale = row.fetched?.stale;
+    if (stale) {
+      const back = stale.until ? ` until ${formatTime(new Date(stale.until))}` : '';
+      setFlash({
+        text: `Cannot merge ${key}: its state is from ${formatTime(new Date(stale.at))}, and GitHub refuses the queries${back}.`,
+        color: 'yellow',
+      });
+      return true;
+    }
     const misses = row.summary?.policy ?? [];
     if (misses.length === 0) return false;
     setFlash({
@@ -923,7 +932,7 @@ export function App(props: AppProps) {
       return;
     }
     if (action.merge) {
-      if (refusePolicy(row, key)) return;
+      if (refuseMerge(row, key)) return;
       const head = row.fetched?.head;
       if (!head) {
         setFlash({ text: `Cannot merge ${key}: its state is not fetched yet.`, color: 'yellow' });
@@ -999,7 +1008,7 @@ export function App(props: AppProps) {
     }
     if (pending.action.merge) {
       // A refresh while the prompt waits can bring a new miss, such as a lower score on a new head.
-      if (refusePolicy(row, pending.key)) return;
+      if (refuseMerge(row, pending.key)) return;
       const head = pending.head;
       if (!head || merging.current.has(pending.key)) return;
       merging.current.add(pending.key);
