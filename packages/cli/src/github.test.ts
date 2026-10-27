@@ -5,13 +5,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DiskCache } from './cache.js';
 import {
+  fingerprintOf,
   isRateLimited,
   mergeSearches,
   pointsOutUntil,
+  probeQuery,
   QuotaError,
   readKey,
   readOrLast,
   searchScope,
+  UNCHANGED_MAX_AGE_MS,
+  unchangedRead,
   withUnfinishedRuns,
   type PullRequestSnapshot,
 } from './github.js';
@@ -132,4 +136,39 @@ test('the primary and the secondary rate limits of GitHub are rate limits', () =
   assert.equal(isRateLimited('gh: API rate limit exceeded for user ID 1.'), true);
   assert.equal(isRateLimited('You have exceeded a secondary rate limit. Please wait a few minutes.'), true);
   assert.equal(isRateLimited('Could not resolve to a PullRequest with the number of 9.'), false);
+});
+
+test('a probe with the fingerprint of the cached read gives that read, with no full read', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  const now = Date.parse('2026-10-27T10:00:00Z');
+  await cache.set('pr', { ...cachedSnapshot, fingerprint: 'f1' }, now - 60_000);
+  const probe = (fingerprint: string, age = 1_000) => ({ fingerprint, at: now - age });
+  const read = (probed: ReturnType<typeof probe> | undefined) => unchangedRead(cache, 'pr', probed, 30_000, now);
+  assert.equal((await read(probe('f1')))?.head, 'old');
+  assert.equal(await read(probe('f2')), undefined, 'a changed pull request reads all again');
+  assert.equal(await read(probe('f1', 30_000)), undefined, 'an old probe proves nothing');
+  assert.equal(await read(undefined), undefined);
+});
+
+test('a read older than the safety age reads all again, even if the probe finds no change', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  await cache.set('pr', { ...cachedSnapshot, fingerprint: 'f1' }, Date.now() - UNCHANGED_MAX_AGE_MS - 1_000);
+  assert.equal(await unchangedRead(cache, 'pr', { fingerprint: 'f1', at: Date.now() }, 30_000), undefined);
+});
+
+test('the fingerprint changes with a probe field, and only with one', () => {
+  const node = { updatedAt: '2026-10-27T10:00:00Z', headRefOid: 'abc', probeHead: { nodes: [] } };
+  assert.equal(fingerprintOf(node), fingerprintOf({ ...node, body: 'a new body that the probe does not read' }));
+  assert.notEqual(fingerprintOf(node), fingerprintOf({ ...node, headRefOid: 'def' }));
+  assert.notEqual(fingerprintOf(node), fingerprintOf({ ...node, updatedAt: '2026-10-27T10:01:00Z' }));
+});
+
+test('the probe reads each pull request in its own repository, with quoted names', () => {
+  const query = probeQuery([
+    { repo: 'acme/web', number: 1, title: '', url: '' },
+    { repo: 'other/api', number: 7, title: '', url: '' },
+  ]);
+  assert.match(query, /p0: repository\(owner: "acme", name: "web"\) \{ pullRequest\(number: 1\) \{ \.\.\.Probe \} \}/);
+  assert.match(query, /p1: repository\(owner: "other", name: "api"\) \{ pullRequest\(number: 7\)/);
+  assert.match(query, /fragment Probe on PullRequest/);
 });

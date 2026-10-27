@@ -61,8 +61,9 @@ boo --watch
 1. **Agents open the pull requests.** Your Claude Code sessions, their sub-agents, or a GitHub App
    such as Copilot. `boo --author @me --author app/my-agent` lists them all.
 
-2. **boo watches them.** One GraphQL query for each pull request, shared between all the runs on the
-   machine. It retries CodeRabbit by itself when its quota comes back.
+2. **boo watches them.** One small GraphQL query probes 50 pull requests, and only the ones that
+   changed are read again. All the runs on the machine share the reads. It retries CodeRabbit by
+   itself when its quota comes back.
 
 3. **The orchestrator follows the stream.** `boo --watch --events` tells it which pull request turned
    red, which reviewer answered, and which person wrote a comment that the agent must read.

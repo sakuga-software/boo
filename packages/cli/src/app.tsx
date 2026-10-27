@@ -95,7 +95,7 @@ export type GitHub = Pick<
   typeof github,
   'listPullRequests' | 'fetchPullRequest' | 'requestReview' | 'openInBrowser' | 'mergePullRequest'
 > &
-  Partial<Pick<typeof github, 'readRateLimit' | 'claimPost' | 'releasePost' | 'viewerLogin'>>;
+  Partial<Pick<typeof github, 'readRateLimit' | 'claimPost' | 'releasePost' | 'viewerLogin' | 'probePullRequests'>>;
 
 /** The Claude Code sessions of this machine. */
 export interface Sessions {
@@ -521,6 +521,12 @@ export function App(props: AppProps) {
 
     const tracked = () => [...rowsRef.current.values()].map((row) => row.pr);
 
+    // A fresh read asks for GitHub, so it skips the probe.
+    async function refreshAll(prs: PullRequest[], fresh = false) {
+      if (!fresh) await gitHub.probePullRequests?.(prs).catch(() => {});
+      await Promise.all(prs.map((pr) => refresh(pr, fresh)));
+    }
+
     const cacheAge = () => (lowRef.current ? SLOW_POLL_MS : github.CACHE_TTL_MS);
 
     async function readPoints() {
@@ -543,9 +549,7 @@ export function App(props: AppProps) {
       setRows([...rowsRef.current.values()]);
       selectedRef.current ??= [...rowsRef.current.keys()][0];
       setSelected(selectedRef.current);
-      await Promise.all(
-        [...added, ...plan.recheck.map((key) => rowsRef.current.get(key)!.pr)].map((pr) => refresh(pr, fresh)),
-      );
+      await refreshAll([...added, ...plan.recheck.map((key) => rowsRef.current.get(key)!.pr)], fresh);
       await readPoints();
     }
 
@@ -587,7 +591,7 @@ export function App(props: AppProps) {
             const row = rowOf(pr);
             return !row.left && !inProgress(row) && (!needsWatch(row, autoPost) || row.decision?.kind === 'wait');
           });
-          await Promise.all(quiet.map((pr) => refresh(pr, fresh)));
+          await refreshAll(quiet, fresh);
         }
 
         const due = watched.filter((pr) => {
@@ -595,7 +599,7 @@ export function App(props: AppProps) {
           if (row.left) return false;
           return inProgress(row) || row.decision?.kind !== 'wait' || row.decision.availableAt.getTime() <= Date.now();
         });
-        await Promise.all(due.map((pr) => refresh(pr)));
+        await refreshAll(due);
         await triggerReady(tracked());
         await retryOthers(tracked());
       }
