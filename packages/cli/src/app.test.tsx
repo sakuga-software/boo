@@ -346,3 +346,16 @@ test('two pull requests of two sub-agents of one session show the two sub-agents
   await press(app, 'e', '\u001B[B', 'e');
   await frameWith(app, 'session orchestra › sub-agent a2 · failed: rat');
 });
+
+test('the form of a new bot shows the hint of the field on the line above the field', async (t) => {
+  const { gitHub } = fakeGitHub(new Map([[1, approved()]]));
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  await frameWith(app, 'ready to merge');
+  await press(app, ',', ...Array<string>(20).fill('j'), '\r');
+  const lines = (await frameWith(app, 'New bot 1/5')).split('\n');
+  const field = lines.findIndex((line) => line.includes('New bot 1/5 · Name:'));
+  assert.match(lines[field - 1]!, /^\s+as the bar shows it, for example Sourcery\s*$/);
+  assert.equal(lines.filter((line) => line.includes('for example Sourcery')).length, 1);
+  assert.match(app.lastFrame() ?? '', /next · esc cancel/);
+});
