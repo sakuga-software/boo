@@ -2435,7 +2435,7 @@ function editingHint(authorsDraft: string | undefined, botDraft: BotDraft | unde
   if (authorsDraft !== undefined) return 'type the authors, with a comma between two · ⏎ save · esc cancel';
   if (!botDraft) return undefined;
   const last = botDraft.values.length === BOT_FIELDS.length - 1;
-  return `${BOT_FIELDS[botDraft.values.length]!.hint} · ⏎ ${last ? 'save' : 'next'} · esc cancel`;
+  return `⏎ ${last ? 'save' : 'next'} · esc cancel`;
 }
 
 function requestOf(bot: Bot): string {
@@ -2528,6 +2528,12 @@ function SettingsPanel({ settings, cursor, authorsDraft, botDraft, registerButto
           </Box>
         );
       })}
+      {botDraft && (
+        <Text dimColor wrap="truncate-end">
+          {'  '}
+          {BOT_FIELDS[botDraft.values.length]!.hint}
+        </Text>
+      )}
       <Box ref={registerButton('bot:add')}>
         {pointer(FIRST_BOT_LINE + bots.length)}
         {botDraft ? (
