@@ -259,6 +259,46 @@ test('after an access webhook, a removed repository sends nothing while the acce
   assert.equal(alice.events.filter((event) => event.event === 'change').length, 0);
 });
 
+test('a read that started before an access webhook reads again, so a removed repository stops', async (t) => {
+  const gitHub = fakeGitHub();
+  const { base } = await startRelay(t, gitHub);
+  const alice = await stream(t, base, await login(base, 'ghu_alice'));
+  await alice.until(() => alice.events.some((event) => event.event === 'ready'), 'ready event');
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { repositories } = gitHub;
+  let reads = 0;
+  gitHub.repositories = async (token) => {
+    reads++;
+    const list = await repositories(token);
+    if (reads === 1) await held;
+    return list;
+  };
+  // A first access webhook starts a read that gets the old list, then a second one removes the repository.
+  await deliver(base, 'installation_repositories', { action: 'added' });
+  await alice.until(() => reads === 1, 'read in progress');
+  gitHub.repos.set('ghu_alice', []);
+  await deliver(base, 'installation_repositories', { action: 'removed' });
+  release();
+  await alice.until(() => reads >= 2, 'second read');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await deliver(base, 'pull_request', { number: 1, repository: { full_name: 'acme/web' } });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(alice.events.filter((event) => event.event === 'change').length, 0);
+});
+
+test('a session that ends by another route closes its streams at the next heartbeat', async (t) => {
+  const { base, store, relay } = await startRelay(t, fakeGitHub(), { heartbeatMs: 20 });
+  const session = await login(base, 'ghu_alice');
+  const alice = await stream(t, base, session);
+  await alice.until(() => alice.events.some((event) => event.event === 'ready'), 'ready event');
+  await store.delete(store.byToken(session)!.id);
+  await alice.until(() => alice.events.some((event) => event.event === 'expired'), 'expired event');
+  await alice.until(() => relay.hub.size === 0, 'no subscriber left');
+});
+
 test('the access stays for its time: a second stream reads no GitHub', async (t) => {
   const { base, gitHub } = await startRelay(t);
   const session = await login(base, 'ghu_alice');

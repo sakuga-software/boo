@@ -20,6 +20,8 @@ const REFRESH_MARGIN_MS = 5 * 60_000;
 export class Access {
   private readonly lists = new Map<string, { repos: Set<string>; readAt: number; fresh: boolean }>();
   private readonly reads = new Map<string, Promise<Set<string>>>();
+  /** Counts the access webhooks. A read that started before the last one gives old data. */
+  private generation = 0;
 
   constructor(
     private readonly store: SessionStore,
@@ -63,6 +65,7 @@ export class Access {
   }
 
   invalidateAll(): void {
+    this.generation++;
     for (const list of this.lists.values()) list.fresh = false;
   }
 
@@ -82,9 +85,16 @@ export class Access {
   }
 
   private async read(session: Session): Promise<Set<string>> {
-    const names = await this.withToken(session, (token) => this.gitHub.repositories(token));
+    let names: string[];
+    let generation: number;
+    // An access webhook during the read makes its data old: read again.
+    do {
+      generation = this.generation;
+      names = await this.withToken(session, (token) => this.gitHub.repositories(token));
+    } while (generation !== this.generation);
     const repos = new Set(names.map((name) => name.toLowerCase()));
-    this.lists.set(session.id, { repos, readAt: this.now(), fresh: true });
+    // A session deleted during the read must not get its list back.
+    if (this.store.has(session.id)) this.lists.set(session.id, { repos, readAt: this.now(), fresh: true });
     return repos;
   }
 

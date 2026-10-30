@@ -105,10 +105,7 @@ export function createRelay(options: RelayOptions) {
     });
     if (left) return;
     // A DELETE of the session can come during the read of the access.
-    if (!store.has(session.id)) {
-      access.forget(session.id);
-      throw new HttpError(401, 'The session was deleted');
-    }
+    if (!store.has(session.id)) throw new HttpError(401, 'The session was deleted');
     response.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-store',
@@ -135,6 +132,7 @@ export function createRelay(options: RelayOptions) {
       // An error in a timer stops the process: a stream that fails must stop alone.
       try {
         if (response.destroyed || response.writableEnded) return stop();
+        if (!store.has(session.id)) return endStream(response, 'expired', 'The session ended');
         if (dropped && access.kept(session.id)) {
           dropped = false;
           response.write('event: reset\ndata: {}\n\n');
