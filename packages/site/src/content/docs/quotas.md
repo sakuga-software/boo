@@ -69,6 +69,10 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
   `$XDG_CACHE_HOME`): a terminal watch, a scheduled run, the watch of an agent. A pull request that
   another run read less than 30 s ago costs no query. `r`, and the reads after a post or a merge,
   read GitHub, not the cache.
+- A run of boo sends at most 4 GraphQL queries at the same time. GitHub also has secondary rate
+  limits: the points of each minute and the concurrent requests of a token. The agents that use the
+  same `gh` token share these limits with boo. After a secondary limit, the error says
+  `secondary rate limit` and no run on this machine sends a query for one minute.
 - If less than 20 % of the GraphQL points of the account remain, the header shows them
   (`GraphQL 312/5000 left, refresh every 5 min`), and the watch reads the list and each pull
   request every 5 minutes until GitHub resets the points. The runs share the count of points too.

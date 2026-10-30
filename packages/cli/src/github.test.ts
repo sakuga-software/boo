@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DiskCache } from './cache.js';
 import {
+  concurrencyLimit,
   fingerprintOf,
   isRateLimited,
   mergeSearches,
@@ -136,6 +137,33 @@ test('the primary and the secondary rate limits of GitHub are rate limits', () =
   assert.equal(isRateLimited('gh: API rate limit exceeded for user ID 1.'), true);
   assert.equal(isRateLimited('You have exceeded a secondary rate limit. Please wait a few minutes.'), true);
   assert.equal(isRateLimited('Could not resolve to a PullRequest with the number of 9.'), false);
+});
+
+test('a concurrency limit runs at most its count of tasks at the same time, in order', async () => {
+  const limit = concurrencyLimit(2);
+  let active = 0;
+  let peak = 0;
+  const started: number[] = [];
+  const task = (id: number) =>
+    limit(async () => {
+      started.push(id);
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active--;
+      return id;
+    });
+  assert.deepEqual(await Promise.all([1, 2, 3, 4, 5].map(task)), [1, 2, 3, 4, 5]);
+  assert.equal(peak, 2);
+  assert.deepEqual(started, [1, 2, 3, 4, 5]);
+});
+
+test('a task that fails gives its slot to the next task', async () => {
+  const limit = concurrencyLimit(1);
+  const failing = limit(() => Promise.reject(new Error('refused')));
+  const next = limit(async () => 'read');
+  await assert.rejects(failing, /refused/);
+  assert.equal(await next, 'read');
 });
 
 test('a probe with the fingerprint of the cached read gives that read, with no full read', async () => {
