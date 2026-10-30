@@ -303,6 +303,33 @@ test('a session that ends by another route closes its streams at the next heartb
   await alice.until(() => relay.hub.size === 0, 'no subscriber left');
 });
 
+test('access webhooks that keep coming stop the reads after three, with no change sent', async (t) => {
+  const gitHub = fakeGitHub();
+  const { base } = await startRelay(t, gitHub);
+  const session = await login(base, 'ghu_alice');
+  const { repositories } = gitHub;
+  let reads = 0;
+  const original = console.error;
+  console.error = () => {};
+  t.after(() => {
+    console.error = original;
+  });
+  gitHub.repositories = async (token) => {
+    reads++;
+    // An endless loop of reads fails the test here instead of a hang.
+    if (reads > 10) throw new GitHubError('too many reads', 502);
+    // Each read sees one more access webhook before it ends.
+    await deliver(base, 'installation_repositories', { action: 'added' });
+    return repositories(token);
+  };
+  const alice = await stream(t, base, session);
+  await alice.until(() => alice.events.some((event) => event.event === 'ready'), 'ready event');
+  assert.equal(reads, 3);
+  await deliver(base, 'pull_request', { number: 1, repository: { full_name: 'acme/web' } });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(alice.events.filter((event) => event.event === 'change').length, 0);
+});
+
 test('the access stays for its time: a second stream reads no GitHub', async (t) => {
   const { base, gitHub } = await startRelay(t);
   const session = await login(base, 'ghu_alice');

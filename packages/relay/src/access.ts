@@ -4,6 +4,9 @@ import type { Session, SessionStore } from './sessions.js';
 /** The session cannot read GitHub any more: its token was revoked, or its refresh failed. */
 export class SessionExpired extends Error {}
 
+// The reads of one access list in a row while access webhooks keep coming.
+const MAX_READS = 3;
+
 // A token that stops to work within this time gets a refresh first.
 const REFRESH_MARGIN_MS = 5 * 60_000;
 
@@ -102,14 +105,17 @@ export class Access {
   private async read(session: Session): Promise<Set<string>> {
     let names: string[];
     let generation: number;
-    // An access webhook during the read makes its data old: read again.
+    let attempts = 0;
+    // An access webhook during the read makes its data old: read again. After MAX_READS, the list
+    // stays not valid, and the next heartbeat reads again. Each read uses the quota of the user.
     do {
       generation = this.generation;
       names = await this.withToken(session, (token) => this.gitHub.repositories(token));
-    } while (generation !== this.generation);
+    } while (generation !== this.generation && ++attempts < MAX_READS);
     const repos = new Set(names.map((name) => name.toLowerCase()));
+    const fresh = generation === this.generation;
     // A session deleted during the read must not get its list back.
-    if (this.store.has(session.id)) this.lists.set(session.id, { repos, readAt: this.now(), fresh: true });
+    if (this.store.has(session.id)) this.lists.set(session.id, { repos, readAt: this.now(), fresh });
     return repos;
   }
 
