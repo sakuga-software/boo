@@ -54,7 +54,9 @@ test('a write that fails does not stop the next writes', async () => {
   const store = new SessionStore(file, 'key');
   // A folder in place of the file makes the rename fail.
   await mkdir(file);
-  await assert.rejects(store.create(user, tokens));
+  const failed = store.create(user, tokens);
+  await assert.rejects(failed);
+  assert.equal(store.size, 0);
   await rmdir(file);
   const { token } = await store.create(user, tokens);
   const restarted = new SessionStore(file, 'key');

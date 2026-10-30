@@ -90,9 +90,15 @@ export function createRelay(options: RelayOptions) {
   }
 
   async function onEvents(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
-    await access.repos(session);
     // The client can leave during the read of its access. Then no stream starts.
-    if (request.destroyed || response.destroyed) return;
+    let left = false;
+    let stop = () => {};
+    response.once('close', () => {
+      left = true;
+      stop();
+    });
+    await access.repos(session);
+    if (left) return;
     response.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-store',
@@ -113,13 +119,12 @@ export function createRelay(options: RelayOptions) {
       response.write(': ping\n\n');
       checkAccess(response, session);
     }, heartbeatMs);
-    const stop = () => {
+    stop = () => {
       clearInterval(heartbeat);
       hub.unsubscribe(subscriber);
       streams.delete(response);
     };
     streams.set(response, { session, stop });
-    response.on('close', stop);
     response.write(`event: ready\ndata: ${JSON.stringify({ login: session.user.login })}\n\n`);
     if (resumed === 'reset') response.write('event: reset\ndata: {}\n\n');
     else resumed.missed.forEach(write);

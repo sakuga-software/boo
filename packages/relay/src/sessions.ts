@@ -50,8 +50,18 @@ export class SessionStore {
     const token = randomBytes(32).toString('base64url');
     const session = { id: sessionId(token), user, tokens, createdAt: now.toISOString() };
     this.sessions.set(session.id, session);
-    await this.save();
+    try {
+      await this.save();
+    } catch (error) {
+      // A session that the file does not keep must not work until the next restart.
+      this.sessions.delete(session.id);
+      throw error;
+    }
     return { token, session };
+  }
+
+  get size(): number {
+    return this.sessions.size;
   }
 
   byToken(token: string): Session | undefined {
