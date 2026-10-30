@@ -116,6 +116,7 @@ export function createRelay(options: RelayOptions) {
     };
     const resumed = hub.subscribe(subscriber, header(request, 'last-event-id'));
     const heartbeat = setInterval(() => {
+      if (response.destroyed || response.writableEnded) return stop();
       response.write(': ping\n\n');
       checkAccess(response, session);
     }, heartbeatMs);

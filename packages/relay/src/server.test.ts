@@ -55,7 +55,7 @@ function fakeGitHub(): FakeGitHub {
 async function startRelay(
   t: TestContext,
   gitHub = fakeGitHub(),
-  extra: { accessTtlMs?: number; heartbeatMs?: number } = {},
+  extra: { accessTtlMs?: number; heartbeatMs?: number; now?: () => number } = {},
 ) {
   const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'relay-')), 'sessions.json'), 'key');
   const relay = createRelay({
@@ -307,6 +307,40 @@ test('a failure of GitHub during a stream keeps the stream, and the relay logs i
   await alice.until(() => logged.length > 0, 'logged failure');
   assert.equal(relay.hub.size, 1);
   assert.equal(alice.ended(), false);
+});
+
+test('while GitHub fails to give the access again, the old list works for twice its time, then nothing flows', async (t) => {
+  let clock = 0;
+  const { base, gitHub } = await startRelay(t, fakeGitHub(), { accessTtlMs: 1_000, heartbeatMs: 20, now: () => clock });
+  const alice = await stream(t, base, await login(base, 'ghu_alice'));
+  await alice.until(() => alice.events.some((event) => event.event === 'ready'), 'ready event');
+  const original = console.error;
+  console.error = () => {};
+  t.after(() => {
+    console.error = original;
+  });
+  const { repositories } = gitHub;
+  gitHub.repositories = async () => {
+    throw new GitHubError('GitHub answered 502', 502);
+  };
+  const changes = () => alice.events.filter((event) => event.event === 'change').map((event) => event.data.number);
+  const pull = (number: number) => deliver(base, 'pull_request', { number, repository: { full_name: 'acme/web' } });
+
+  clock = 1_500;
+  await pull(1);
+  await alice.until(() => changes().includes(1), 'change within twice the time');
+
+  clock = 2_500;
+  await pull(2);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(changes(), [1]);
+
+  gitHub.repositories = repositories;
+  const reads = gitHub.repoReads;
+  await alice.until(() => gitHub.repoReads > reads, 'read that works');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await pull(3);
+  await alice.until(() => changes().includes(3), 'change after the read that works');
 });
 
 test('a client that leaves during the read of its access leaves no subscriber', async (t) => {

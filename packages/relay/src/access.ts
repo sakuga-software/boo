@@ -11,9 +11,13 @@ const REFRESH_MARGIN_MS = 5 * 60_000;
  * Knows the repositories that each session can read. Each read of the repositories costs the user
  * some requests of the hourly limit of GitHub, so the list stays for `ttlMs`. A webhook that changes
  * the access makes every list stale at once.
+ *
+ * If GitHub fails to give the list again, a delivery keeps the old list for at most twice `ttlMs`.
+ * After that time the session gets no change until a read works: a repository that left the
+ * installation during the failure must not keep its changes in the stream.
  */
 export class Access {
-  private readonly lists = new Map<string, { repos: Set<string>; at: number }>();
+  private readonly lists = new Map<string, { repos: Set<string>; readAt: number; fresh: boolean }>();
   private readonly reads = new Map<string, Promise<Set<string>>>();
 
   constructor(
@@ -41,7 +45,7 @@ export class Access {
   /** The repositories of the session, in lower case. Reads GitHub if the kept list is stale. */
   repos(session: Session): Promise<Set<string>> {
     const kept = this.lists.get(session.id);
-    if (kept && this.now() - kept.at < this.ttlMs) return Promise.resolve(kept.repos);
+    if (kept?.fresh && this.now() - kept.readAt < this.ttlMs) return Promise.resolve(kept.repos);
     const running = this.reads.get(session.id);
     if (running) return running;
     const read = this.read(session).finally(() => this.reads.delete(session.id));
@@ -49,13 +53,14 @@ export class Access {
     return read;
   }
 
-  /** The kept list of the session, stale or not. A delivery reads it with no wait. */
+  /** The kept list of the session, if it is younger than twice `ttlMs`. A delivery reads it with no wait. */
   kept(sessionId: string): Set<string> | undefined {
-    return this.lists.get(sessionId)?.repos;
+    const list = this.lists.get(sessionId);
+    return list && this.now() - list.readAt < 2 * this.ttlMs ? list.repos : undefined;
   }
 
   invalidateAll(): void {
-    for (const list of this.lists.values()) list.at = -Infinity;
+    for (const list of this.lists.values()) list.fresh = false;
   }
 
   forget(sessionId: string): void {
@@ -76,7 +81,7 @@ export class Access {
   private async read(session: Session): Promise<Set<string>> {
     const names = await this.withToken(session, (token) => this.gitHub.repositories(token));
     const repos = new Set(names.map((name) => name.toLowerCase()));
-    this.lists.set(session.id, { repos, at: this.now() });
+    this.lists.set(session.id, { repos, readAt: this.now(), fresh: true });
     return repos;
   }
 
