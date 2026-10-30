@@ -258,6 +258,28 @@ test('an expired token is refreshed before a read, and kept for the next restart
   assert.equal(store.byToken(session)?.tokens.accessToken, 'ghu_alice_2');
 });
 
+test('a refresh whose write fails still answers, with the new token kept in memory', async (t) => {
+  const { base, store, gitHub } = await startRelay(t);
+  const session = await login(base, 'ghu_alice', { refreshToken: 'ghr_alice', expiresIn: 60 });
+  const logged: unknown[] = [];
+  const original = console.error;
+  console.error = (error: unknown) => logged.push(error);
+  t.after(() => {
+    console.error = original;
+  });
+  // The store changes its memory, then the write to the file fails.
+  const update = store.update.bind(store);
+  store.update = async (id, tokens) => {
+    await update(id, tokens);
+    throw new Error('EACCES');
+  };
+  const auth = { headers: { authorization: `Bearer ${session}` } };
+  assert.equal((await fetch(`${base}/installations`, auth)).status, 200);
+  assert.equal(logged.length, 1);
+  assert.equal((await fetch(`${base}/installations`, auth)).status, 200);
+  assert.deepEqual(gitHub.refreshes, ['ghr_alice']);
+});
+
 test('a token that cannot be refreshed, or that GitHub revoked, ends the session', async (t) => {
   const { base, gitHub } = await startRelay(t);
   const refused = await login(base, 'ghu_alice', { refreshToken: 'ghr_revoked', expiresIn: 60 });

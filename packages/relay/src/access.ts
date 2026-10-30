@@ -34,7 +34,9 @@ export class Access {
     if (!tokens.refreshToken) return this.expire(session);
     try {
       const fresh = await this.gitHub.refresh(tokens.refreshToken);
-      await this.store.update(session.id, fresh);
+      // GitHub rotates the refresh token: only the new tokens work now. A failed write keeps them in
+      // memory, so the session works until a restart.
+      await this.store.update(session.id, fresh).catch((error: unknown) => console.error(error));
       return fresh.accessToken;
     } catch (error) {
       if (error instanceof GitHubError && error.status === 401) return this.expire(session);
