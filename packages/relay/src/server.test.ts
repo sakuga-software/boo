@@ -235,6 +235,30 @@ test('an installation event reads the access again: a new repository starts to f
   await alice.until(() => alice.events.some((event) => event.data.repo === 'acme/api'), 'change of the new repository');
 });
 
+test('after an access webhook, a removed repository sends nothing while the access is read again', async (t) => {
+  const gitHub = fakeGitHub();
+  const { base } = await startRelay(t, gitHub);
+  const alice = await stream(t, base, await login(base, 'ghu_alice'));
+  await alice.until(() => alice.events.some((event) => event.event === 'ready'), 'ready event');
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { repositories } = gitHub;
+  gitHub.repositories = async (token) => {
+    await held;
+    gitHub.repos.set('ghu_alice', []);
+    return repositories(token);
+  };
+  await deliver(base, 'installation_repositories', { action: 'removed' });
+  await deliver(base, 'pull_request', { number: 1, repository: { full_name: 'acme/web' } });
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await deliver(base, 'pull_request', { number: 2, repository: { full_name: 'acme/web' } });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(alice.events.filter((event) => event.event === 'change').length, 0);
+});
+
 test('the access stays for its time: a second stream reads no GitHub', async (t) => {
   const { base, gitHub } = await startRelay(t);
   const session = await login(base, 'ghu_alice');

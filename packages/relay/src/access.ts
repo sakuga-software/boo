@@ -9,12 +9,13 @@ const REFRESH_MARGIN_MS = 5 * 60_000;
 
 /**
  * Knows the repositories that each session can read. Each read of the repositories costs the user
- * some requests of the hourly limit of GitHub, so the list stays for `ttlMs`. A webhook that changes
- * the access makes every list stale at once.
+ * some requests of the hourly limit of GitHub, so the list stays for `ttlMs`.
  *
- * If GitHub fails to give the list again, a delivery keeps the old list for at most twice `ttlMs`.
- * After that time the session gets no change until a read works: a repository that left the
- * installation during the failure must not keep its changes in the stream.
+ * A session gets no change while its list is not valid. Then the watch reads with its safety poll.
+ * A list is not valid in these conditions:
+ * - A webhook changed the access, and the new read is not complete. A repository that left the
+ *   installation must not send one more change.
+ * - GitHub failed to give the list again for twice `ttlMs`.
  */
 export class Access {
   private readonly lists = new Map<string, { repos: Set<string>; readAt: number; fresh: boolean }>();
@@ -55,10 +56,10 @@ export class Access {
     return read;
   }
 
-  /** The kept list of the session, if it is younger than twice `ttlMs`. A delivery reads it with no wait. */
+  /** The kept list of the session, if it is valid. A delivery reads it with no wait. */
   kept(sessionId: string): Set<string> | undefined {
     const list = this.lists.get(sessionId);
-    return list && this.now() - list.readAt < 2 * this.ttlMs ? list.repos : undefined;
+    return list?.fresh && this.now() - list.readAt < 2 * this.ttlMs ? list.repos : undefined;
   }
 
   invalidateAll(): void {

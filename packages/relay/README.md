@@ -23,7 +23,9 @@ pull request again with its own token, so GitHub stays the judge of what each pe
 A stream gets a change only for a repository that its user can read through the installations of the
 App. The relay reads that list with the token of the user, keeps it for 30 minutes, and reads it again
 at once after an `installation`, `installation_repositories`, `member`, `membership`, `organization` or
-`repository` webhook. One relay can serve several people and several organizations.
+`repository` webhook. During that new read, and if GitHub fails to give the list for an hour, the stream gets no change:
+a repository that left an installation must not send one more. The safety poll of the watch covers
+that time. One relay can serve several people and several organizations.
 
 ## Limits
 
