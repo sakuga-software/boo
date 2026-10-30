@@ -280,13 +280,73 @@ test('a token that cannot be refreshed, or that GitHub revoked, ends the session
   );
 });
 
-test('a token that GitHub revoked during a stream closes the stream', async (t) => {
-  const { base, gitHub } = await startRelay(t, fakeGitHub(), { accessTtlMs: 0, heartbeatMs: 20 });
+test('a token that GitHub revoked during a stream closes the stream, and leaves no subscriber', async (t) => {
+  const { base, gitHub, relay } = await startRelay(t, fakeGitHub(), { accessTtlMs: 0, heartbeatMs: 20 });
   const alice = await stream(t, base, await login(base, 'ghu_alice'));
   await alice.until(() => alice.events.some((event) => event.event === 'ready'), 'ready event');
   gitHub.repos.delete('ghu_alice');
   await alice.until(() => alice.events.some((event) => event.event === 'expired'), 'expired event');
   await alice.until(alice.ended, 'end of the stream');
+  await alice.until(() => relay.hub.size === 0, 'no subscriber left');
+  assert.deepEqual(await (await fetch(`${base}/healthz`)).json(), { ok: true, streams: 0 });
+});
+
+test('a failure of GitHub during a stream keeps the stream, and the relay logs it', async (t) => {
+  const { base, gitHub, relay } = await startRelay(t, fakeGitHub(), { accessTtlMs: 0, heartbeatMs: 20 });
+  const alice = await stream(t, base, await login(base, 'ghu_alice'));
+  await alice.until(() => alice.events.some((event) => event.event === 'ready'), 'ready event');
+  const logged: unknown[] = [];
+  const original = console.error;
+  console.error = (error: unknown) => logged.push(error);
+  t.after(() => {
+    console.error = original;
+  });
+  gitHub.repositories = async () => {
+    throw new GitHubError('GitHub answered 502', 502);
+  };
+  await alice.until(() => logged.length > 0, 'logged failure');
+  assert.equal(relay.hub.size, 1);
+  assert.equal(alice.ended(), false);
+});
+
+test('a client that leaves during the read of its access leaves no subscriber', async (t) => {
+  const gitHub = fakeGitHub();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { repositories } = gitHub;
+  gitHub.repositories = async (token) => {
+    await held;
+    return repositories(token);
+  };
+  const { base, relay } = await startRelay(t, gitHub);
+  const session = await login(base, 'ghu_alice');
+  const abort = new AbortController();
+  const opened = fetch(`${base}/events`, { headers: { authorization: `Bearer ${session}` }, signal: abort.signal });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  abort.abort();
+  await assert.rejects(opened);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(relay.hub.size, 0);
+  assert.deepEqual(await (await fetch(`${base}/healthz`)).json(), { ok: true, streams: 0 });
+});
+
+test('a body that is not JSON gives a 400', async (t) => {
+  const { base } = await startRelay(t);
+  const body = 'not json';
+  const signed = await fetch(`${base}/webhooks`, {
+    method: 'POST',
+    headers: {
+      'x-github-event': 'pull_request',
+      'x-hub-signature-256': `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`,
+    },
+    body,
+  });
+  assert.equal(signed.status, 400);
+  assert.equal((await fetch(`${base}/sessions`, { method: 'POST', body })).status, 400);
 });
 
 test('a deleted session cannot open a stream', async (t) => {

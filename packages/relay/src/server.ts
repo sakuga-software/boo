@@ -34,17 +34,23 @@ export function createRelay(options: RelayOptions) {
   const { gitHub, store, webhookSecret, clientId, appSlug, heartbeatMs = 25_000 } = options;
   const hub = new Hub(10_000, () => new Date((options.now ?? Date.now)()));
   const access = new Access(store, gitHub, options.accessTtlMs, options.now);
-  const streams = new Map<ServerResponse, Session>();
+  const streams = new Map<ServerResponse, { session: Session; stop: () => void }>();
 
-  function refreshStreams(): void {
-    for (const [response, session] of streams)
-      access.repos(session).catch((error: unknown) => {
-        if (error instanceof SessionExpired) close(response, 'expired', error.message);
-      });
+  /** Reads the access of the stream again if it is stale. A session that expired ends the stream. */
+  function checkAccess(response: ServerResponse, session: Session): void {
+    access.repos(session).catch((error: unknown) => {
+      if (error instanceof SessionExpired) endStream(response, 'expired', error.message);
+      else console.error(error);
+    });
   }
 
-  function close(response: ServerResponse, event: string, message: string): void {
-    response.end(`event: ${event}\ndata: ${JSON.stringify({ message })}\n\n`);
+  function refreshStreams(): void {
+    for (const [response, { session }] of streams) checkAccess(response, session);
+  }
+
+  function endStream(response: ServerResponse, event: string, message: string): void {
+    streams.get(response)?.stop();
+    if (!response.writableEnded) response.end(`event: ${event}\ndata: ${JSON.stringify({ message })}\n\n`);
   }
 
   async function onWebhook(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -52,7 +58,7 @@ export function createRelay(options: RelayOptions) {
     if (!validSignature(webhookSecret, body, header(request, 'x-hub-signature-256')))
       throw new HttpError(401, 'The signature does not match the webhook secret');
     const type = header(request, 'x-github-event') ?? '';
-    const payload = JSON.parse(body.toString('utf8')) as Record<string, unknown>;
+    const payload = parseJson<Record<string, unknown>>(body);
     if (changesAccess(type)) {
       access.invalidateAll();
       refreshStreams();
@@ -63,11 +69,9 @@ export function createRelay(options: RelayOptions) {
   }
 
   async function onCreateSession(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const body = JSON.parse((await readBody(request)).toString('utf8') || '{}') as {
-      accessToken?: unknown;
-      refreshToken?: unknown;
-      expiresIn?: unknown;
-    };
+    const body = parseJson<{ accessToken?: unknown; refreshToken?: unknown; expiresIn?: unknown }>(
+      await readBody(request),
+    );
     if (typeof body.accessToken !== 'string' || !body.accessToken) throw new HttpError(400, 'accessToken is missing');
     const user = await gitHub.checkToken(body.accessToken);
     if (!user) throw new HttpError(401, 'The token does not belong to the GitHub App of this relay');
@@ -87,6 +91,8 @@ export function createRelay(options: RelayOptions) {
 
   async function onEvents(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
     await access.repos(session);
+    // The client can leave during the read of its access. Then no stream starts.
+    if (request.destroyed || response.destroyed) return;
     response.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-store',
@@ -103,22 +109,20 @@ export function createRelay(options: RelayOptions) {
       send: write,
     };
     const resumed = hub.subscribe(subscriber, header(request, 'last-event-id'));
-    streams.set(response, session);
-    response.write(`event: ready\ndata: ${JSON.stringify({ login: session.user.login })}\n\n`);
-    if (resumed === 'reset') response.write('event: reset\ndata: {}\n\n');
-    else resumed.missed.forEach(write);
-
     const heartbeat = setInterval(() => {
       response.write(': ping\n\n');
-      access.repos(session).catch((error: unknown) => {
-        if (error instanceof SessionExpired) close(response, 'expired', error.message);
-      });
+      checkAccess(response, session);
     }, heartbeatMs);
-    response.on('close', () => {
+    const stop = () => {
       clearInterval(heartbeat);
       hub.unsubscribe(subscriber);
       streams.delete(response);
-    });
+    };
+    streams.set(response, { session, stop });
+    response.on('close', stop);
+    response.write(`event: ready\ndata: ${JSON.stringify({ login: session.user.login })}\n\n`);
+    if (resumed === 'reset') response.write('event: reset\ndata: {}\n\n');
+    else resumed.missed.forEach(write);
   }
 
   function authenticate(request: IncomingMessage): Session {
@@ -184,6 +188,14 @@ const header = (request: IncomingMessage, name: string): string | undefined => {
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+}
+
+function parseJson<T>(body: Buffer): T {
+  try {
+    return JSON.parse(body.toString('utf8') || '{}') as T;
+  } catch {
+    throw new HttpError(400, 'The body is not valid JSON');
+  }
 }
 
 async function readBody(request: IncomingMessage): Promise<Buffer> {
