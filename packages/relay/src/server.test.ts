@@ -485,11 +485,19 @@ test('a body that is not JSON gives a 400', async (t) => {
   assert.equal((await fetch(`${base}/sessions`, { method: 'POST', body })).status, 400);
 });
 
-test('a deleted session cannot open a stream', async (t) => {
-  const { base } = await startRelay(t);
+test('a deleted session ends its open streams, keeps the others, and cannot open a stream', async (t) => {
+  const { base, relay } = await startRelay(t);
   const session = await login(base, 'ghu_alice');
   const auth = { authorization: `Bearer ${session}` };
+  const open = await stream(t, base, session);
+  const bob = await stream(t, base, await login(base, 'ghu_bob'));
+  await open.until(() => open.events.some((event) => event.event === 'ready'), 'ready event');
+  await bob.until(() => bob.events.some((event) => event.event === 'ready'), 'ready event');
   assert.equal((await fetch(`${base}/sessions`, { method: 'DELETE', headers: auth })).status, 204);
+  await open.until(() => open.events.some((event) => event.event === 'expired'), 'expired event');
+  await open.until(open.ended, 'end of the stream');
+  assert.equal(relay.hub.size, 1);
+  assert.equal(bob.ended(), false);
   assert.equal((await fetch(`${base}/events`, { headers: auth })).status, 401);
 });
 

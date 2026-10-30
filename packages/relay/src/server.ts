@@ -171,6 +171,8 @@ export function createRelay(options: RelayOptions) {
         return onCreateSession(request, response);
       case 'DELETE /sessions': {
         const session = authenticate(request);
+        for (const [stream, open] of streams)
+          if (open.session.id === session.id) endStream(stream, 'expired', 'The session was deleted');
         access.forget(session.id);
         await store.delete(session.id);
         response.writeHead(204).end();
