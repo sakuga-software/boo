@@ -32,7 +32,15 @@ export class Hub {
     const event = { id: `${this.boot}-${++this.sequence}`, at: this.now().toISOString(), ...change };
     this.kept.push(event);
     if (this.kept.length > this.capacity) this.kept.shift();
-    for (const subscriber of this.subscribers) if (subscriber.reads(event.repo)) subscriber.send(event);
+    for (const subscriber of this.subscribers) {
+      if (!subscriber.reads(event.repo)) continue;
+      // A stream that fails must not stop the delivery to the others, or the answer to GitHub.
+      try {
+        subscriber.send(event);
+      } catch (error) {
+        console.error(error);
+      }
+    }
     return event;
   }
 

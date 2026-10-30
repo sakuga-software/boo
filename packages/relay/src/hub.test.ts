@@ -51,3 +51,22 @@ test('a resume from another boot, an unknown id or a dropped event asks for a re
   assert.notEqual(hub.subscribe(subscriber, first.id), 'reset');
   assert.equal(hub.subscribe(subscriber, first.id.replace(/-\d+$/, '-0')), 'reset');
 });
+
+test('a subscriber that fails does not stop the delivery to the others', (t) => {
+  const hub = new Hub();
+  const original = console.error;
+  console.error = () => {};
+  t.after(() => {
+    console.error = original;
+  });
+  hub.subscribe({
+    reads: () => true,
+    send: () => {
+      throw new Error('write after end');
+    },
+  });
+  const other = listener(['acme/web']);
+  hub.subscribe(other);
+  assert.doesNotThrow(() => hub.publish(change('acme/web', 1)));
+  assert.equal(other.got.length, 1);
+});
