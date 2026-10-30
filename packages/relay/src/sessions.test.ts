@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rmdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -47,4 +47,17 @@ test('an update and a delete reach the file', async () => {
   restarted = new SessionStore(file, 'key');
   await restarted.load();
   assert.equal(restarted.byToken(token), undefined);
+});
+
+test('a write that fails does not stop the next writes', async () => {
+  const file = join(await mkdtemp(join(tmpdir(), 'relay-')), 'sessions.json');
+  const store = new SessionStore(file, 'key');
+  // A folder in place of the file makes the rename fail.
+  await mkdir(file);
+  await assert.rejects(store.create(user, tokens));
+  await rmdir(file);
+  const { token } = await store.create(user, tokens);
+  const restarted = new SessionStore(file, 'key');
+  await restarted.load();
+  assert.ok(restarted.byToken(token));
 });

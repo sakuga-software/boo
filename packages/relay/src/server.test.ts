@@ -258,13 +258,20 @@ test('an expired token is refreshed before a read, and kept for the next restart
   assert.equal(store.byToken(session)?.tokens.accessToken, 'ghu_alice_2');
 });
 
-test('a token that cannot be refreshed ends the session', async (t) => {
-  const { base } = await startRelay(t);
+test('a token that cannot be refreshed, or that GitHub revoked, ends the session', async (t) => {
+  const { base, gitHub } = await startRelay(t);
   const refused = await login(base, 'ghu_alice', { refreshToken: 'ghr_revoked', expiresIn: 60 });
   const response = await fetch(`${base}/events`, { headers: { authorization: `Bearer ${refused}` } });
   assert.equal(response.status, 401);
   assert.match(((await response.json()) as { error: string }).error, /run boo setup-webhooks again/);
   assert.equal((await fetch(`${base}/installations`, { headers: { authorization: `Bearer ${refused}` } })).status, 401);
+
+  const revoked = await login(base, 'ghu_alice');
+  gitHub.installations = async () => {
+    throw new GitHubError('Bad credentials', 401);
+  };
+  assert.equal((await fetch(`${base}/installations`, { headers: { authorization: `Bearer ${revoked}` } })).status, 401);
+  assert.equal((await fetch(`${base}/events`, { headers: { authorization: `Bearer ${revoked}` } })).status, 401);
 
   const noRefresh = await login(base, 'ghu_alice', { expiresIn: 60 });
   assert.equal(

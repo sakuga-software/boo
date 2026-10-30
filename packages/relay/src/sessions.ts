@@ -74,13 +74,16 @@ export class SessionStore {
       ...session,
       tokens: this.encrypt(session.tokens),
     }));
-    // The writes go one after the other, so an older write cannot replace a newer one.
-    this.writing = this.writing.then(async () => {
-      await mkdir(dirname(this.file), { recursive: true });
-      const temporary = `${this.file}.${process.pid}.tmp`;
-      await writeFile(temporary, JSON.stringify(stored), { mode: 0o600 });
-      await rename(temporary, this.file);
-    });
+    // The writes go one after the other, so an older write cannot replace a newer one. A write that
+    // fails rejects only its own caller: the next write still runs.
+    this.writing = this.writing
+      .catch(() => {})
+      .then(async () => {
+        await mkdir(dirname(this.file), { recursive: true });
+        const temporary = `${this.file}.${process.pid}.tmp`;
+        await writeFile(temporary, JSON.stringify(stored), { mode: 0o600 });
+        await rename(temporary, this.file);
+      });
     return this.writing;
   }
 

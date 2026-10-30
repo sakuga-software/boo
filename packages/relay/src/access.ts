@@ -62,15 +62,19 @@ export class Access {
     this.lists.delete(sessionId);
   }
 
-  private async read(session: Session): Promise<Set<string>> {
+  /** Calls GitHub with the token of the session. A token that GitHub refuses ends the session. */
+  async withToken<T>(session: Session, call: (token: string) => Promise<T>): Promise<T> {
     const token = await this.token(session);
-    let names: string[];
     try {
-      names = await this.gitHub.repositories(token);
+      return await call(token);
     } catch (error) {
       if (error instanceof GitHubError && error.status === 401) return this.expire(session);
       throw error;
     }
+  }
+
+  private async read(session: Session): Promise<Set<string>> {
+    const names = await this.withToken(session, (token) => this.gitHub.repositories(token));
     const repos = new Set(names.map((name) => name.toLowerCase()));
     this.lists.set(session.id, { repos, at: this.now() });
     return repos;

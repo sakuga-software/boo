@@ -81,7 +81,7 @@ export function createRelay(options: RelayOptions) {
   }
 
   async function onInstallations(session: Session, response: ServerResponse): Promise<void> {
-    const installations = await gitHub.installations(await access.token(session));
+    const installations = await access.withToken(session, (token) => gitHub.installations(token));
     json(response, 200, { installations, installUrl: installUrl(appSlug) });
   }
 
