@@ -445,6 +445,28 @@ test('a resume while the access is not valid gets a reset, not a filtered replay
   assert.equal(resumed.events.filter((event) => event.event === 'change').length, 0);
 });
 
+test('a session deleted during the read of the access of a stream gets a 401, and no stream', async (t) => {
+  const gitHub = fakeGitHub();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { repositories } = gitHub;
+  gitHub.repositories = async (token) => {
+    await held;
+    return repositories(token);
+  };
+  const { base, relay } = await startRelay(t, gitHub);
+  const session = await login(base, 'ghu_alice');
+  const auth = { authorization: `Bearer ${session}` };
+  const opened = fetch(`${base}/events`, { headers: auth });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal((await fetch(`${base}/sessions`, { method: 'DELETE', headers: auth })).status, 204);
+  release();
+  assert.equal((await opened).status, 401);
+  assert.equal(relay.hub.size, 0);
+});
+
 test('a client that leaves during the read of its access leaves no subscriber', async (t) => {
   const gitHub = fakeGitHub();
   let release = () => {};

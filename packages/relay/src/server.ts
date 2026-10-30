@@ -104,6 +104,11 @@ export function createRelay(options: RelayOptions) {
       console.error(error);
     });
     if (left) return;
+    // A DELETE of the session can come during the read of the access.
+    if (!store.has(session.id)) {
+      access.forget(session.id);
+      throw new HttpError(401, 'The session was deleted');
+    }
     response.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-store',
@@ -127,13 +132,19 @@ export function createRelay(options: RelayOptions) {
       send: write,
     };
     const heartbeat = setInterval(() => {
-      if (response.destroyed || response.writableEnded) return stop();
-      if (dropped && access.kept(session.id)) {
-        dropped = false;
-        response.write('event: reset\ndata: {}\n\n');
+      // An error in a timer stops the process: a stream that fails must stop alone.
+      try {
+        if (response.destroyed || response.writableEnded) return stop();
+        if (dropped && access.kept(session.id)) {
+          dropped = false;
+          response.write('event: reset\ndata: {}\n\n');
+        }
+        response.write(': ping\n\n');
+        checkAccess(response, session);
+      } catch (error) {
+        console.error(error);
+        stop();
       }
-      response.write(': ping\n\n');
-      checkAccess(response, session);
     }, heartbeatMs);
     // `stop` exists before the subscription, so a failure after this line leaves no subscriber.
     stop = () => {
