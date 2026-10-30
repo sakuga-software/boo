@@ -536,8 +536,36 @@ export const isRateLimited = (message: string) => /rate limit/i.test(message);
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-const quotaMessage = (until: string | undefined) =>
-  `GitHub refuses the GraphQL queries of this account${until ? ` until ${clock(until)}` : ''}: rate limit`;
+const quotaMessage = (until: string | undefined, secondary = false) =>
+  `GitHub refuses the GraphQL queries of this account${until ? ` until ${clock(until)}` : ''}: ${
+    secondary ? 'secondary rate limit, too many queries in a short time' : 'rate limit'
+  }`;
+
+/** Returns a function that runs at most `max` tasks at the same time. The other tasks wait in order. */
+export function concurrencyLimit(max: number) {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (active < max) active++;
+    // A task that ends gives its slot to the next waiting task, so the count stays the same.
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
+
+/**
+ * The GraphQL queries that one run of boo sends at the same time. GitHub counts the points of each
+ * minute and the concurrent requests of a token in its secondary rate limits. The agents that use
+ * the same token share these limits.
+ */
+export const GRAPHQL_CONCURRENCY = 4;
+const graphqlSlot = concurrencyLimit(GRAPHQL_CONCURRENCY);
 
 let accountCache: Promise<DiskCache | undefined> | undefined;
 
@@ -577,7 +605,7 @@ const SECONDARY_WAIT_MS = 60_000;
  * Records that the queries fail until the returned time, so that no run of boo on this machine sends
  * one before. If points remain, the limit is a secondary limit, which stops for one minute.
  */
-async function recordRefusal(now = Date.now()): Promise<string | undefined> {
+async function recordRefusal(now = Date.now()): Promise<{ until?: string; secondary: boolean }> {
   try {
     // The REST endpoint of the rate limits costs no point, so it answers when GraphQL refuses.
     const { limit, remaining, reset } = JSON.parse(await gh(['api', 'rate_limit', '--jq', '.resources.graphql'])) as {
@@ -588,11 +616,11 @@ async function recordRefusal(now = Date.now()): Promise<string | undefined> {
     const until = remaining < POINTS_FLOOR ? reset * 1000 : now + SECONDARY_WAIT_MS;
     const rate = { limit, remaining: Math.min(remaining, POINTS_FLOOR - 1), resetAt: new Date(until).toISOString() };
     await cache.set(RATE_KEY, rate);
-    return rate.resetAt;
+    return { until: rate.resetAt, secondary: remaining >= POINTS_FLOOR };
   } catch {
     // With no reset time, wait as for a secondary limit: else each poll sends a query that fails.
     await cache.set(RATE_KEY, { limit: 0, remaining: 0, resetAt: new Date(now + SECONDARY_WAIT_MS).toISOString() });
-    return undefined;
+    return { secondary: false };
   }
 }
 
@@ -610,17 +638,20 @@ async function query<T>(text: string, variables: Variables = {}, partial = false
     typeof value === 'number' ? '-F' : '-f',
     `${key}=${value}`,
   ]);
-  // gh exits with an error if the response has errors, but it writes the response on stdout.
-  const output = await gh(['api', 'graphql', ...args, '-f', `query=${text}`]).catch(
-    async (error: Error & { stdout?: string }) => {
+  const output = await graphqlSlot(async () => {
+    // A query that waits for a slot can start after another query met a refusal.
+    const refusedUntil = pointsOutUntil(await readRateLimit());
+    if (refusedUntil) throw new QuotaError(quotaMessage(refusedUntil), refusedUntil);
+    // gh exits with an error if the response has errors, but it writes the response on stdout.
+    return gh(['api', 'graphql', ...args, '-f', `query=${text}`]).catch(async (error: Error & { stdout?: string }) => {
       if (isRateLimited(error.message)) {
-        const until = await recordRefusal();
-        throw new QuotaError(quotaMessage(until), until);
+        const { until, secondary } = await recordRefusal();
+        throw new QuotaError(quotaMessage(until, secondary), until);
       }
       if (partial && error.stdout) return error.stdout;
       throw error;
-    },
-  );
+    });
+  });
   const response = JSON.parse(output) as Response<T>;
   if (response.data?.rateLimit) await cache.set(RATE_KEY, response.data.rateLimit);
   if (response.errors?.length && !partial)
