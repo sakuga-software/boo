@@ -8,6 +8,8 @@ import {
   concurrencyLimit,
   fingerprintOf,
   isRateLimited,
+  listKey,
+  listOrLast,
   mergeSearches,
   pointsOutUntil,
   probeQuery,
@@ -131,6 +133,33 @@ test('the queries stop until the reset when fewer than 10 points remain', () => 
   assert.equal(pointsOutUntil(rate(10), now), undefined);
   assert.equal(pointsOutUntil(rate(0, '2026-10-27T09:59:00Z'), now), undefined);
   assert.equal(pointsOutUntil(undefined, now), undefined);
+});
+
+test('a list that GitHub refuses for a rate limit gives the last kept list', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  const pr = { repo: 'acme/web', number: 1, title: 'Fix', url: 'https://github.com/acme/web/pull/1' };
+  assert.deepEqual(await listOrLast(cache, 'list', async () => [pr]), [pr]);
+  const refused = async () => {
+    throw new QuotaError('rate limit');
+  };
+  assert.deepEqual(await listOrLast(cache, 'list', refused), [pr]);
+  await assert.rejects(listOrLast(cache, 'other', refused), QuotaError);
+  await assert.rejects(
+    listOrLast(cache, 'list', async () => {
+      throw new Error('Could not resolve to an Organization');
+    }),
+    /Could not resolve/,
+  );
+});
+
+test('two runs with the same authors and repositories in another order share their list', () => {
+  const key = (authors: string[], repos: string[]) => listKey({ org: 'acme', authors, repos });
+  assert.equal(key(['@me', 'app/bot'], ['acme/a', 'acme/b']), key(['app/bot', '@me'], ['acme/b', 'acme/a']));
+  assert.notEqual(key(['@me'], []), key(['app/bot'], []));
+  assert.notEqual(
+    listKey({ org: 'acme', authors: ['@me'] }),
+    listKey({ org: 'acme', authors: ['@me'], since: '2026-10-01' }),
+  );
 });
 
 test('the primary and the secondary rate limits of GitHub are rate limits', () => {

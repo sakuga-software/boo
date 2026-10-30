@@ -557,13 +557,23 @@ export function App(props: AppProps) {
     async function run() {
       if (settingsRef.current.mergePolicy?.ownerOnly) viewerRef.current = await gitHub.viewerLogin?.();
       await readPoints();
-      await syncList();
+      let listedAt = Date.now();
+      try {
+        await syncList();
+      } catch (error) {
+        // A watch waits for GitHub and lists again: a rate limit at the start must not stop it.
+        if (!options.watch) throw error;
+        setListError(message(error));
+        listedAt = 0;
+        await readPoints();
+      }
       await triggerReady(tracked());
       await retryOthers(tracked());
       if (!options.watch) return;
 
-      let listedAt = Date.now();
       while (true) {
+        if (settingsRef.current.mergePolicy?.ownerOnly && !viewerRef.current)
+          viewerRef.current = await gitHub.viewerLogin?.();
         const autoPost = !options.dryRun && coderabbitRetries();
         const watched = tracked().filter((pr) => needsWatch(rowOf(pr), autoPost));
         const delay = nextDelay(watched);
@@ -1285,7 +1295,7 @@ export function App(props: AppProps) {
         nextCheckAt={nextCheckAt}
         rate={rate}
       />
-      {rows === null && !fatal && (
+      {rows === null && !fatal && !listError && (
         <Text>
           <Text color="cyan">
             <Spinner type="dots" />
@@ -1340,6 +1350,11 @@ export function App(props: AppProps) {
         </Box>
       )}
       {fatal && <Text color="red">✖ {fatal}</Text>}
+      {rows === null && listError && (
+        <Text color="red" wrap="truncate-end">
+          Could not list the pull requests: {listError}. The watch tries again.
+        </Text>
+      )}
       {options.interactive && <Box flexGrow={1} />}
       {rows && rows.length > 0 && (
         <Footer rows={rows} triggered={triggered} done={done} listError={listError} options={options} />

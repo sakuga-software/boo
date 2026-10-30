@@ -45,8 +45,54 @@ interface SearchResult {
   updatedAt: string;
 }
 
+/**
+ * Lists the open pull requests. If GitHub refuses the search for a rate limit, gives the last list that a
+ * run of boo on this machine read, of any age.
+ */
+export async function listPullRequests(options: SearchOptions): Promise<PullRequest[]> {
+  return listOrLast(cache, listKey(options), async () => {
+    const refusedUntil = pointsOutUntil(await readRateLimit());
+    if (refusedUntil) throw new QuotaError(quotaMessage(refusedUntil), refusedUntil);
+    try {
+      return await searchAll(options);
+    } catch (error) {
+      if (!(error instanceof Error) || !isRateLimited(error.message)) throw error;
+      const until = await recordRefusal();
+      throw new QuotaError(quotaMessage(until), until);
+    }
+  });
+}
+
+/** The cache key of a list. Two runs with the same options share their list. */
+export const listKey = ({ org, authors, repos = [], since }: SearchOptions) =>
+  `list-${createHash('sha256')
+    .update(JSON.stringify([org, [...authors].sort(), [...repos].sort(), since ?? '']))
+    .digest('hex')
+    .slice(0, 16)}`;
+
+/**
+ * Reads the list with `read` and keeps it. If `read` fails with a `QuotaError`, returns the last kept
+ * list. With no kept list, the error stays.
+ */
+export async function listOrLast(
+  store: Pick<ReadCache, 'get' | 'set'>,
+  key: string,
+  read: () => Promise<PullRequest[]>,
+): Promise<PullRequest[]> {
+  try {
+    const list = await read();
+    await store.set(key, list);
+    return list;
+  } catch (error) {
+    if (!(error instanceof QuotaError)) throw error;
+    const last = await store.get<PullRequest[]>(key, Infinity);
+    if (!last) throw error;
+    return last.value;
+  }
+}
+
 /** The GitHub search has no OR between two authors: each author is one search. */
-export async function listPullRequests({ org, authors, repos = [], since }: SearchOptions): Promise<PullRequest[]> {
+async function searchAll({ org, authors, repos = [], since }: SearchOptions): Promise<PullRequest[]> {
   const searches = await Promise.all(
     authors.map((author) => searchPullRequests({ org, author, repos, ...(since && { since }) })),
   );
@@ -905,7 +951,11 @@ let viewer: Promise<string | undefined> | undefined;
 export function viewerLogin(): Promise<string | undefined> {
   viewer ??= gh(['api', 'graphql', '-f', 'query={ viewer { login } }', '--jq', '.data.viewer.login'])
     .then((login) => login.trim() || undefined)
-    .catch(() => undefined);
+    .catch(() => {
+      // A rate limit at the start must not hide the viewer for the whole watch.
+      viewer = undefined;
+      return undefined;
+    });
   return viewer;
 }
 
