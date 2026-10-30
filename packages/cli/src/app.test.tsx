@@ -314,6 +314,22 @@ test('a watch whose first list GitHub refuses waits, and lists again after GitHu
   assert.doesNotMatch(app.lastFrame() ?? '', /Could not list|list refresh failed/);
 });
 
+test('a watch whose first list fails for another reason than a rate limit stops with the error', async (t) => {
+  const { gitHub } = fakeGitHub(new Map(), {
+    listPullRequests: async () => {
+      throw new Error("Could not resolve to an Organization with the login of 'acme'.");
+    },
+  });
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  // The app clears its screen when it stops, so the error is in an earlier frame.
+  const fatal = "✖ Could not resolve to an Organization with the login of 'acme'.";
+  const end = Date.now() + 2_000;
+  while (Date.now() < end && !app.frames.some((frame) => frame.includes(fatal))) await sleep(10);
+  assert.ok(app.frames.some((frame) => frame.includes(fatal)));
+  assert.ok(!app.frames.some((frame) => frame.includes('Could not list the pull requests')));
+});
+
 test('m refuses to merge a stale pull request: its approval can be old', async (t) => {
   const until = new Date(now + 30 * 60_000).toISOString();
   const { gitHub, merges } = fakeGitHub(new Map([[1, approved({ stale: { at: ago(10), until } })]]), {

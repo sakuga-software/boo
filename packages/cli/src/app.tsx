@@ -562,7 +562,9 @@ export function App(props: AppProps) {
         await syncList();
       } catch (error) {
         // A watch waits for GitHub and lists again: a rate limit at the start must not stop it.
-        if (!options.watch) throw error;
+        // Another error, for example an organization that does not exist, stays fatal.
+        const refused = error instanceof github.QuotaError || github.isRateLimited(message(error));
+        if (!options.watch || !refused) throw error;
         setListError(message(error));
         listedAt = 0;
         await readPoints();
