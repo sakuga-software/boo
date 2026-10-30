@@ -115,12 +115,23 @@ export function createRelay(options: RelayOptions) {
       const { id, ...change } = event;
       response.write(`id: ${id}\nevent: change\ndata: ${JSON.stringify(change)}\n\n`);
     };
+    // While the access is not valid, the stream drops events. When the access is valid again, a
+    // reset tells the watch to read all, because it cannot know what it missed.
+    let dropped = false;
     const subscriber: Subscriber = {
-      reads: (repo) => access.kept(session.id)?.has(repo.toLowerCase()) ?? false,
+      reads: (repo) => {
+        const repos = access.kept(session.id);
+        if (!repos) dropped = true;
+        return repos?.has(repo.toLowerCase()) ?? false;
+      },
       send: write,
     };
     const heartbeat = setInterval(() => {
       if (response.destroyed || response.writableEnded) return stop();
+      if (dropped && access.kept(session.id)) {
+        dropped = false;
+        response.write('event: reset\ndata: {}\n\n');
+      }
       response.write(': ping\n\n');
       checkAccess(response, session);
     }, heartbeatMs);
@@ -131,9 +142,11 @@ export function createRelay(options: RelayOptions) {
       streams.delete(response);
     };
     streams.set(response, { session, stop });
-    const resumed = hub.subscribe(subscriber, header(request, 'last-event-id'));
+    const lastEventId = header(request, 'last-event-id');
+    const resumed = hub.subscribe(subscriber, lastEventId);
     response.write(`event: ready\ndata: ${JSON.stringify({ login: session.user.login })}\n\n`);
-    if (resumed === 'reset') response.write('event: reset\ndata: {}\n\n');
+    // A resume with no valid access cannot know which missed events the session may read.
+    if (resumed === 'reset' || (lastEventId && !access.kept(session.id))) response.write('event: reset\ndata: {}\n\n');
     else resumed.missed.forEach(write);
   }
 

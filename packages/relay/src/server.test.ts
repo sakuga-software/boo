@@ -410,12 +410,39 @@ test('a failure of GitHub at the open of a stream opens it with no change, until
 
   gitHub.repositories = repositories;
   await alice.until(() => gitHub.repoReads > 0, 'read that works');
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The stream dropped the first change, so the watch must read all.
+  await alice.until(() => alice.events.some((event) => event.event === 'reset'), 'reset after the dropped change');
   await deliver(base, 'pull_request', { number: 2, repository: { full_name: 'acme/web' } });
   await alice.until(
     () => alice.events.some((event) => event.event === 'change' && event.data.number === 2),
     'change after the read that works',
   );
+});
+
+test('a resume while the access is not valid gets a reset, not a filtered replay', async (t) => {
+  const gitHub = fakeGitHub();
+  const { base } = await startRelay(t, gitHub);
+  const session = await login(base, 'ghu_alice');
+  const first = await stream(t, base, session);
+  await first.until(() => first.events.some((event) => event.event === 'ready'), 'ready event');
+  await deliver(base, 'pull_request', { number: 1, repository: { full_name: 'acme/web' } });
+  await first.until(() => first.events.some((event) => event.event === 'change'), 'first change');
+  const lastId = first.events.find((event) => event.event === 'change')!.id!;
+
+  const original = console.error;
+  console.error = () => {};
+  t.after(() => {
+    console.error = original;
+  });
+  gitHub.repositories = async () => {
+    throw new GitHubError('GitHub answered 502', 502);
+  };
+  await deliver(base, 'installation_repositories', { action: 'added' });
+  await deliver(base, 'pull_request', { number: 2, repository: { full_name: 'acme/web' } });
+
+  const resumed = await stream(t, base, session, lastId);
+  await resumed.until(() => resumed.events.some((event) => event.event === 'reset'), 'reset event');
+  assert.equal(resumed.events.filter((event) => event.event === 'change').length, 0);
 });
 
 test('a client that leaves during the read of its access leaves no subscriber', async (t) => {

@@ -25,7 +25,8 @@ App. The relay reads that list with the token of the user, keeps it for 30 minut
 at once after an `installation`, `installation_repositories`, `member`, `membership`, `organization` or
 `repository` webhook. During that new read, and if GitHub fails to give the list for an hour, the stream gets no change:
 a repository that left an installation must not send one more. The safety poll of the watch covers
-that time. One relay can serve several people and several organizations.
+that time, and the stream sends `event: reset` when the access is valid again, so the watch reads
+all. A resume with `Last-Event-ID` while the access is not valid gets a reset too. One relay can serve several people and several organizations.
 
 ## Limits
 
