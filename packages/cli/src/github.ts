@@ -57,8 +57,8 @@ export async function listPullRequests(options: SearchOptions): Promise<PullRequ
       return await searchAll(options);
     } catch (error) {
       if (!(error instanceof Error) || !isRateLimited(error.message)) throw error;
-      const until = await recordRefusal();
-      throw new QuotaError(quotaMessage(until), until);
+      const { until, secondary } = await recordRefusal();
+      throw new QuotaError(quotaMessage(until, secondary), until);
     }
   });
 }
