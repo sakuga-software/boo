@@ -20,6 +20,7 @@ const REFRESH_MARGIN_MS = 5 * 60_000;
 export class Access {
   private readonly lists = new Map<string, { repos: Set<string>; readAt: number; fresh: boolean }>();
   private readonly reads = new Map<string, Promise<Set<string>>>();
+  private readonly refreshes = new Map<string, Promise<string>>();
   /** Counts the access webhooks. A read that started before the last one gives old data. */
   private generation = 0;
 
@@ -30,15 +31,29 @@ export class Access {
     private readonly now = Date.now,
   ) {}
 
-  /** The access token of the session, refreshed first if it stops to work soon. */
-  async token(session: Session): Promise<string> {
+  /**
+   * The access token of the session, refreshed first if it stops to work soon. GitHub rotates the
+   * refresh token, so two refreshes of one session at the same time share one call: a second call
+   * with the old refresh token fails and ends a valid session.
+   */
+  token(session: Session): Promise<string> {
     const { tokens } = session;
-    if (tokens.expiresAt === undefined || tokens.expiresAt - REFRESH_MARGIN_MS > this.now()) return tokens.accessToken;
-    if (!tokens.refreshToken) return this.expire(session);
+    if (tokens.expiresAt === undefined || tokens.expiresAt - REFRESH_MARGIN_MS > this.now())
+      return Promise.resolve(tokens.accessToken);
+    const running = this.refreshes.get(session.id);
+    if (running) return running;
+    const refresh = this.refresh(session).finally(() => this.refreshes.delete(session.id));
+    this.refreshes.set(session.id, refresh);
+    return refresh;
+  }
+
+  private async refresh(session: Session): Promise<string> {
+    const { refreshToken } = session.tokens;
+    if (!refreshToken) return this.expire(session);
     try {
-      const fresh = await this.gitHub.refresh(tokens.refreshToken);
-      // GitHub rotates the refresh token: only the new tokens work now. A failed write keeps them in
-      // memory, so the session works until a restart.
+      const fresh = await this.gitHub.refresh(refreshToken);
+      // Only the new tokens work now. A failed write keeps them in memory, so the session works
+      // until a restart.
       await this.store.update(session.id, fresh).catch((error: unknown) => console.error(error));
       return fresh.accessToken;
     } catch (error) {

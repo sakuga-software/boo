@@ -37,8 +37,12 @@ function fakeGitHub(): FakeGitHub {
     refreshes: [],
     checkToken: async (token) => USERS.get(userOf(token)),
     refresh: async (refreshToken): Promise<Tokens> => {
+      // GitHub rotates the refresh token: a second use of the same one fails.
+      const used = fake.refreshes.includes(refreshToken);
       fake.refreshes.push(refreshToken);
-      if (refreshToken !== 'ghr_alice') throw new GitHubError('bad refresh token', 401);
+      // A real refresh takes time, so two requests can overlap.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (refreshToken !== 'ghr_alice' || used) throw new GitHubError('bad refresh token', 401);
       return { accessToken: 'ghu_alice_2', refreshToken: 'ghr_alice_2', expiresAt: Date.now() + 8 * 3_600_000 };
     },
     installations: async (token) => (fake.repos.has(userOf(token)) ? [{ id: 9, account: 'acme' }] : []),
@@ -320,6 +324,19 @@ test('an expired token is refreshed before a read, and kept for the next restart
   });
   assert.deepEqual(gitHub.refreshes, ['ghr_alice']);
   assert.equal(store.byToken(session)?.tokens.accessToken, 'ghu_alice_2');
+});
+
+test('two requests at the same time share one refresh, and the session stays', async (t) => {
+  const { base, gitHub, store } = await startRelay(t);
+  const session = await login(base, 'ghu_alice', { refreshToken: 'ghr_alice', expiresIn: 60 });
+  const auth = { headers: { authorization: `Bearer ${session}` } };
+  const answers = await Promise.all([fetch(`${base}/installations`, auth), fetch(`${base}/installations`, auth)]);
+  assert.deepEqual(
+    answers.map((answer) => answer.status),
+    [200, 200],
+  );
+  assert.deepEqual(gitHub.refreshes, ['ghr_alice']);
+  assert.equal(store.byToken(session)?.tokens.refreshToken, 'ghr_alice_2');
 });
 
 test('a refresh whose write fails still answers, with the new token kept in memory', async (t) => {
