@@ -97,7 +97,12 @@ export function createRelay(options: RelayOptions) {
       left = true;
       stop();
     });
-    await access.repos(session);
+    // If GitHub fails, the stream opens with no valid access: it gets no change, and each heartbeat
+    // reads the access again. A session that expired gets its 401.
+    await access.repos(session).catch((error: unknown) => {
+      if (error instanceof SessionExpired) throw error;
+      console.error(error);
+    });
     if (left) return;
     response.writeHead(200, {
       'content-type': 'text/event-stream',
@@ -114,18 +119,19 @@ export function createRelay(options: RelayOptions) {
       reads: (repo) => access.kept(session.id)?.has(repo.toLowerCase()) ?? false,
       send: write,
     };
-    const resumed = hub.subscribe(subscriber, header(request, 'last-event-id'));
     const heartbeat = setInterval(() => {
       if (response.destroyed || response.writableEnded) return stop();
       response.write(': ping\n\n');
       checkAccess(response, session);
     }, heartbeatMs);
+    // `stop` exists before the subscription, so a failure after this line leaves no subscriber.
     stop = () => {
       clearInterval(heartbeat);
       hub.unsubscribe(subscriber);
       streams.delete(response);
     };
     streams.set(response, { session, stop });
+    const resumed = hub.subscribe(subscriber, header(request, 'last-event-id'));
     response.write(`event: ready\ndata: ${JSON.stringify({ login: session.user.login })}\n\n`);
     if (resumed === 'reset') response.write('event: reset\ndata: {}\n\n');
     else resumed.missed.forEach(write);

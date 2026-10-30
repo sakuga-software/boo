@@ -389,6 +389,35 @@ test('while GitHub fails to give the access again, the old list works for twice 
   await alice.until(() => changes().includes(3), 'change after the read that works');
 });
 
+test('a failure of GitHub at the open of a stream opens it with no change, until a read works', async (t) => {
+  const gitHub = fakeGitHub();
+  const { repositories } = gitHub;
+  gitHub.repositories = async () => {
+    throw new GitHubError('GitHub answered 502', 502);
+  };
+  const { base } = await startRelay(t, gitHub, { heartbeatMs: 20 });
+  const original = console.error;
+  console.error = () => {};
+  t.after(() => {
+    console.error = original;
+  });
+  const alice = await stream(t, base, await login(base, 'ghu_alice'));
+  assert.equal(alice.response.status, 200);
+  await alice.until(() => alice.events.some((event) => event.event === 'ready'), 'ready event');
+  await deliver(base, 'pull_request', { number: 1, repository: { full_name: 'acme/web' } });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(alice.events.filter((event) => event.event === 'change').length, 0);
+
+  gitHub.repositories = repositories;
+  await alice.until(() => gitHub.repoReads > 0, 'read that works');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await deliver(base, 'pull_request', { number: 2, repository: { full_name: 'acme/web' } });
+  await alice.until(
+    () => alice.events.some((event) => event.event === 'change' && event.data.number === 2),
+    'change after the read that works',
+  );
+});
+
 test('a client that leaves during the read of its access leaves no subscriber', async (t) => {
   const gitHub = fakeGitHub();
   let release = () => {};
