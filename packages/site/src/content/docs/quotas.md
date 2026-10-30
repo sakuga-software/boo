@@ -82,3 +82,6 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
   run on this machine sends a query before that time, and the watch reads again just after it. A
   stale row gets no automatic retry, and `m` refuses to merge it: its data is old. A pull request that no run read before shows
   `error`.
+- If GitHub refuses the search of the pull requests, the list is the last list that a run of boo on
+  this machine read. With no such list, a watch still starts: it says that it could not list the pull
+  requests, and lists again after GitHub answers.

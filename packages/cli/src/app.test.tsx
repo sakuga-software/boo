@@ -295,6 +295,25 @@ test('the watch reads again just after GitHub answers, and the header and the ro
   assert.match(app.lastFrame() ?? '', /1 ready to merge/);
 });
 
+test('a watch whose first list GitHub refuses waits, and lists again after GitHub answers', async (t) => {
+  const back = Date.now() + 1_000;
+  const refused = () => Date.now() < back;
+  const { gitHub } = fakeGitHub(new Map([[1, approved()]]), {
+    listPullRequests: async () => {
+      if (refused()) throw new Error('GraphQL: API rate limit already exceeded for user ID 1.');
+      return [pr(1)];
+    },
+    readRateLimit: async () =>
+      refused() ? { limit: 5_000, remaining: 0, resetAt: new Date(back).toISOString() } : undefined,
+  });
+  const app = start(gitHub);
+  t.after(() => app.unmount());
+  const frame = await frameWith(app, 'Could not list the pull requests: GraphQL: API rate limit already exceeded');
+  assert.doesNotMatch(frame, /✖|Searching pull requests/);
+  await frameWith(app, '1 ready to merge', 6_000);
+  assert.doesNotMatch(app.lastFrame() ?? '', /Could not list|list refresh failed/);
+});
+
 test('m refuses to merge a stale pull request: its approval can be old', async (t) => {
   const until = new Date(now + 30 * 60_000).toISOString();
   const { gitHub, merges } = fakeGitHub(new Map([[1, approved({ stale: { at: ago(10), until } })]]), {
