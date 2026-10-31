@@ -1,0 +1,24 @@
+{
+  "name": "@sakuga-software/boo-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Relays the GitHub webhooks of a GitHub App to the boo watches, as a server-sent event stream",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc",
+    "start": "node dist/main.js",
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "tsx --tsconfig tsconfig.test.json --test src/*.test.ts",
+    "test:coverage": "tsx --tsconfig tsconfig.test.json --test --experimental-test-coverage --test-coverage-exclude=\"src/**/*.test.*\" --test-coverage-exclude=\"src/main.ts\" --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=75 src/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
