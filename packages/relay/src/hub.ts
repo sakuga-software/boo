@@ -21,17 +21,27 @@ export class Hub {
   private readonly boot = randomBytes(4).toString('hex');
   private sequence = 0;
   private readonly kept: RelayEvent[] = [];
+  private readonly sizes: number[] = [];
+  private bytes = 0;
   private readonly subscribers = new Set<Subscriber>();
 
   constructor(
     private readonly capacity = 10_000,
     private readonly now = () => new Date(),
+    // An event carries the text of a review or a comment: a bot comment can be tens of kilobytes.
+    private readonly maxBytes = 64 * 1024 * 1024,
   ) {}
 
   publish(change: RelayChange): RelayEvent {
     const event = { id: `${this.boot}-${++this.sequence}`, at: this.now().toISOString(), ...change };
+    const size = Buffer.byteLength(JSON.stringify(event));
     this.kept.push(event);
-    if (this.kept.length > this.capacity) this.kept.shift();
+    this.sizes.push(size);
+    this.bytes += size;
+    while (this.kept.length > this.capacity || (this.bytes > this.maxBytes && this.kept.length > 1)) {
+      this.kept.shift();
+      this.bytes -= this.sizes.shift() ?? 0;
+    }
     for (const subscriber of this.subscribers) {
       if (!subscriber.reads(event.repo)) continue;
       // A stream that fails must not stop the delivery to the others, or the answer to GitHub.

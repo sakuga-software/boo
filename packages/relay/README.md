@@ -4,16 +4,18 @@ The relay receives the webhooks of a GitHub App and sends them to the `boo` watc
 server-sent events. With the relay, a watch reads a pull request again only when GitHub says that it
 changed, so the polling stops to use the rate limit of your `gh` token.
 
-The relay sends only the name of what changed: `owner/repo`, the pull request number or the head
-commit, and the event type. It never sends a title, a comment or a check name. The watch reads the
-pull request again with its own token, so GitHub stays the judge of what each person can read.
+Each event names what changed (`owner/repo`, the pull request number or the head commit, the event
+type) and carries in `data` the fields of the webhook that the watch needs to update its row with no
+read of GitHub: the state, head and requested reviewers of a pull request, the author, state and text
+of a review or a comment, the state and conclusion of a check, a status or a workflow run. The values
+are the ones of the webhook. The access filter below decides who gets these fields.
 
 ## What it does
 
 | Route                | Who calls it | What it does                                                                                                        |
 | -------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `GET /`              | `boo`        | Gives the client id of the App and its install URL.                                                                 |
-| `POST /webhooks`     | GitHub       | Checks the signature, keeps the pull request number or the head commit, and sends it to the streams.                |
+| `POST /webhooks`     | GitHub       | Checks the signature, keeps the fields that the watch needs, and sends them to the streams.                         |
 | `POST /sessions`     | `boo`        | Takes the user token of the App from the device flow, checks that it belongs to the App, and gives a session token. |
 | `DELETE /sessions`   | `boo`        | Deletes the session.                                                                                                |
 | `GET /installations` | `boo`        | The installations of the App that the user can read.                                                                |
@@ -30,12 +32,16 @@ all. A resume with `Last-Event-ID` while the access is not valid gets a reset to
 
 ## Limits
 
-- The relay keeps the last 10 000 events in memory. A watch that reconnects sends `Last-Event-ID` and
+- The relay keeps the last 10 000 events in memory, and at most 64 MB of them: an event carries the
+  text of a review or a comment. A watch that reconnects sends `Last-Event-ID` and
   gets the events that it missed. After a restart of the relay, or after a long cut, the watch gets
   `event: reset` and must read all its pull requests again.
 - GitHub can deliver a webhook late or not at all. The watch must keep a slow poll as a safety net.
 - A `status`, and a check of a pull request from a fork, give only the head commit: the watch finds
   the pull request from the commit.
+- Some facts are in no webhook, so the watch must still read them from GitHub: the mergeable state
+  (GitHub computes it after the delivery and often leaves it out), the list of changed files, the
+  time of the head commit, and the checks of the base branch.
 
 ## Create the GitHub App
 

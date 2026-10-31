@@ -189,6 +189,7 @@ test('a webhook reaches the streams that read its repository, and only those', a
   const response = await deliver(base, 'pull_request', {
     action: 'synchronize',
     number: 7,
+    pull_request: { head: { sha: 'abc' } },
     repository: { full_name: 'ACME/Web' },
   });
   assert.equal(response.status, 202);
@@ -199,6 +200,7 @@ test('a webhook reaches the streams that read its repository, and only those', a
     action: 'synchronize',
     repo: 'ACME/Web',
     number: 7,
+    data: { pullRequest: { headSha: 'abc', requested: [] } },
     at: alice.events.find((event) => event.event === 'change')?.data.at,
   });
   await new Promise((resolve) => setTimeout(resolve, 50));

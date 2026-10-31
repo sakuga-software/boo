@@ -70,3 +70,15 @@ test('a subscriber that fails does not stop the delivery to the others', (t) => 
   assert.doesNotThrow(() => hub.publish(change('acme/web', 1)));
   assert.equal(other.got.length, 1);
 });
+
+test('the hub drops its oldest events past its size in bytes, and a resume before them gets a reset', () => {
+  const hub = new Hub(10_000, () => new Date(0), 1_000);
+  const big = (number: number) => ({ ...change('acme/web', number), data: { comment: { body: 'x'.repeat(400) } } });
+  const first = hub.publish(big(1));
+  hub.publish(big(2));
+  hub.publish(big(3));
+  assert.equal(hub.subscribe(listener(['acme/web']), first.id), 'reset');
+  const second = hub.publish(big(4));
+  const resumed = hub.subscribe(listener(['acme/web']), second.id);
+  assert.deepEqual(resumed, { missed: [] });
+});
