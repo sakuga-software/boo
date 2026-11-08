@@ -217,7 +217,10 @@ test('an http relay is refused, except on this machine, and another relay than t
   assert.ok(lines.some((line) => line.startsWith('Your GitHub authorization goes to this relay')));
 });
 
-test('a relay that accepts the connection but never answers stops the setup after the timeout', async () => {
+test('a relay that accepts the connection but never answers stops the setup after the timeout', async (t) => {
+  // The timer of AbortSignal.timeout does not hold the event loop, and the fake relay holds nothing: Node 22 would end the test first.
+  const hold = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(hold));
   const quiet = ((_input: string, init: RequestInit = {}) =>
     new Promise((_resolve, reject) => {
       init.signal?.addEventListener('abort', () => reject(init.signal!.reason));
@@ -232,4 +235,31 @@ test('a relay that accepts the connection but never answers stops the setup afte
     true,
   );
   assert.match(lines[0]!, /did not answer/);
+});
+
+test('every call refuses a redirect, and a removal that the relay refuses says that the session stays', async () => {
+  const inits: RequestInit[] = [];
+  const spy = (async (_input: string, init: RequestInit = {}) => {
+    inits.push(init);
+    return new Response(JSON.stringify({ error: 'boom' }), { status: 500 });
+  }) as unknown as typeof fetch;
+  const { value } = await deps(spy);
+  await assert.rejects(setupWebhooks(RELAY, value), /refused the request: 500/);
+  assert.equal(inits[0]!.redirect, 'error');
+
+  await mkdir(dirname(value.path), { recursive: true });
+  for (const [status, warned] of [
+    [500, true],
+    [401, false],
+  ] as const) {
+    await writeFile(value.path, JSON.stringify({ url: RELAY, session: 's', login: 'a' }));
+    const lines: string[] = [];
+    const answer = (async () => new Response(null, { status })) as unknown as typeof fetch;
+    assert.equal(await removeWebhooks({ fetch: answer, log: (line) => void lines.push(line), path: value.path }), true);
+    assert.equal(
+      lines.some((line) => line.includes(`refused the removal (${status})`)),
+      warned,
+    );
+    assert.equal(await loadRelay(value.path), undefined);
+  }
 });

@@ -52,7 +52,8 @@ const TIMEOUT_MS = 15_000;
 function timed(fetchFn: typeof fetch, ms: number): typeof fetch {
   return (async (input: string | URL | Request, init: RequestInit = {}) => {
     try {
-      return await fetchFn(input, { ...init, signal: init.signal ?? AbortSignal.timeout(ms) });
+      // A redirect could send the GitHub token to a URL that the HTTPS check did not see.
+      return await fetchFn(input, { redirect: 'error', ...init, signal: init.signal ?? AbortSignal.timeout(ms) });
     } catch (error) {
       if (error instanceof Error && error.name === 'TimeoutError')
         throw new SetupError(`${String(input)} did not answer in ${ms / 1000} s`);
@@ -232,12 +233,18 @@ export async function removeWebhooks(
   const deps = { ...remove, fetch: timed(remove.fetch, remove.timeoutMs ?? TIMEOUT_MS) };
   const connection = await loadRelay(deps.path);
   if (!connection) return false;
+  const stays = `the session stays on the relay at ${connection.url} until it expires.`;
   await deps
     .fetch(`${connection.url}/sessions`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${connection.session}` },
     })
-    .catch(() => deps.log(`The relay at ${connection.url} did not answer: the session stays there until it expires.`));
+    .then((response) => {
+      // 401: the relay no longer knows the session, so nothing stays there.
+      if (!response.ok && response.status !== 401)
+        deps.log(`The relay refused the removal (${response.status}): ${stays}`);
+    })
+    .catch(() => deps.log(`The relay did not answer: ${stays}`));
   await rm(deps.path, { force: true });
   return true;
 }
