@@ -555,7 +555,8 @@ test('a review asked by comment is asked, acknowledged, failed, answered or stal
   assert.deepEqual(outcome({ reviews: [kentoReview], comments: [ask(), retry] }, 40), ['stale', 'answered']);
   const [failed] = requestStates({ reviews: [], comments: [ask(['EYES']), failure] }, settings, new Date(at(25)));
   assert.deepEqual(failed, {
-    id: 'comment:1',
+    id: 'comment:1:kento-review',
+    commentId: 'comment:1',
     bot: 'kento-review',
     author: 'Mheaus',
     createdAt: at(22),
@@ -591,7 +592,7 @@ test('a review request gives review-request events when its outcome changes, and
   const read = snapshot({ author: 'me', comments: [bot, ask, remark] });
   const states = requestStates(read, DEFAULT_SETTINGS, new Date('2026-10-24T11:05:00Z'));
   assert.deepEqual(
-    personComments(read, {}, new Set(states.map(({ id }) => id))).map(({ body }) => body),
+    personComments(read, {}, new Set(states.map(({ commentId }) => commentId))).map(({ body }) => body),
     ['Why this?'],
   );
   const known = new Map();
@@ -654,4 +655,30 @@ test('a draft whose old requests are known gives no review-request event when it
       .map((event) => event.event === 'review-request' && event.createdAt),
     ['2026-10-24T11:59:00Z'],
   );
+});
+
+test('one comment that asks two bots gives one review-request event for each bot', () => {
+  const at = '2026-10-24T11:00:00Z';
+  const both = {
+    id: 5,
+    user: { login: 'octocat' },
+    body: '@coderabbitai review\n@greptile-apps review',
+    created_at: at,
+    updated_at: at,
+  };
+  const seen = (login: string) => ({
+    id: login.length,
+    user: { login },
+    body: 'Hello',
+    created_at: '2026-10-24T10:00:00Z',
+    updated_at: '2026-10-24T10:00:00Z',
+  });
+  const read = snapshot({ author: 'me', comments: [seen('coderabbitai[bot]'), seen('greptile-apps[bot]'), both] });
+  const states = requestStates(read, DEFAULT_SETTINGS, new Date('2026-10-24T11:05:00Z'));
+  const events = requestChanges('acme/web#1', states, new Map(), AT);
+  assert.deepEqual(events.map((event) => event.event === 'review-request' && event.bot).sort(), [
+    'coderabbitai[bot]',
+    'greptile-apps[bot]',
+  ]);
+  assert.deepEqual(personComments(read, {}, new Set(states.map(({ commentId }) => commentId))), []);
 });
