@@ -53,8 +53,9 @@ GitHub App**.
 - **Enable Device Flow**: on.
 - **Expire user authorization tokens**: on is supported. The relay keeps the refresh token, encrypted.
 - **Webhook URL**: `https://<your relay>/webhooks`. **Webhook secret**: a long random value.
-- **Repository permissions**, all **read-only**: Pull requests, Checks, Commit statuses, Actions,
-  Metadata. No Contents, and no write: `boo` still posts with your `gh` token.
+- **Repository permissions**, all **read-only**: Pull requests, Issues, Checks, Commit statuses,
+  Actions, Metadata. GitHub refuses the `issue_comment` event without Issues: the comments of a pull
+  request come through it. No Contents, and no write: `boo` still posts with your `gh` token.
 - **Organization permissions**: Members, read-only, to get the `membership` and `organization`
   events.
 - **Subscribe to events**: Pull request, Pull request review, Pull request review comment, Pull
