@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { loadRelay, relayUrl, removeWebhooks, SetupError, setupWebhooks, type SetupDeps } from './webhooks.js';
 
@@ -200,5 +200,36 @@ test('the removal deletes the session on the relay, then the file, even if the r
   }) as unknown as typeof fetch;
   assert.equal(await removeWebhooks({ fetch: down, log: (line) => void lines.push(line), path: value.path }), true);
   assert.equal(await loadRelay(value.path), undefined);
+  assert.match(lines[0]!, /did not answer/);
+});
+
+test('an http relay is refused, except on this machine, and another relay than the hosted one gets a warning', async () => {
+  const { fetchFn } = fakeNetwork(routes([granted]));
+  await assert.rejects(setupWebhooks('http://relay.test', (await deps(fetchFn)).value), /is not HTTPS/);
+  await assert.rejects(setupWebhooks('https://exa mple', (await deps(fetchFn)).value), /is not a URL/);
+  const local = fakeNetwork(
+    Object.fromEntries(
+      Object.entries(routes([granted])).map(([key, value]) => [key.replace(RELAY, 'http://localhost:3000'), value]),
+    ),
+  );
+  const { value, lines } = await deps(local.fetchFn);
+  await setupWebhooks('http://localhost:3000', value);
+  assert.ok(lines.some((line) => line.startsWith('Your GitHub authorization goes to this relay')));
+});
+
+test('a relay that accepts the connection but never answers stops the setup after the timeout', async () => {
+  const quiet = ((_input: string, init: RequestInit = {}) =>
+    new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+    })) as unknown as typeof fetch;
+  const { value } = await deps(quiet, { timeoutMs: 20 });
+  await assert.rejects(setupWebhooks(RELAY, value), /relay\.test did not answer in 0\.02 s/);
+  await mkdir(dirname(value.path), { recursive: true });
+  await writeFile(value.path, JSON.stringify({ url: RELAY, session: 's', login: 'a' }));
+  const lines: string[] = [];
+  assert.equal(
+    await removeWebhooks({ fetch: quiet, log: (line) => void lines.push(line), path: value.path, timeoutMs: 20 }),
+    true,
+  );
   assert.match(lines[0]!, /did not answer/);
 });

@@ -42,7 +42,26 @@ export interface SetupDeps {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   path: string;
+  /** The longest wait for one answer of the network. */
+  timeoutMs?: number;
 }
+
+const TIMEOUT_MS = 15_000;
+
+/** Gives up a call that gets no answer in time: a relay that accepts the connection and stays quiet must not block the command. */
+function timed(fetchFn: typeof fetch, ms: number): typeof fetch {
+  return (async (input: string | URL | Request, init: RequestInit = {}) => {
+    try {
+      return await fetchFn(input, { ...init, signal: init.signal ?? AbortSignal.timeout(ms) });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'TimeoutError')
+        throw new SetupError(`${String(input)} did not answer in ${ms / 1000} s`);
+      throw error;
+    }
+  }) as typeof fetch;
+}
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 export class SetupError extends Error {}
 
@@ -136,8 +155,18 @@ const INSTALL_POLL_MS = 5_000;
  * 3. If the user reads no installation of the App, opens the install page and waits for one.
  * 4. Saves the relay URL and the session token, readable only by the owner of the file.
  */
-export async function setupWebhooks(input: string | undefined, deps: SetupDeps): Promise<RelayConnection> {
+export async function setupWebhooks(input: string | undefined, setup: SetupDeps): Promise<RelayConnection> {
+  const deps = { ...setup, fetch: timed(setup.fetch, setup.timeoutMs ?? TIMEOUT_MS) };
   const url = relayUrl(input);
+  let address: URL;
+  try {
+    address = new URL(url);
+  } catch {
+    throw new SetupError(`${url} is not a URL.`);
+  }
+  // The GitHub token of the user goes to the relay: in clear text, anyone on the way reads it.
+  if (address.protocol === 'http:' && !LOCAL_HOSTS.has(address.hostname))
+    throw new SetupError(`${url} is not HTTPS: the GitHub authorization would travel in clear text. Use https://.`);
   const relay = await json<{ name?: string; clientId?: string; installUrl?: string }>(
     await deps.fetch(url).catch((error: unknown) => {
       throw new SetupError(`No relay answers at ${url}: ${error instanceof Error ? error.message : String(error)}`);
@@ -151,6 +180,10 @@ export async function setupWebhooks(input: string | undefined, deps: SetupDeps):
   });
   if (relay.name !== 'boo-relay' || !relay.clientId) throw new SetupError(`${url} is not a boo relay.`);
   deps.log(`Relay: ${url}`);
+  if (url !== DEFAULT_RELAY)
+    deps.log(
+      'Your GitHub authorization goes to this relay, which reads your pull requests: use only a relay that you trust.',
+    );
 
   const token = await deviceFlow(relay.clientId, deps);
   const { session, login } = await json<{ session: string; login: string }>(
@@ -193,7 +226,10 @@ export async function setupWebhooks(input: string | undefined, deps: SetupDeps):
 }
 
 /** Deletes the session on the relay, then the file. A relay that does not answer leaves no file either. */
-export async function removeWebhooks(deps: Pick<SetupDeps, 'fetch' | 'log' | 'path'>): Promise<boolean> {
+export async function removeWebhooks(
+  remove: Pick<SetupDeps, 'fetch' | 'log' | 'path' | 'timeoutMs'>,
+): Promise<boolean> {
+  const deps = { ...remove, fetch: timed(remove.fetch, remove.timeoutMs ?? TIMEOUT_MS) };
   const connection = await loadRelay(deps.path);
   if (!connection) return false;
   await deps
