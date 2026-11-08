@@ -683,3 +683,25 @@ test('one comment that asks two bots gives one review-request event for each bot
   ]);
   assert.deepEqual(personComments(read, {}, new Set(states.map(({ commentId }) => commentId))), []);
 });
+
+test('a change of the policy notes gives one policy event with the notes added and removed', () => {
+  const miss = (note: string) => ({ rule: 'resolvedBotThreads' as const, note });
+  const before = report(1, { policy: [miss('2 open bot threads'), { rule: 'requireProof', note: 'no proof' }] });
+  const after = report(1, { policy: [miss('1 open bot thread'), { rule: 'requireProof', note: 'no proof' }] });
+  assert.deepEqual(diffReports(byKey(before), [after], AT), [
+    {
+      at: AT,
+      pr: 'acme/web#1',
+      event: 'policy',
+      policy: after.policy,
+      added: ['1 open bot thread'],
+      removed: ['2 open bot threads'],
+    },
+  ]);
+  const reordered = report(1, { policy: [...after.policy].reverse() });
+  assert.deepEqual(diffReports(byKey(after), [reordered], AT), []);
+  assert.deepEqual(
+    diffReports(byKey(after), [report(1)], AT).map((event) => event.event),
+    ['policy'],
+  );
+});
