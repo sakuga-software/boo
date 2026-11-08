@@ -15,7 +15,23 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'head'; from: string | null; to: string | null }
   | ({ event: 'review'; reviewer: string; reviewedAt: string | null } & Omit<Reviewer, 'login' | 'at'>)
   | { event: 'check'; check: string; to: 'failing' | 'not failing'; reviewerError?: true; error?: string }
-  | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
+  | {
+      event: 'left';
+      reason: string;
+      mergedBy?: string | null;
+      mergedAt?: string | null;
+      /** For a merge of a pull request with owner paths: these paths, and if the owner merged it. */
+      ownerPaths?: string[];
+      byOwner?: boolean | null;
+    }
+  | {
+      event: 'owner-bypass';
+      owner: string;
+      mergedBy: string | null;
+      paths: string[];
+      partial: boolean;
+      mergedAt: string | null;
+    }
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
   | ({ event: 'ready-for-owner' } & NonNullable<PullRequestReport['needsOwner']>)
   | { event: 'policy'; policy: PullRequestReport['policy']; added: string[]; removed: string[] }
@@ -292,6 +308,8 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
 }
 
 const LEFT_STATES = new Set(['merged', 'closed', 'draft']);
+const sameLogin = (a: string, b: string) =>
+  a.replace(/\[bot\]$/, '').toLowerCase() === b.replace(/\[bot\]$/, '').toLowerCase();
 
 /**
  * Returns the events between two reads of the list. `previous` is undefined at the first read: each
@@ -309,14 +327,31 @@ export function diffReports(
     const before = previous?.get(pr);
     if (!previous) events.push({ at, pr, event: 'snapshot', ...report });
     else if (LEFT_STATES.has(report.state)) {
-      if (before)
+      if (before) {
+        const owner = report.state === 'merged' ? (report.needsOwner ?? before.needsOwner) : null;
+        // "@me" names the user of boo: the report does not know that login, so it cannot tell who merged.
+        const byOwner =
+          owner && owner.owner !== '@me' && report.mergedBy ? sameLogin(report.mergedBy, owner.owner) : null;
         events.push({
           at,
           pr,
           event: 'left',
           reason: report.state,
           ...(report.state === 'merged' && { mergedBy: report.mergedBy, mergedAt: report.mergedAt }),
+          ...(owner && { ownerPaths: owner.paths, byOwner }),
         });
+        if (owner && byOwner === false)
+          events.push({
+            at,
+            pr,
+            event: 'owner-bypass',
+            owner: owner.owner,
+            mergedBy: report.mergedBy,
+            paths: owner.paths,
+            partial: owner.partial,
+            mergedAt: report.mergedAt,
+          });
+      }
     } else if (!before) events.push({ at, pr, event: 'entered', ...report });
     else events.push(...changesOf(before, report, at));
   }
