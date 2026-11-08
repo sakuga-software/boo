@@ -252,7 +252,11 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     const { login, at: reviewedAt, ...review } = reviewer;
     events.push({ at, pr, event: 'review', reviewer: login, ...review, reviewedAt });
   }
-  if (JSON.stringify(before.findings) !== JSON.stringify(after.findings))
+  // A read with the threads and a read without them count other findings: that is no change of the pull request.
+  if (
+    before.findings.threadsRead === after.findings.threadsRead &&
+    JSON.stringify(before.findings) !== JSON.stringify(after.findings)
+  )
     events.push({ at, pr, event: 'findings', ...after.findings });
   const restack = after.stack.restack;
   if (restack && restack.at !== before.stack.restack?.at)
