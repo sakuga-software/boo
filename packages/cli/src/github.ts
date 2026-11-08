@@ -901,15 +901,34 @@ export function firstErrorLine(log: string): string | undefined {
 
 const ERROR_LENGTH = 200;
 
-/** Reads the first error line of a finished job once: its log does not change. A log that GitHub does not give has no line. */
-async function jobError(repo: string, job: number): Promise<string | undefined> {
-  const key = `job-error-${repo}-${job}`;
-  const known = await cache.get<{ line: string | null }>(key, Infinity);
-  if (known) return known.value.line ?? undefined;
-  const line = await gh(['api', `repos/${repo}/actions/jobs/${job}/logs`]).then(firstErrorLine, () => undefined);
-  await cache.set(key, { line: line ?? null });
-  return line;
+/** A log that GitHub did not give is read again after this time: it can come some seconds after the end of the job. */
+export const JOB_LOG_RETRY_MS = 5 * 60_000;
+
+/**
+ * Reads the first error line of a finished job. A log that GitHub gave does not change, so its line
+ * stays in the cache for ever. A failed read stays only `JOB_LOG_RETRY_MS`: a rate limit, a network
+ * error or a log that is not ready yet must not hide the line for ever.
+ */
+export async function jobErrorLine(
+  store: ReadCache,
+  key: string,
+  readLog: () => Promise<string>,
+  now = Date.now(),
+): Promise<string | undefined> {
+  const known = await store.get<{ line: string | null; failed?: true }>(key, Infinity, now);
+  if (known && (!known.value.failed || now - known.at < JOB_LOG_RETRY_MS)) return known.value.line ?? undefined;
+  try {
+    const line = firstErrorLine(await readLog());
+    await store.set(key, { line: line ?? null });
+    return line;
+  } catch {
+    await store.set(key, { line: null, failed: true });
+    return undefined;
+  }
 }
+
+const jobError = (repo: string, job: number) =>
+  jobErrorLine(cache, `job-error-${repo}-${job}`, () => gh(['api', `repos/${repo}/actions/jobs/${job}/logs`]));
 
 /** Adds the first error line to each failed check of a review bot that is a GitHub Actions job. */
 async function withReviewerErrors(repo: string, checks: Check[], names: readonly string[] = []): Promise<Check[]> {

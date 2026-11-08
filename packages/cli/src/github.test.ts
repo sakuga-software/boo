@@ -8,6 +8,8 @@ import {
   concurrencyLimit,
   fingerprintOf,
   firstErrorLine,
+  JOB_LOG_RETRY_MS,
+  jobErrorLine,
   isRateLimited,
   listKey,
   listOrLast,
@@ -250,4 +252,25 @@ test('the first error line of a job log skips the timestamps and the exit code a
 test('a read with the checks of the review bots does not answer a read without them', () => {
   const pull = { repo: 'acme/web', number: 1, title: '', url: '' };
   assert.notEqual(readKey(pull, { reviewerChecks: ['Sakuga Review'] }), readKey(pull, {}));
+});
+
+test('a job log that GitHub did not give is read again later, and a log that it gave is read once', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  let reads = 0;
+  const down = async () => {
+    reads++;
+    throw new Error('HTTP 404: log not ready');
+  };
+  const ready = async () => {
+    reads++;
+    return '2026-10-28T17:43:16Z fatal: Invalid revision range a..b';
+  };
+  const now = Date.now();
+  assert.equal(await jobErrorLine(cache, 'job', down, now), undefined);
+  assert.equal(await jobErrorLine(cache, 'job', ready, now + 60_000), undefined);
+  assert.equal(reads, 1);
+  const later = now + JOB_LOG_RETRY_MS + 1;
+  assert.equal(await jobErrorLine(cache, 'job', ready, later), 'fatal: Invalid revision range a..b');
+  assert.equal(await jobErrorLine(cache, 'job', down, later + 24 * 3_600_000), 'fatal: Invalid revision range a..b');
+  assert.equal(reads, 2);
 });
