@@ -306,3 +306,18 @@ test('a pull request is named as owner/repo#n, repo#n in the organization, or it
   for (const wrong of ['fruitback', '#641', 'acme/web#x', 'https://github.com/acme/web/issues/7'])
     assert.equal(parsePullRequestRef(wrong, 'acme'), undefined, wrong);
 });
+
+test('the search keeps the drafts only when asked, and a list with drafts has its own cache key', () => {
+  const results = [result('a', '2026-10-01T00:00:00Z'), result('b', '2026-10-02T00:00:00Z', true)];
+  assert.deepEqual(
+    mergeSearches([results]).map(({ url }) => url),
+    ['a'],
+  );
+  assert.deepEqual(
+    mergeSearches([results], true).map(({ url }) => url),
+    ['b', 'a'],
+  );
+  const options = { org: 'acme', authors: ['@me'] };
+  assert.notEqual(listKey(options), listKey({ ...options, drafts: true }));
+  assert.equal(listKey(options), listKey({ ...options, drafts: false }));
+});

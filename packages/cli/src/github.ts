@@ -34,6 +34,8 @@ export interface SearchOptions {
   /** The full names of the repositories to watch. Empty or undefined: every repository of the organization. */
   repos?: string[];
   since?: string;
+  /** Keep the drafts in the list. */
+  drafts?: boolean;
 }
 
 interface SearchResult {
@@ -64,9 +66,9 @@ export async function listPullRequests(options: SearchOptions): Promise<PullRequ
 }
 
 /** The cache key of a list. Two runs with the same options share their list. */
-export const listKey = ({ org, authors, repos = [], since }: SearchOptions) =>
+export const listKey = ({ org, authors, repos = [], since, drafts }: SearchOptions) =>
   `list-${createHash('sha256')
-    .update(JSON.stringify([org, [...authors].sort(), [...repos].sort(), since ?? '']))
+    .update(JSON.stringify([org, [...authors].sort(), [...repos].sort(), since ?? '', ...(drafts ? ['drafts'] : [])]))
     .digest('hex')
     .slice(0, 16)}`;
 
@@ -92,11 +94,11 @@ export async function listOrLast(
 }
 
 /** The GitHub search has no OR between two authors: each author is one search. */
-async function searchAll({ org, authors, repos = [], since }: SearchOptions): Promise<PullRequest[]> {
+async function searchAll({ org, authors, repos = [], since, drafts }: SearchOptions): Promise<PullRequest[]> {
   const searches = await Promise.all(
     authors.map((author) => searchPullRequests({ org, author, repos, ...(since && { since }) })),
   );
-  return mergeSearches(searches).map((result) => ({
+  return mergeSearches(searches, drafts).map((result) => ({
     repo: result.repository.nameWithOwner,
     number: result.number,
     title: result.title,
@@ -110,9 +112,14 @@ export function searchScope(org: string, repos: string[]): string[] {
   return org ? ['--owner', org] : [];
 }
 
-export function mergeSearches<T extends Pick<SearchResult, 'url' | 'isDraft' | 'updatedAt'>>(searches: T[][]): T[] {
+export function mergeSearches<T extends Pick<SearchResult, 'url' | 'isDraft' | 'updatedAt'>>(
+  searches: T[][],
+  drafts = false,
+): T[] {
   const byUrl = new Map(searches.flat().map((result) => [result.url, result]));
-  return [...byUrl.values()].filter((result) => !result.isDraft).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...byUrl.values()]
+    .filter((result) => drafts || !result.isDraft)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 async function searchPullRequests({

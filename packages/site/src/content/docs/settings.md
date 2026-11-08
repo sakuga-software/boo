@@ -26,6 +26,24 @@ An author is a login, `@me` (the account of `gh`), or `app/<slug>` for a GitHub 
 { "authors": ["@me", "app/my-agent"] }
 ```
 
+A pull request of a GitHub App shows only if its app is in the list: add `app/dependabot` and
+`app/renovate` to follow the bumps of Dependabot and Renovate, such as a bump of a CI action.
+
+```json
+{ "authors": ["@me", "app/sakuga-agent", "app/dependabot", "app/renovate"] }
+```
+
+The key `drafts` set to `"show"` keeps the drafts in the output of `--json` and `--watch --events`
+(`--drafts` does the same for one run). A draft then has the state `draft`, with its checks, its
+reviewers and its policy notes, and `draftState` gives the state that it would have once ready for
+review, such as `approved`. A green draft that only a person can mark ready shows as
+`"state": "draft", "draftState": "ready to merge"`. The list of the terminal still hides the drafts as
+the setting "Hide the drafts" says.
+
+```json
+{ "drafts": "show" }
+```
+
 The key `repos` limits the list to some repositories. A repository is `owner/name`, or `name` in the
 organization of `--org`. With no `repos`, the tool lists every repository of the organization.
 `--repo` replaces the list at the start of one run. A repository of another owner counts too.

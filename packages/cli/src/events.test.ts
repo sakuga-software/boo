@@ -45,6 +45,7 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   stale: null,
   findings: summarizeFindings([]),
   threads: null,
+  draftState: null,
   ...patch,
 });
 const byKey = (...reports: PullRequestReport[]) => new Map(reports.map((item) => [`acme/web#${item.number}`, item]));
@@ -872,4 +873,18 @@ test('a state write that cannot rename its file leaves no temporary file', async
   await mkdir(join(dir, 'folder', 'inside'), { recursive: true });
   await assert.rejects(writeWatchState(join(dir, 'folder'), state));
   assert.deepEqual((await readdir(dir)).sort(), ['folder', 'state.json']);
+});
+
+test('a draft that the list keeps gives changes, not a left event', () => {
+  const draft = report(1, { state: 'draft', isDraft: true, draftState: 'checks failing' });
+  const green = report(1, { state: 'draft', isDraft: true, draftState: 'approved' });
+  assert.deepEqual(
+    diffReports(byKey(report(1)), [draft], AT).map((event) => event.event),
+    ['state'],
+  );
+  assert.deepEqual(diffReports(byKey(draft), [green], AT), []);
+  assert.deepEqual(
+    diffReports(byKey(report(1)), [report(1, { state: 'draft', isDraft: true })], AT).map((event) => event.event),
+    ['left'],
+  );
 });

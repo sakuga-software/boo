@@ -57,6 +57,8 @@ export type Settings = Record<SettingKey, boolean> & {
   reviewRequestTimeoutMinutes: number;
   /** The rules that a team adds before "ready to merge". */
   mergePolicy?: MergePolicy;
+  /** "show" keeps the drafts in the list of --json and --events, with their checks, reviews and policy. */
+  drafts?: 'show';
   /**
    * The names of the checks that a review bot runs, such as "Sakuga Review". A red check of this list
    * is a failure of the bot, not of the change: the state is "reviewer error", not "checks failing".
@@ -194,6 +196,7 @@ export function parseSettings(value: unknown): Settings {
   settings.agentPrompts = parsePrompts((value as Record<string, unknown>).agentPrompts);
   const reviewerChecks = parseAuthors((value as Record<string, unknown>).reviewerChecks);
   if (reviewerChecks) settings.reviewerChecks = reviewerChecks;
+  if ((value as Record<string, unknown>).drafts === 'show') settings.drafts = 'show';
   const mergePolicy = parseMergePolicy((value as Record<string, unknown>).mergePolicy);
   if (mergePolicy) settings.mergePolicy = mergePolicy;
   const custom = (value as Record<string, unknown>).customBots;

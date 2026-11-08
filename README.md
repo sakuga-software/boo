@@ -54,6 +54,8 @@ boo --watch             # stay open until Ctrl+C, and refresh
 boo --org all           # all organizations; the default organization is sakuga-software
 boo --since 2026-09-15  # only the pull requests created on or after this date
 boo --author @me --author app/my-agent  # the pull requests of these authors, for this run
+boo --author @me --author app/dependabot --author app/renovate  # also the bumps of Dependabot and Renovate
+boo --json --drafts     # also the drafts, with the state "draft" and their checks and reviews
 boo --repo boo --repo acme/web  # only these repositories: owner/name, or name in the organization
 boo --dry-run           # post and merge nothing
 boo --json              # print the state as JSON for a script, and post nothing
