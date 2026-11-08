@@ -207,3 +207,16 @@ test('the bot that speaks again in a thread after the answer opens the finding a
   assert.equal(answered('sakuga-agent[bot]'), true);
   assert.equal(answered(KENTO), false);
 });
+
+test('a thread or a review of a listed agent is no finding of a review bot', () => {
+  const agent = 'sakuga-agent[bot]';
+  const facts = {
+    author: 'mathieu',
+    body: '',
+    reviews: [review(agent, `${badge('P1')} **A badge that the agent quotes in its review**`, '2026-11-08T10:00:00Z')],
+    comments: [],
+    openThreads: [{ author: agent, body: `${badge('P2')} **A badge that the agent quotes in a thread**` }],
+  };
+  assert.equal(findingsOf(facts).length, 2);
+  assert.equal(findingsOf({ ...facts, agents: [agent] }).length, 0);
+});
