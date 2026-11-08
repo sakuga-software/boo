@@ -69,8 +69,10 @@ export function requestStates(
     const next = requests.find((other) => other.bot === bot && other.comment.created_at > comment.created_at);
     const beforeNext = (at: string) => !next || at <= next.comment.created_at;
     const reactions = comment.reactions ?? [];
+    // GitHub gives the times to the second: a review in the same second as the request answers it.
     const answered = snapshot.reviews.some(
-      (review) => review.user && member(review.user.login) && !review.threadReply && after(review.submitted_at),
+      (review) =>
+        review.user && member(review.user.login) && !review.threadReply && review.submitted_at >= comment.created_at,
     );
     const failure = snapshot.comments.find(
       (post) =>

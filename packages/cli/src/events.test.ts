@@ -474,6 +474,7 @@ test('a review asked by comment is asked, acknowledged, failed, answered or stal
   assert.deepEqual(outcome({ comments: [ask(['EYES'])] }, 38), ['acknowledged']);
   assert.deepEqual(outcome({ comments: [ask(['EYES', 'CONFUSED'])] }), ['failed']);
   assert.deepEqual(outcome({ reviews: [kentoReview], comments: [ask(['EYES'])] }, 40), ['answered']);
+  assert.deepEqual(outcome({ reviews: [{ ...kentoReview, submitted_at: at(22) }], comments: [ask()] }), ['answered']);
   const [failed] = requestStates({ reviews: [], comments: [ask(['EYES']), failure] }, settings, new Date(at(25)));
   assert.deepEqual(failed, {
     id: 'comment:1',
@@ -526,5 +527,53 @@ test('a review request gives review-request events when its outcome changes, and
   assert.deepEqual(
     requestChanges('acme/web#1', later, known, AT).map((event) => event.event === 'review-request' && event.outcome),
     ['stale'],
+  );
+});
+
+test('a draft whose old requests are known gives no review-request event when it becomes open', async () => {
+  const ask = (id: number) => ({
+    id,
+    user: { login: 'octocat' },
+    body: '@coderabbitai review',
+    created_at: '2026-10-24T10:00:00Z',
+    updated_at: '2026-10-24T10:00:00Z',
+  });
+  const bot = {
+    id: 9,
+    user: { login: 'coderabbitai[bot]' },
+    body: 'Walkthrough',
+    created_at: '2026-10-24T09:00:00Z',
+    updated_at: '2026-10-24T09:00:00Z',
+  };
+  const reads: Partial<PullRequestSnapshot>[] = [
+    { status: 'draft', comments: [bot, ask(1)] },
+    { comments: [bot, ask(1)] },
+    { comments: [bot, ask(1), { ...ask(2), created_at: '2026-10-24T11:59:00Z' }] },
+  ];
+  const abort = new AbortController();
+  const sources: WatchSources = {
+    listPullRequests: async () => [pr(1)],
+    fetchPullRequest: async () => {
+      const read = reads.shift();
+      if (reads.length === 0) setTimeout(() => abort.abort(), 50);
+      return snapshot({ author: 'me', ...(read ?? reads.at(-1)) });
+    },
+    readOwners: async () => new Map(),
+  };
+  const events: WatchEvent[] = [];
+  await watchEvents(
+    sources,
+    DEFAULT_SETTINGS,
+    { intervalMs: 0, signal: abort.signal },
+    async (event) => {
+      events.push(event);
+    },
+    (error) => assert.fail(String(error)),
+  );
+  assert.deepEqual(
+    events
+      .filter((event) => event.event === 'review-request')
+      .map((event) => event.event === 'review-request' && event.createdAt),
+    ['2026-10-24T11:59:00Z'],
   );
 });
