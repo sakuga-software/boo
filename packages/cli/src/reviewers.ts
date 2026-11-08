@@ -95,6 +95,8 @@ export interface PullRequestFacts {
 
 // The same words as the pr-signals.sh script of the review skills. They name no bot, so a new reviewer needs no edit.
 const QUOTA = /quota|rate.limit|limit reached|unable to review|usage limit/i;
+// Greptile writes "Confidence Score: 4/5", and Sakuga Review writes "Score de confiance : 4/5".
+const CONFIDENCE = /(?:confidence score|score de confiance)\W{0,6}(\d{1,2})\s*\/\s*(\d{1,2})/i;
 // Some reviewers show their progress in their review body, for example "Review progress `███░░` 2/3 files".
 const PROGRESS = /(\d+)\s*\/\s*(\d+)\s+files/;
 
@@ -104,7 +106,9 @@ export const displayName = (login: string) =>
 const time = (iso: string) => Date.parse(iso);
 // A refusal and a progress bar sit in the first paragraph of a body. A review can quote both words further down.
 const firstParagraph = (body = '') => body.trimStart().split(/\n\s*\n/)[0]!;
-const isRefusal = (body = '') => QUOTA.test(firstParagraph(body));
+// A review that gives a confidence score reviewed the code, even if its summary says "quota": a
+// change of the storage quota of an app is a subject of review, not a refusal of the reviewer.
+const isRefusal = (body = '') => QUOTA.test(firstParagraph(body)) && !CONFIDENCE.test(body);
 // A progress bar counts only on the first line of a body, where a bot shows it. A later one is a quote, a list or an example.
 const progressIn = (body: string) => {
   const first = body.trimStart().split('\n')[0]!;
@@ -491,9 +495,6 @@ export interface Confidence {
   score: number;
   total: number;
 }
-
-// Greptile writes "Confidence Score: 4/5", and Sakuga Review writes "Score de confiance : 4/5".
-const CONFIDENCE = /(?:confidence score|score de confiance)\W{0,6}(\d{1,2})\s*\/\s*(\d{1,2})/i;
 
 /** Reads the confidence score that each reviewer gives in its last review or comment that has one. */
 export function confidenceOf(reviews: readonly Review[], comments: readonly Comment[]): Map<string, Confidence> {
