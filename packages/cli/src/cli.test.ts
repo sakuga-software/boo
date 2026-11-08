@@ -24,3 +24,11 @@ test('-v and --version print the version of package.json', () => {
     assert.equal(run.stdout.trim(), version);
   }
 });
+
+test('--snapshot refuses to run without --state', () => {
+  const run = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--watch', '--events', '--snapshot'], {
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /--snapshot .* needs --state <file>/);
+});

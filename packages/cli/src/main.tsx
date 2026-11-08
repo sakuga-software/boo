@@ -287,6 +287,10 @@ if (cli.flags.events) {
   const abort = new AbortController();
   process.once('SIGINT', () => abort.abort());
   process.once('SIGTERM', () => abort.abort());
+  if (cli.flags.snapshot && !cli.flags.state) {
+    console.error('--snapshot adds snapshot lines to a start from a saved state: it needs --state <file>.');
+    process.exit(2);
+  }
   const statePath = cli.flags.state;
   const initial = statePath ? parseWatchState(await readFile(statePath, 'utf8').catch(() => undefined)) : undefined;
   await watchEvents(
@@ -304,6 +308,10 @@ if (cli.flags.events) {
           await writeFile(temporary, JSON.stringify(state));
           await rename(temporary, statePath);
         },
+        onStateError: (error: unknown) =>
+          console.error(
+            `✖ cannot write the state to ${statePath}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
       }),
     },
     async (event) => void (await write(`${JSON.stringify(event)}\n`)),

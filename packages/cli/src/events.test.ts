@@ -787,3 +787,36 @@ test('one comment that asks two bots gives one review-request event for each bot
   ]);
   assert.deepEqual(personComments(read, {}, new Set(states.map(({ commentId }) => commentId))), []);
 });
+
+test('a state that cannot be written is told apart from a read error, and the watch goes on', async () => {
+  const abort = new AbortController();
+  const listErrors: unknown[] = [];
+  const stateErrors: unknown[] = [];
+  const events: WatchEvent[] = [];
+  let reads = 0;
+  await watchEvents(
+    {
+      listPullRequests: async () => [pr(1)],
+      fetchPullRequest: async () => snapshot(),
+      readOwners: async () => new Map(),
+    },
+    DEFAULT_SETTINGS,
+    {
+      intervalMs: 0,
+      signal: abort.signal,
+      onState: async () => {
+        if (++reads === 2) abort.abort();
+        throw new Error('ENOSPC: no space left on device');
+      },
+      onStateError: (error) => stateErrors.push(error),
+    },
+    async (event) => void events.push(event),
+    (error) => listErrors.push(error),
+  );
+  assert.equal(listErrors.length, 0);
+  assert.equal(stateErrors.length, 2);
+  assert.deepEqual(
+    events.map((event) => event.event),
+    ['snapshot'],
+  );
+});

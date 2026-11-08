@@ -447,6 +447,7 @@ export async function watchEvents(
     initial,
     onState,
     snapshots = false,
+    onStateError,
   }: {
     intervalMs: number;
     signal: AbortSignal;
@@ -456,6 +457,8 @@ export async function watchEvents(
     onState?: ((state: WatchState) => Promise<void>) | undefined;
     /** With `initial`, the first read also gives a `snapshot` line for each pull request. */
     snapshots?: boolean;
+    /** Called when `onState` fails, for example on a full disk. */
+    onStateError?: ((error: unknown) => void) | undefined;
   },
   emit: (event: WatchEvent) => Promise<void>,
   onListError: (error: unknown) => void,
@@ -543,12 +546,13 @@ export async function watchEvents(
       ]);
       tracked = new Map([...listed, ...gone.filter((pr) => unread.has(keyOf(pr)))].map((pr) => [keyOf(pr), pr]));
       first = false;
+      // A state that cannot be written is not an error of GitHub: it gets its own message, and the watch goes on.
       await onState?.({
         version: STATE_VERSION,
         reports: [...previous.values()],
         comments: Object.fromEntries([...seenComments].map(([key, ids]) => [key, [...ids]])),
         requests: Object.fromEntries([...seenRequests].map(([key, outcomes]) => [key, Object.fromEntries(outcomes)])),
-      });
+      }).catch((error: unknown) => onStateError?.(error));
     } catch (error) {
       onListError(error);
     }
