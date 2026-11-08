@@ -2,6 +2,7 @@ import { activeBots, plannedRetries } from './bots.js';
 import { decide, quotaScope, quotaSignals, type Decision, type QuotaSignal } from './decide.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { confidenceOf, isOnHead, summarize, type Overall, type Summary } from './reviewers.js';
+import { agentLogins, summarizeFindings, type FindingsSummary } from './findings.js';
 import { ownerPathsOf, type MergePolicy, type PolicyMiss } from './policy.js';
 import { isWorkingStatus, ownerWorks, type Owner, type SubAgentState } from './sessions.js';
 import type { Settings } from './settings.js';
@@ -44,10 +45,12 @@ export function assess(
     policy,
     viewer,
     reviewerChecks,
+    agents,
   }: {
     policy?: MergePolicy | undefined;
     viewer?: string | undefined;
     reviewerChecks?: readonly string[] | undefined;
+    agents?: readonly string[] | undefined;
   } = {},
 ): Map<string, { decision: Decision; summary: Summary }> {
   const scopeOf = ({ repo, fetched }: { repo: string; fetched: Fetched }) =>
@@ -67,7 +70,7 @@ export function assess(
     const decision = decide({ ...entry.fetched, now, pr: key, quota });
     results.set(key, {
       decision,
-      summary: summarize({ ...entry.fetched, now, coderabbit: decision, policy, viewer, reviewerChecks }),
+      summary: summarize({ ...entry.fetched, now, coderabbit: decision, policy, viewer, reviewerChecks, agents }),
     });
   }
   return results;
@@ -168,6 +171,16 @@ export interface PullRequestReport {
    */
   stale: { at: string; until: string | null } | null;
   /**
+   * The findings of the review bots (badges P1, P2…), by level and by place, with how many have an
+   * answer. The threads count only if the read reads them: see `resolvedBotThreads` and `answerFindings`.
+   */
+  findings: FindingsSummary;
+  /**
+   * The unresolved threads that a bot started: `open` with no answer, `answered` with a reply of the
+   * author or of an agent, that waits for a person to resolve it. Null if the read did not read the threads.
+   */
+  threads: { open: number; answered: number } | null;
+  /**
    * The owner that the changed files need (`ownerOnly`), and these files. `partial` is true if the
    * pull request has more files than the query read. Null if no file of the pull request is owned.
    */
@@ -233,6 +246,7 @@ export function buildReport(
     policy: settings.mergePolicy,
     viewer,
     reviewerChecks: settings.reviewerChecks,
+    agents: agentLogins(settings.authors),
   });
   const byKey = new Map(inputs.map((input) => [keyOf(input.pr), input]));
   const places = placeStacks(
@@ -258,7 +272,8 @@ export function buildReport(
     return {
       repo: pr.repo,
       number: pr.number,
-      title: pr.title,
+      // A pull request named on the command line has no title from the search: the read gives it.
+      title: pr.title || snapshot?.title || '',
       url: pr.url,
       headSha: snapshot?.head ?? null,
       base: snapshot?.base ?? null,
@@ -326,6 +341,8 @@ export function buildReport(
       },
       policy: summary?.policy ?? [],
       stale: snapshot?.stale ? { at: snapshot.stale.at, until: snapshot.stale.until ?? null } : null,
+      findings: summary?.findings ?? summarizeFindings([]),
+      threads: summary?.threads ?? null,
       // A merged pull request has no summary: its files still name the owner, for the `left` event.
       needsOwner:
         (summary

@@ -49,6 +49,7 @@ import {
 } from './reviewers.js';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
 import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
+import { agentLogins } from './findings.js';
 import { extraFields } from './policy.js';
 import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from './report.js';
 import type { RelayChange, RelaySource, RelayState } from './stream.js';
@@ -373,7 +374,13 @@ export function App(props: AppProps) {
       );
       const policy = settingsRef.current.mergePolicy;
       const reviewerChecks = settingsRef.current.reviewerChecks;
-      for (const [key, result] of assess(fetched, new Date(), { policy, viewer: viewerRef.current, reviewerChecks }))
+      const agents = agentLogins(settingsRef.current.authors);
+      for (const [key, result] of assess(fetched, new Date(), {
+        policy,
+        viewer: viewerRef.current,
+        reviewerChecks,
+        agents,
+      }))
         rowsRef.current.set(key, { ...rowsRef.current.get(key)!, ...result });
       setRows([...rowsRef.current.values()]);
     }

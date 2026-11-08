@@ -24,3 +24,31 @@ test('-v and --version print the version of package.json', () => {
     assert.equal(run.stdout.trim(), version);
   }
 });
+
+test('--pr needs --json and a pull request it can read', () => {
+  const alone = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--pr', 'boo#1'], { encoding: 'utf8' });
+  assert.equal(alone.status, 2);
+  assert.match(alone.stderr, /--pr reads one pull request for a script: it needs --json/);
+  const wrong = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--json', '--pr', 'boo'], {
+    encoding: 'utf8',
+  });
+  assert.equal(wrong.status, 2);
+  assert.match(wrong.stderr, /--pr takes owner\/repo#123/);
+  assert.equal(wrong.stdout, '');
+});
+
+test('--snapshot refuses to run without --state', () => {
+  const run = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--watch', '--events', '--snapshot'], {
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /--snapshot .* needs --state <file>/);
+});
+
+test('--state refuses a file that it cannot read, but not a missing one', () => {
+  const run = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--watch', '--events', '--state', '/'], {
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /cannot read the state in \//);
+});
