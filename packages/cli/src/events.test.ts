@@ -118,6 +118,15 @@ test('a change of the findings gives one findings event with the new counts', ()
     [{ at: AT, pr: 'acme/web#1', event: 'findings', ...findings }],
   );
   assert.deepEqual(diffReports(byKey(report(1, { findings })), [report(1, { findings })], AT), []);
+  const two = {
+    ...findings,
+    unanswered: [
+      { level: 'P2', place: 'description' as const, title: 'A', id: null },
+      { level: 'P2', place: 'thread' as const, title: 'B', id: null },
+    ],
+  };
+  const reordered = { ...two, unanswered: [...two.unanswered].reverse() };
+  assert.deepEqual(diffReports(byKey(report(1, { findings: two })), [report(1, { findings: reordered })], AT), []);
   const unread = { ...findings, count: 0, threadsRead: false };
   assert.deepEqual(diffReports(byKey(report(1, { findings })), [report(1, { findings: unread })], AT), []);
   const replaced = { ...findings, unanswered: [{ level: 'P2', place: 'description' as const, title: 'B', id: null }] };

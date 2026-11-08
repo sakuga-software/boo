@@ -189,3 +189,21 @@ test('a person who quotes a finding to ask for more work does not answer it', ()
   assert.equal(answered('mathieu'), false);
   assert.equal(answered('sakuga-agent[bot]'), true);
 });
+
+test('the bot that speaks again in a thread after the answer opens the finding again', () => {
+  const thread = (lastAuthor: string) => ({
+    author: KENTO,
+    body: `${badge('P1')} **Une redirection non refusée**`,
+    lastAuthor,
+  });
+  const answered = (lastAuthor: string) =>
+    findingsOf({
+      author: 'sakuga-agent[bot]',
+      body: '',
+      reviews: [],
+      comments: [],
+      openThreads: [thread(lastAuthor)],
+    })[0]!.answered;
+  assert.equal(answered('sakuga-agent[bot]'), true);
+  assert.equal(answered(KENTO), false);
+});

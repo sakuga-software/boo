@@ -228,6 +228,10 @@ const sameReview = (a: Reviewer, b: Reviewer) =>
   a.score?.score === b.score?.score &&
   a.score?.total === b.score?.total;
 
+// GitHub can give the threads in another order: the list of the findings with no answer is compared sorted.
+const findingsKey = ({ unanswered, ...counts }: PullRequestReport['findings']) =>
+  JSON.stringify({ ...counts, unanswered: unanswered.map((finding) => JSON.stringify(finding)).sort() });
+
 /** Returns the changes of one pull request between two reads. */
 export function changesOf(before: PullRequestReport, after: PullRequestReport, at: string): WatchEvent[] {
   const pr = `${after.repo}#${after.number}`;
@@ -255,7 +259,7 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
   // A read with the threads and a read without them count other findings: that is no change of the pull request.
   if (
     before.findings.threadsRead === after.findings.threadsRead &&
-    JSON.stringify(before.findings) !== JSON.stringify(after.findings)
+    findingsKey(before.findings) !== findingsKey(after.findings)
   )
     events.push({ at, pr, event: 'findings', ...after.findings });
   const restack = after.stack.restack;
