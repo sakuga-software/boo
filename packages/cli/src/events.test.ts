@@ -112,6 +112,7 @@ test('a change of the findings gives one findings event with the new counts', ()
       description: { count: 1, answered: 0 },
     },
     unanswered: [{ level: 'P2', place: 'description' as const, title: 'A', id: null }],
+    threadsRead: true,
   };
   assert.deepEqual(diffReports(byKey(report(1)), [report(1, { findings })], AT), [
     { at: AT, pr: 'acme/web#1', event: 'findings', ...findings },

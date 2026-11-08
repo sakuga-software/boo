@@ -30,6 +30,8 @@ export interface FindingsSummary {
   places: Record<FindingPlace, FindingCount>;
   /** The findings with no answer, in the order of their place: threads, reviews, description. */
   unanswered: { level: string; place: FindingPlace; title: string; id: string | null }[];
+  /** False if the read did not read the threads: `places.thread` then counts nothing that is known. */
+  threadsRead: boolean;
 }
 
 export interface FindingFacts {
@@ -139,7 +141,7 @@ export function findingsOf(facts: FindingFacts): Finding[] {
 
 const PLACES: readonly FindingPlace[] = ['thread', 'review', 'description'];
 
-export function summarizeFindings(findings: readonly Finding[]): FindingsSummary {
+export function summarizeFindings(findings: readonly Finding[], threadsRead = false): FindingsSummary {
   const count = (list: readonly Finding[]): FindingCount => ({
     count: list.length,
     answered: list.filter((finding) => finding.answered).length,
@@ -154,6 +156,7 @@ export function summarizeFindings(findings: readonly Finding[]): FindingsSummary
     unanswered: findings
       .filter((finding) => !finding.answered)
       .map(({ level, place, title, id }) => ({ level, place, title, id: id ?? null })),
+    threadsRead,
   };
 }
 

@@ -77,7 +77,8 @@ test('the findings of the threads, the last review of each bot and the descripti
       'description P1 open',
     ],
   );
-  const summary = summarizeFindings(findings);
+  const summary = summarizeFindings(findings, true);
+  assert.equal(summary.threadsRead, true);
   assert.deepEqual(summary.levels, {
     P1: { count: 2, answered: 1 },
     P2: { count: 4, answered: 2 },
@@ -125,6 +126,7 @@ test('a description with no block counts the whole text, and no badge gives no f
       description: { count: 0, answered: 0 },
     },
     unanswered: [],
+    threadsRead: false,
   });
 });
 
