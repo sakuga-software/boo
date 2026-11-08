@@ -61,6 +61,8 @@ const blockOf = (body: string) => {
   return end ? rest.slice(0, end.index) : rest;
 };
 
+// A short title, such as "Cache", can be in any comment: it needs the short ID to count as quoted.
+const MIN_QUOTE = 20;
 const sameLogin = (a: string, b: string) =>
   a.replace(/\[bot\]$/, '').toLowerCase() === b.replace(/\[bot\]$/, '').toLowerCase();
 // A quote of a title in an answer can drop the bold, the code marks and the case.
@@ -118,7 +120,7 @@ export function findingsOf(facts: FindingFacts): Finding[] {
       if (comment.created_at <= since) return false;
       const text = plain(comment.body);
       return (
-        (finding.title !== '' && text.includes(plain(finding.title))) ||
+        (plain(finding.title).length >= MIN_QUOTE && text.includes(plain(finding.title))) ||
         (finding.id !== undefined && text.includes(finding.id.toLowerCase()))
       );
     });
