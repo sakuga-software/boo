@@ -1,5 +1,6 @@
 import { displayName, isBotLogin } from './reviewers.js';
 import type { Comment, Review } from './decide.js';
+import { threadAnswered, type Finding, type FindingPlace } from './findings.js';
 
 /** The rules that a team adds to "ready to merge", from the `mergePolicy` of the settings file. */
 export interface MergePolicy {
@@ -26,6 +27,8 @@ export interface MergePolicy {
   ownerOnly?: { paths: string[]; owner: string };
   /** A review that a comment asks of a bot after its last review must come before the merge. */
   answeredReviewRequests?: boolean;
+  /** Each finding of a review bot with one of these levels, such as "P1", must have an answer: see findings.ts. */
+  answerFindings?: string[];
 }
 
 /**
@@ -37,7 +40,13 @@ export interface ReviewLevels {
   levels: string[];
 }
 
-export type PolicyRule = 'minScore' | 'requireProof' | 'resolvedBotThreads' | 'ownerOnly' | 'answeredReviewRequests';
+export type PolicyRule =
+  | 'minScore'
+  | 'requireProof'
+  | 'resolvedBotThreads'
+  | 'ownerOnly'
+  | 'answeredReviewRequests'
+  | 'answerFindings';
 
 /** A rule that the pull request misses, with the note that the details and the merge refusal show. */
 export interface PolicyMiss {
@@ -51,6 +60,10 @@ export interface OpenThread {
   author: string;
   /** The body of the last comment of the thread, if a bot wrote it. A reply of a person after the bot clears it. */
   lastBotComment?: string;
+  /** The body of the first comment: the finding of a bot. */
+  body?: string;
+  /** The author of the last comment. */
+  lastAuthor?: string;
 }
 
 /** The facts of a pull request that the rules read. */
@@ -66,6 +79,14 @@ export interface PolicyFacts {
   changedFiles?: number | undefined;
   /** The login of the user of boo, if GitHub gave it. */
   viewer?: string | undefined;
+  /** The author of the pull request: a reply of the author answers a bot thread. */
+  author?: string;
+  /** The logins of the agents of the settings: a reply of an agent answers a bot thread. */
+  agents?: readonly string[] | undefined;
+  /** False if the read did not read the threads: their findings are then unknown. */
+  threadsRead?: boolean;
+  /** The findings of the review bots. Only the `answerFindings` rule reads them. */
+  findings?: readonly Finding[];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -82,7 +103,7 @@ const compiles = (pattern: string) => {
 
 /** The parts of a pull request that the query reads for the policy: each one costs GraphQL points. */
 export const extraFields = (policy: MergePolicy | undefined) => ({
-  threads: Boolean(policy?.resolvedBotThreads),
+  threads: Boolean(policy?.resolvedBotThreads || policy?.answerFindings),
   files: Boolean(policy?.ownerOnly),
 });
 
@@ -141,6 +162,16 @@ export function parseMergePolicy(value: unknown): MergePolicy | undefined {
     if (paths.length > 0 && ownerOnly.owner.trim()) policy.ownerOnly = { paths, owner: ownerOnly.owner.trim() };
   }
   if (answeredReviewRequests === true) policy.answeredReviewRequests = true;
+  const levels = Array.isArray(value.answerFindings)
+    ? [
+        ...new Set(
+          value.answerFindings
+            .filter((level): level is string => typeof level === 'string' && /^p\d$/i.test(level.trim()))
+            .map((level) => level.trim().toUpperCase()),
+        ),
+      ]
+    : [];
+  if (levels.length > 0) policy.answerFindings = levels;
   return Object.keys(policy).length > 0 ? policy : undefined;
 }
 
@@ -325,6 +356,23 @@ export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comment
 }
 
 /**
+ * Counts the unresolved threads that a bot started: `open` has no answer, `answered` ends with a reply
+ * of the author or of an agent of the settings (see `threadAnswered`). A thread whose last bot comment has the
+ * gone marker counts as resolved.
+ */
+export function botThreads(
+  rule: NonNullable<MergePolicy['resolvedBotThreads']> | undefined,
+  facts: Pick<PolicyFacts, 'openThreads' | 'author' | 'agents'>,
+): { open: number; answered: number } {
+  const marker = rule && rule !== true ? rule.goneMarker : undefined;
+  const threads = facts.openThreads.filter(
+    (thread) => isBotLogin(thread.author) && !(marker && thread.lastBotComment?.includes(marker)),
+  );
+  const answered = threads.filter((thread) => threadAnswered(thread, facts.author ?? '', facts.agents)).length;
+  return { open: threads.length - answered, answered };
+}
+
+/**
  * The owner that the changed files of a pull request need, and these files. Undefined if the rule
  * `ownerOnly` names no file of the pull request. With more files than the query read, `partial` is true:
  * a file after them can be owned too.
@@ -345,7 +393,7 @@ export function ownerPathsOf(
 export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts): PolicyMiss[] {
   if (!policy) return [];
   const misses: PolicyMiss[] = [];
-  const { minScore, requireProof, resolvedBotThreads, ownerOnly, answeredReviewRequests } = policy;
+  const { minScore, requireProof, resolvedBotThreads, ownerOnly, answeredReviewRequests, answerFindings } = policy;
   if (minScore) {
     const { post, level } = scoreOf(minScore, facts);
     const from = `${level ? `${level} ` : ''}score from ${reviewerLogins(minScore)[0]}`;
@@ -364,11 +412,15 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
       misses.push({ rule: 'requireProof', note: 'no proof' });
   }
   if (resolvedBotThreads) {
-    const marker = resolvedBotThreads === true ? undefined : resolvedBotThreads.goneMarker;
-    const open = facts.openThreads.filter(
-      (thread) => isBotLogin(thread.author) && !(marker && thread.lastBotComment?.includes(marker)),
-    ).length;
-    if (open > 0) misses.push({ rule: 'resolvedBotThreads', note: `${open} open bot thread${open === 1 ? '' : 's'}` });
+    const { open, answered } = botThreads(resolvedBotThreads, facts);
+    const plural = (count: number) => (count === 1 ? '' : 's');
+    if (open > 0) misses.push({ rule: 'resolvedBotThreads', note: `${open} open bot thread${plural(open)}` });
+    // An answered thread waits only for a person who reads the answer and resolves the thread.
+    if (answered > 0)
+      misses.push({
+        rule: 'resolvedBotThreads',
+        note: `${answered} answered bot thread${plural(answered)} to resolve`,
+      });
   }
   if (ownerOnly && ownerOnly.owner !== '@me') {
     const patterns = ownerOnly.paths.map(globToRegExp);
@@ -385,5 +437,18 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
   if (answeredReviewRequests)
     for (const bot of unansweredRequests(facts, reviewerGroup(policy)))
       misses.push({ rule: 'answeredReviewRequests', note: `review asked of ${displayName(bot)}, no answer yet` });
+  // The query reads the threads with this rule. A read without them, from another run, cannot tell that no thread finding waits.
+  if (answerFindings && facts.threadsRead === false)
+    misses.push({ rule: 'answerFindings', note: 'threads not read: their findings are unknown' });
+  if (answerFindings) {
+    const places: FindingPlace[] = ['thread', 'review', 'description'];
+    for (const level of answerFindings)
+      for (const place of places) {
+        const open = (facts.findings ?? []).filter(
+          (finding) => finding.level === level && finding.place === place && !finding.answered,
+        ).length;
+        if (open > 0) misses.push({ rule: 'answerFindings', note: `${open} ${level} not answered (${place})` });
+      }
+  }
   return misses;
 }

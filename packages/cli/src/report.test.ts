@@ -66,6 +66,8 @@ test('the output keeps the same keys, in the same order', () => {
     'notes',
     'policy',
     'stale',
+    'findings',
+    'threads',
     'needsOwner',
     'readyForOwner',
   ]);
