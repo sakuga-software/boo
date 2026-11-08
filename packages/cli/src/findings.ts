@@ -87,6 +87,19 @@ export function findingsIn(text: string): { level: string; title: string; id?: s
 }
 
 /**
+ * True if a comment of this login answers a bot: the author of the pull request, or an agent of the
+ * settings. A person who discusses a finding does not answer it for the author.
+ */
+export const answersBots = (login: string, author: string, agents: readonly string[] = []): boolean =>
+  sameLogin(login, author) || agents.some((agent) => sameLogin(agent, login));
+
+/** True if the last comment of a thread answers its first one (see `answersBots`). */
+export function threadAnswered(thread: OpenThread, author: string, agents: readonly string[] = []): boolean {
+  const last = thread.lastAuthor;
+  return Boolean(last && !sameLogin(last, thread.author) && answersBots(last, author, agents));
+}
+
+/**
  * Finds the findings of the review bots, and tells if each one has an answer:
  * - a finding of an open thread has an answer if the last comment of the thread answers (see `answers`);
  * - a finding of the last review of a bot, or of the description, has an answer if a comment that is
@@ -96,15 +109,12 @@ export function findingsIn(text: string): { level: string; title: string; id?: s
 export function findingsOf(facts: FindingFacts): Finding[] {
   const findings: Finding[] = [];
   // An answer comes from the author of the pull request or from an agent of the settings, as #78 and #79 ask.
-  // A person who discusses a finding does not answer it for the author.
-  const answers = (login: string) =>
-    sameLogin(login, facts.author) || (facts.agents ?? []).some((agent) => sameLogin(agent, login));
+  const answers = (login: string) => answersBots(login, facts.author, facts.agents);
   for (const thread of facts.openThreads ?? []) {
     // A thread of the author or of an agent is no finding of a review bot, even with a badge.
     if (!isBotLogin(thread.author) || answers(thread.author) || !thread.body) continue;
     // A reply of a review bot, a CI bot or another person is no answer: only the author or an agent answers.
-    const last = thread.lastAuthor;
-    const answered = Boolean(last && !sameLogin(last, thread.author) && answers(last));
+    const answered = threadAnswered(thread, facts.author, facts.agents);
     // A bot usually posts one finding per thread, but each badge of the first comment counts.
     for (const finding of findingsIn(thread.body))
       findings.push({ ...finding, place: 'thread', bot: thread.author, answered });

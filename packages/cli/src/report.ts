@@ -175,6 +175,11 @@ export interface PullRequestReport {
    * answer. The threads count only if the read reads them: see `resolvedBotThreads` and `answerFindings`.
    */
   findings: FindingsSummary;
+  /**
+   * The unresolved threads that a bot started: `open` with no answer, `answered` with a reply of the
+   * author or of an agent, that waits for a person to resolve it. Null if the read did not read the threads.
+   */
+  threads: { open: number; answered: number } | null;
 }
 
 export type CoderabbitNote =
@@ -329,6 +334,7 @@ export function buildReport(
       policy: summary?.policy ?? [],
       stale: snapshot?.stale ? { at: snapshot.stale.at, until: snapshot.stale.until ?? null } : null,
       findings: summary?.findings ?? summarizeFindings([]),
+      threads: summary?.threads ?? null,
     };
   });
 }

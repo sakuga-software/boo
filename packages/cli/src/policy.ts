@@ -1,6 +1,6 @@
 import { displayName, isBotLogin } from './reviewers.js';
 import type { Comment, Review } from './decide.js';
-import type { Finding, FindingPlace } from './findings.js';
+import { threadAnswered, type Finding, type FindingPlace } from './findings.js';
 
 /** The rules that a team adds to "ready to merge", from the `mergePolicy` of the settings file. */
 export interface MergePolicy {
@@ -79,6 +79,10 @@ export interface PolicyFacts {
   changedFiles?: number | undefined;
   /** The login of the user of boo, if GitHub gave it. */
   viewer?: string | undefined;
+  /** The author of the pull request: a reply of the author answers a bot thread. */
+  author?: string;
+  /** The logins of the agents of the settings: a reply of an agent answers a bot thread. */
+  agents?: readonly string[] | undefined;
   /** False if the read did not read the threads: their findings are then unknown. */
   threadsRead?: boolean;
   /** The findings of the review bots. Only the `answerFindings` rule reads them. */
@@ -351,6 +355,23 @@ export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comment
     : bots;
 }
 
+/**
+ * Counts the unresolved threads that a bot started: `open` has no answer, `answered` ends with a reply
+ * of the author or of an agent of the settings (see `threadAnswered`). A thread whose last bot comment has the
+ * gone marker counts as resolved.
+ */
+export function botThreads(
+  rule: NonNullable<MergePolicy['resolvedBotThreads']> | undefined,
+  facts: Pick<PolicyFacts, 'openThreads' | 'author' | 'agents'>,
+): { open: number; answered: number } {
+  const marker = rule && rule !== true ? rule.goneMarker : undefined;
+  const threads = facts.openThreads.filter(
+    (thread) => isBotLogin(thread.author) && !(marker && thread.lastBotComment?.includes(marker)),
+  );
+  const answered = threads.filter((thread) => threadAnswered(thread, facts.author ?? '', facts.agents)).length;
+  return { open: threads.length - answered, answered };
+}
+
 /** Returns the rules of the policy that the pull request misses, in the order of the settings file. */
 export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts): PolicyMiss[] {
   if (!policy) return [];
@@ -374,11 +395,15 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
       misses.push({ rule: 'requireProof', note: 'no proof' });
   }
   if (resolvedBotThreads) {
-    const marker = resolvedBotThreads === true ? undefined : resolvedBotThreads.goneMarker;
-    const open = facts.openThreads.filter(
-      (thread) => isBotLogin(thread.author) && !(marker && thread.lastBotComment?.includes(marker)),
-    ).length;
-    if (open > 0) misses.push({ rule: 'resolvedBotThreads', note: `${open} open bot thread${open === 1 ? '' : 's'}` });
+    const { open, answered } = botThreads(resolvedBotThreads, facts);
+    const plural = (count: number) => (count === 1 ? '' : 's');
+    if (open > 0) misses.push({ rule: 'resolvedBotThreads', note: `${open} open bot thread${plural(open)}` });
+    // An answered thread waits only for a person who reads the answer and resolves the thread.
+    if (answered > 0)
+      misses.push({
+        rule: 'resolvedBotThreads',
+        note: `${answered} answered bot thread${plural(answered)} to resolve`,
+      });
   }
   if (ownerOnly && ownerOnly.owner !== '@me') {
     const patterns = ownerOnly.paths.map(globToRegExp);

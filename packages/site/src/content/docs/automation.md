@@ -22,7 +22,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
   "mergedBy": null,
   "mergedAt": null,
   "error": null,
-  "checks": { "passed": 8, "failing": ["Migrations"], "running": 0, "skipped": 1, "quota": 0 },
+  "checks": { "passed": 8, "failing": ["Migrations"], "running": 0, "skipped": 1, "quota": 0, "reviewerErrors": [] },
   "reviewers": [
     {
       "login": "greptile-apps[bot]",
@@ -51,8 +51,21 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
     "retries": [{ "bot": "Copilot", "at": "2026-10-24T10:00:00.000Z" }],
     "coderabbit": null
   },
-  "policy": [],
-  "stale": null
+  "policy": [{ "rule": "resolvedBotThreads", "note": "1 answered bot thread to resolve" }],
+  "stale": null,
+  "findings": {
+    "count": 1,
+    "answered": 1,
+    "levels": { "P2": { "count": 1, "answered": 1 } },
+    "places": {
+      "thread": { "count": 1, "answered": 1 },
+      "review": { "count": 0, "answered": 0 },
+      "description": { "count": 0, "answered": 0 }
+    },
+    "unanswered": [],
+    "threadsRead": true
+  },
+  "threads": { "open": 0, "answered": 1 }
 }
 ```
 
@@ -77,6 +90,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
 | `notes.coderabbit`       | The CodeRabbit quota: `wait` with `availableAt`, `trigger`, `pending`, `skipped`, `paused`, `idle`, or `null`.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `stale`                  | `{ "at", "until" }` if GitHub refused the query for a rate limit: the other keys then give the last read that worked, at `at`, and `until` is the time that GitHub answers again (or `null`). `null` for a read of now. See [Quotas and retries](../quotas/).                                                                                                                                                                                                                                                                                     |
 | `findings`               | The findings of the review bots, with a level badge (`P1`, `P2`…): `count` and `answered`, then the same counts by level in `levels` and by place in `places` (`thread`, `review`, `description`), and `unanswered`, a list of `{ "level", "place", "title", "id" }`. `threadsRead` is `false` if the read did not read the threads: `places.thread` then knows nothing. See [`answerFindings`](../merge-policy/) for what a finding and an answer are. The threads count only if the read reads them (`resolvedBotThreads` or `answerFindings`). |
+| `threads`                | The unresolved review threads that a bot started, as `{ "open", "answered" }`: `open` has no answer; `answered` ends with a reply of the author or of an agent of `authors`, and waits for a person to resolve it. A thread that the bot marks gone does not count. `null` if the read did not read the threads (`resolvedBotThreads` or `answerFindings`).                                                                                                                                                                                       |
 | `policy`                 | The rules of the merge policy that the pull request misses, as `{ "rule", "note" }`: `minScore`, `requireProof`, `resolvedBotThreads`, `ownerOnly`, `answeredReviewRequests`, `answerFindings`. Empty with no policy.                                                                                                                                                                                                                                                                                                                             |
 
 The keys stay the same from one version to the next. A test fixes them.

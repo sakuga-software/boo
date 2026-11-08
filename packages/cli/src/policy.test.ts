@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Comment, Review } from './decide.js';
-import { globToRegExp, parseMergePolicy, policyMisses, unansweredRequests, type PolicyFacts } from './policy.js';
+import {
+  botThreads,
+  globToRegExp,
+  parseMergePolicy,
+  policyMisses,
+  unansweredRequests,
+  type PolicyFacts,
+} from './policy.js';
 import { parseSettings } from './settings.js';
 
 const at = (minutes: number) => new Date(Date.parse('2026-10-24T12:00:00Z') - minutes * 60_000).toISOString();
@@ -267,4 +274,33 @@ test('the settings drop a rule with an invalid field, and keep the others', () =
   });
   assert.equal(parseMergePolicy({ resolvedBotThreads: { goneMarker: '' } }), undefined);
   assert.equal(parseMergePolicy({ resolvedBotThreads: false }), undefined);
+});
+
+test('an answered bot thread is told apart from an open one: only a person can resolve it now', () => {
+  const policy = { resolvedBotThreads: true } as const;
+  const openThreads = [
+    { author: SAKUGA, lastAuthor: SAKUGA },
+    { author: SAKUGA, lastAuthor: 'sakuga-agent[bot]' },
+    { author: SAKUGA, lastAuthor: 'mathieu' },
+    { author: SAKUGA, lastAuthor: 'coderabbitai[bot]' },
+  ];
+  assert.deepEqual(policyMisses(policy, facts({ openThreads, author: 'sakuga-agent[bot]' })), [
+    { rule: 'resolvedBotThreads', note: '3 open bot threads' },
+    { rule: 'resolvedBotThreads', note: '1 answered bot thread to resolve' },
+  ]);
+  // On a pull request of a person, the agent answers only if the settings list it.
+  assert.deepEqual(policyMisses(policy, facts({ openThreads: [openThreads[1]!], author: 'mathieu' })), [
+    { rule: 'resolvedBotThreads', note: '1 open bot thread' },
+  ]);
+  const agents = ['sakuga-agent[bot]'];
+  assert.deepEqual(policyMisses(policy, facts({ openThreads: [openThreads[1]!], author: 'mathieu', agents })), [
+    { rule: 'resolvedBotThreads', note: '1 answered bot thread to resolve' },
+  ]);
+  // Each case on its own thread: the reply of mathieu answers only on his own pull request.
+  const byMathieu = [openThreads[2]!];
+  assert.deepEqual(botThreads(true, { openThreads: byMathieu, author: 'mathieu' }), { open: 0, answered: 1 });
+  assert.deepEqual(botThreads(true, { openThreads: byMathieu, author: 'sakuga-agent[bot]' }), { open: 1, answered: 0 });
+  const byAgent = [openThreads[1]!];
+  assert.deepEqual(botThreads(true, { openThreads: byAgent, author: 'sakuga-agent[bot]' }), { open: 0, answered: 1 });
+  assert.deepEqual(botThreads(true, { openThreads: byAgent, author: 'mathieu' }), { open: 1, answered: 0 });
 });

@@ -9,7 +9,7 @@ import {
   type Verdict,
 } from './decide.js';
 import { findingsOf, summarizeFindings, type FindingsSummary } from './findings.js';
-import { policyMisses, type MergePolicy, type OpenThread, type PolicyMiss } from './policy.js';
+import { botThreads, policyMisses, type MergePolicy, type OpenThread, type PolicyMiss } from './policy.js';
 
 export type CheckState = 'pending' | 'success' | 'failure' | 'skipped';
 
@@ -395,6 +395,8 @@ export interface Summary {
   policy: PolicyMiss[];
   /** The findings of the review bots, and their answers. */
   findings: FindingsSummary;
+  /** The unresolved bot threads, with no answer and answered. Undefined if the read did not read the threads. */
+  threads?: { open: number; answered: number };
 }
 
 /**
@@ -437,6 +439,8 @@ export function summarize(facts: PullRequestFacts): Summary {
     files: facts.files,
     changedFiles: facts.changes?.files,
     viewer: facts.viewer,
+    author: facts.author,
+    agents: facts.agents,
     threadsRead: facts.openThreads !== undefined,
     findings,
   });
@@ -457,6 +461,13 @@ export function summarize(facts: PullRequestFacts): Summary {
     ...(last && { lastReview: { name: last.name, at: last.lastReviewAt! } }),
     policy,
     findings: summarizeFindings(findings, facts.openThreads !== undefined),
+    ...(facts.openThreads && {
+      threads: botThreads(facts.policy?.resolvedBotThreads, {
+        openThreads: facts.openThreads,
+        author: facts.author,
+        agents: facts.agents,
+      }),
+    }),
   };
 }
 
