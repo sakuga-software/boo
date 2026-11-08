@@ -199,7 +199,9 @@ export interface PullRequestSnapshot {
 
 const reviewFields = (lineComments?: boolean) =>
   `author { login __typename } state submittedAt body commit { oid } comments(first: 10) { totalCount nodes { replyTo { id }${lineComments ? ' databaseId body createdAt' : ''} } }`;
-const COMMENT_FIELDS = 'databaseId author { login __typename } body createdAt updatedAt';
+// The reactions cost no GraphQL point: a review bot answers a request with 👀, or with 😕 when it fails.
+const COMMENT_FIELDS =
+  'databaseId author { login __typename } body createdAt updatedAt reactionGroups { content reactors { totalCount } }';
 const CONTEXT_FIELDS =
   '__typename ... on CheckRun { name status conclusion checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state description }';
 const OLDER = 'pageInfo { hasPreviousPage startCursor }';
@@ -293,6 +295,7 @@ interface CommentNode {
   body: string;
   createdAt: string;
   updatedAt: string;
+  reactionGroups?: { content: string; reactors: { totalCount: number } }[] | null;
 }
 
 interface ReviewNode {
@@ -390,6 +393,9 @@ function toComment(node: CommentNode): Comment {
     body: node.body,
     created_at: node.createdAt,
     updated_at: node.updatedAt,
+    ...(node.reactionGroups && {
+      reactions: node.reactionGroups.filter((group) => group.reactors.totalCount > 0).map((group) => group.content),
+    }),
   };
 }
 

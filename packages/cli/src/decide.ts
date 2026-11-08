@@ -12,6 +12,8 @@ export interface Comment {
   body: string;
   created_at: string;
   updated_at: string;
+  /** The reactions that the comment has, such as "EYES" or "CONFUSED". Undefined if the read did not give them. */
+  reactions?: string[];
 }
 
 export interface Review {

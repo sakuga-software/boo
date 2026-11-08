@@ -257,53 +257,71 @@ const lastReviewOf = (reviews: readonly Review[], counts: (login: string) => boo
     .filter((review) => review.user && counts(review.user.login))
     .reduce((last, review) => (review.submitted_at > last ? review.submitted_at : last), '');
 
-/**
- * True if a comment asks the group for a review after its last review: a line starts with a mention of
- * the group, then a level, or a text with the word "review". "@kento-review reject …" is not a request.
- */
-function asksGroup(group: ReviewerGroup, facts: Pick<PolicyFacts, 'reviews' | 'comments'>): boolean {
-  const member = (login: string) => group.logins.some((other) => sameLogin(login, other));
-  const lastReview = lastReviewOf(facts.reviews, member);
-  const mentions = [...group.commands, ...group.logins.map((login) => `@${login.replace(/\[bot\]$/, '')}`)];
-  const line = new RegExp(`^\\s*(?:${mentions.map(escape).join('|')})(?![\\w-])([^\\n]*)`, 'gim');
-  // A level counts only as the first word after the mention: "@kento-review the lite mode works" is no request.
-  const level = new RegExp(`^\\s*(?:${group.levels.map(escape).join('|') || '(?!)'})\\b`, 'i');
-  const asks = (rest: string) => /\breview\b/i.test(rest) || level.test(rest);
-  return facts.comments.some(
-    (post) =>
-      post.user &&
-      !member(post.user.login) &&
-      post.created_at > lastReview &&
-      [...post.body.matchAll(line)].some((match) => asks(match[1]!)),
-  );
+/** A comment that asks a bot for a review. `bot` names the bot, and `member` tells if a login is that bot. */
+export interface ReviewRequest {
+  comment: Comment;
+  bot: string;
+  member: (login: string) => boolean;
 }
 
 /**
- * The bots that a comment asks for a review after their last review, such as "@sakuga-review review
- * balanced". A line of the comment must start with the mention and contain the word "review". A thank
- * you to the bot is not a request. The author of the comment must not be that bot: a
- * bot can quote its own command. An agent can post as a bot, so a request of another bot counts. A
- * bot is a bot login of a review or a comment of the pull request.
- * The logins of `group` count as one bot, named by its first login: a review of one login answers a
- * request to another, and a command of the group asks all of them.
+ * The comments that ask a bot for a review, from the oldest to the newest, such as "@sakuga-review
+ * review balanced". A line of the comment must start with the mention and contain the word "review".
+ * A thank you to the bot is not a request. The author of the comment must not be that bot: a bot can
+ * quote its own command. An agent can post as a bot, so a request of another bot counts. A bot is a
+ * bot login of a review or a comment of the pull request.
+ * The logins of `group` count as one bot, named by its first login: a command of the group asks all
+ * of them. For the group, a level right after the mention also asks: "@kento-review heavy".
+ * "@kento-review reject …" is not a request.
  */
-export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comments'>, group?: ReviewerGroup): string[] {
-  const member = (login: string) => Boolean(group?.logins.some((other) => sameLogin(login, other)));
+export function reviewRequests(
+  facts: Pick<PolicyFacts, 'reviews' | 'comments'>,
+  group?: ReviewerGroup,
+): ReviewRequest[] {
+  const inGroup = (login: string) => Boolean(group?.logins.some((other) => sameLogin(login, other)));
   const logins = [
     ...facts.reviews.map((review) => review.user?.login),
     ...facts.comments.map((post) => post.user?.login),
   ];
   const bots = [
-    ...new Set(logins.filter((login): login is string => Boolean(login) && isBotLogin(login!) && !member(login!))),
+    ...new Set(logins.filter((login): login is string => Boolean(login) && isBotLogin(login!) && !inGroup(login!))),
   ];
-  const asked = bots.filter((bot) => {
-    const lastReview = lastReviewOf(facts.reviews, (login) => login === bot);
-    const mention = new RegExp(`^\\s*@${escape(bot.replace(/\[bot\]$/, ''))}(?![\\w-])[^\\n]*\\breview\\b`, 'im');
-    return facts.comments.some(
-      (post) => post.user && post.user.login !== bot && post.created_at > lastReview && mention.test(post.body),
-    );
-  });
-  return group && asksGroup(group, facts) ? [group.logins[0]!, ...asked] : asked;
+  const askers: { bot: string; member: (login: string) => boolean; asks: (body: string) => boolean }[] = bots.map(
+    (bot) => {
+      const mention = new RegExp(`^\\s*@${escape(bot.replace(/\[bot\]$/, ''))}(?![\\w-])[^\\n]*\\breview\\b`, 'im');
+      return { bot, member: (login: string) => login === bot, asks: (body: string) => mention.test(body) };
+    },
+  );
+  if (group) {
+    const mentions = [...group.commands, ...group.logins.map((login) => `@${login.replace(/\[bot\]$/, '')}`)];
+    const line = new RegExp(`^\\s*(?:${mentions.map(escape).join('|')})(?![\\w-])([^\\n]*)`, 'gim');
+    // A level counts only as the first word after the mention: "@kento-review the lite mode works" is no request.
+    const level = new RegExp(`^\\s*(?:${group.levels.map(escape).join('|') || '(?!)'})\\b`, 'i');
+    const asks = (rest: string) => /\breview\b/i.test(rest) || level.test(rest);
+    askers.unshift({
+      bot: group.logins[0]!,
+      member: inGroup,
+      asks: (body: string) => [...body.matchAll(line)].some((match) => asks(match[1]!)),
+    });
+  }
+  return facts.comments
+    .flatMap((comment) =>
+      askers
+        .filter(({ member, asks }) => comment.user && !member(comment.user.login) && asks(comment.body))
+        .map(({ bot, member }) => ({ comment, bot, member })),
+    )
+    .sort((a, b) => a.comment.created_at.localeCompare(b.comment.created_at));
+}
+
+/** The bots that a comment asks for a review after their last review (see `reviewRequests`), the group first. */
+export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comments'>, group?: ReviewerGroup): string[] {
+  const asked = reviewRequests(facts, group).filter(
+    ({ comment, member }) => comment.created_at > lastReviewOf(facts.reviews, member),
+  );
+  const bots = [...new Set(asked.map(({ bot }) => bot))];
+  return group && bots.includes(group.logins[0]!)
+    ? [group.logins[0]!, ...bots.filter((bot) => bot !== group.logins[0])]
+    : bots;
 }
 
 /** Returns the rules of the policy that the pull request misses, in the order of the settings file. */

@@ -5,6 +5,8 @@ import {
   holdErrors,
   newComments,
   personComments,
+  requestChanges,
+  requestStates,
   watchEvents,
   type WatchEvent,
   type WatchSources,
@@ -417,5 +419,107 @@ test('the watch gives no comment event at the first read of a pull request, then
   assert.deepEqual(
     events.map((event) => (event.event === 'comment' ? `comment ${event.body}` : event.event)),
     ['snapshot', 'comment c2'],
+  );
+});
+
+const KENTO_FAILURE = [
+  '**Kentō · review en échec** au commit `abd322508`',
+  '',
+  'La review `balanced` de ce commit a échoué : Kentō ne la relancera pas seul.',
+  '',
+  'Raison : `no model gave a usable answer: ProviderError: Anthropic answered 400: {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits."}}`',
+].join('\n');
+
+test('a review asked by comment is asked, acknowledged, failed, answered or stale', () => {
+  const at = (minute: number) => `2026-11-08T17:${String(minute).padStart(2, '0')}:00Z`;
+  const ask = (reactions: string[] = [], body = '@kento-review balanced') => ({
+    id: 1,
+    user: { login: 'Mheaus' },
+    body,
+    created_at: at(22),
+    updated_at: at(22),
+    reactions,
+  });
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    mergePolicy: {
+      minScore: {
+        reviewer: ['kento-review', 'sakuga-review'],
+        score: 4,
+        onHead: true,
+        deepest: { pattern: 'Niveau `(\\w+)`', levels: ['lite', 'balanced', 'heavy'] },
+      },
+    },
+  };
+  const kentoReview = {
+    user: { login: 'kento-review[bot]' },
+    commit_id: 'abc',
+    submitted_at: at(30),
+    state: 'APPROVED',
+    body: 'Score de confiance : 4/5',
+  };
+  const failure = {
+    id: 2,
+    user: { login: 'kento-review[bot]' },
+    body: KENTO_FAILURE,
+    created_at: at(23),
+    updated_at: at(23),
+  };
+  const outcome = (patch: Partial<PullRequestSnapshot>, minute = 25) =>
+    requestStates({ reviews: [], comments: [ask()], ...patch }, settings, new Date(at(minute))).map(
+      (state) => state.outcome,
+    );
+  assert.deepEqual(outcome({}), ['asked']);
+  assert.deepEqual(outcome({}, 38), ['stale']);
+  assert.deepEqual(outcome({ comments: [ask(['EYES'])] }, 38), ['acknowledged']);
+  assert.deepEqual(outcome({ comments: [ask(['EYES', 'CONFUSED'])] }), ['failed']);
+  assert.deepEqual(outcome({ reviews: [kentoReview], comments: [ask(['EYES'])] }, 40), ['answered']);
+  const [failed] = requestStates({ reviews: [], comments: [ask(['EYES']), failure] }, settings, new Date(at(25)));
+  assert.deepEqual(failed, {
+    id: 'comment:1',
+    bot: 'kento-review',
+    author: 'Mheaus',
+    createdAt: at(22),
+    body: '@kento-review balanced',
+    outcome: 'failed',
+    reason:
+      'Raison : no model gave a usable answer: ProviderError: Anthropic answered 400: {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits."}}',
+  });
+  assert.deepEqual(outcome({ comments: [ask([], 'Thanks @kento-review for the review.')] }), []);
+});
+
+test('a review request gives review-request events when its outcome changes, and no comment event', () => {
+  const ask = {
+    id: 5,
+    user: { login: 'octocat' },
+    body: '@coderabbitai review',
+    created_at: '2026-10-24T11:00:00Z',
+    updated_at: '2026-10-24T11:00:00Z',
+  };
+  const remark = { ...ask, id: 6, body: 'Why this?' };
+  const bot = {
+    id: 7,
+    user: { login: 'coderabbitai[bot]' },
+    body: 'Walkthrough',
+    created_at: '2026-10-24T10:00:00Z',
+    updated_at: '2026-10-24T10:00:00Z',
+  };
+  const read = snapshot({ author: 'me', comments: [bot, ask, remark] });
+  const states = requestStates(read, DEFAULT_SETTINGS, new Date('2026-10-24T11:05:00Z'));
+  assert.deepEqual(
+    personComments(read, {}, new Set(states.map(({ id }) => id))).map(({ body }) => body),
+    ['Why this?'],
+  );
+  const known = new Map();
+  const first = requestChanges('acme/web#1', states, known, AT);
+  assert.deepEqual(
+    first.map((event) => event.event === 'review-request' && [event.bot, event.outcome]),
+    [['coderabbitai[bot]', 'asked']],
+  );
+  assert.deepEqual(requestChanges('acme/web#1', states, known, AT), []);
+  const later = requestStates(read, DEFAULT_SETTINGS, new Date('2026-10-24T11:20:00Z'));
+  assert.deepEqual(
+    requestChanges('acme/web#1', later, known, AT).map((event) => event.event === 'review-request' && event.outcome),
+    ['stale'],
   );
 });

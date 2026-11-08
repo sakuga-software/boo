@@ -34,6 +34,14 @@ organization of `--org`. With no `repos`, the tool lists every repository of the
 { "repos": ["boo", "acme/web"] }
 ```
 
+The key `reviewRequestTimeoutMinutes` (15 by default) is the time after which a review asked by
+comment, with no reaction and no review, is `stale` in the events: see
+[Scripts and orchestrators](../automation/).
+
+```json
+{ "reviewRequestTimeoutMinutes": 15 }
+```
+
 ## Review bots
 
 The settings list the review bots of the action bar, with their key, the way the tool asks them, and

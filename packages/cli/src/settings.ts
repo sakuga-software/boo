@@ -53,6 +53,8 @@ export type Settings = Record<SettingKey, boolean> & {
   agentPrompts: Record<string, string>;
   /** A red pull request with no working session and no new commit for this time is stalled. */
   stalledAfterMinutes: number;
+  /** A review asked by comment with no reaction and no review after this time is `stale` in the events. */
+  reviewRequestTimeoutMinutes: number;
   /** The rules that a team adds before "ready to merge". */
   mergePolicy?: MergePolicy;
 };
@@ -66,6 +68,7 @@ export const DEFAULT_SETTINGS: Settings = {
   customBots: [],
   agentPrompts: {},
   stalledAfterMinutes: 30,
+  reviewRequestTimeoutMinutes: 15,
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -166,6 +169,9 @@ export function parseSettings(value: unknown): Settings {
   const stalledAfter = (value as Record<string, unknown>).stalledAfterMinutes;
   if (typeof stalledAfter === 'number' && Number.isInteger(stalledAfter) && stalledAfter > 0)
     settings.stalledAfterMinutes = stalledAfter;
+  const requestTimeout = (value as Record<string, unknown>).reviewRequestTimeoutMinutes;
+  if (typeof requestTimeout === 'number' && Number.isInteger(requestTimeout) && requestTimeout > 0)
+    settings.reviewRequestTimeoutMinutes = requestTimeout;
   for (const { key } of SETTINGS) {
     const stored = (value as Record<string, unknown>)[key];
     if (typeof stored === 'boolean') settings[key] = stored;

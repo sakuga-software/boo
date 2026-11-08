@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
+import { reviewerGroup, reviewRequests } from './policy.js';
 import { isBotLogin } from './reviewers.js';
 import { buildReport, keyOf, type PullRequestReport, type ReportInput } from './report.js';
 import type { Owner } from './sessions.js';
@@ -17,7 +18,99 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
+  | ({ event: 'review-request' } & Omit<RequestState, 'id'>)
 );
+
+/**
+ * Where a review asked by comment stands, from the first that applies:
+ * - `answered`: a review of the bot came after the comment;
+ * - `failed`: the bot put 😕 on the comment, or posted a comment after it that says it failed;
+ * - `acknowledged`: the bot put 👀 on the comment;
+ * - `stale`: no reaction and no review after `reviewRequestTimeoutMinutes`;
+ * - `asked`: none of these yet.
+ */
+export type RequestOutcome = 'asked' | 'acknowledged' | 'failed' | 'answered' | 'stale';
+
+/** A comment that asks a bot for a review, and where it stands. `reason` gives the cause of a failure. */
+export interface RequestState {
+  id: string;
+  bot: string;
+  author: string;
+  createdAt: string;
+  body: string;
+  outcome: RequestOutcome;
+  reason?: string;
+}
+
+// The words of a failure in the first paragraph of a bot comment: "**Kentō · review en échec**", "quota", "usage limit".
+const FAILURE = /échec|\bfail(?:ed|ure)?\b|\berror\b|quota|rate.limit|limit reached|unable to review|usage limit/i;
+const REASON_LENGTH = 300;
+const clip = (text: string, length: number) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
+
+/** The line of a failure comment that gives its cause, such as "Raison : `…`", else its first paragraph. */
+function reasonOf(body: string): string {
+  const line = body.split('\n').find((text) => /^\s*(?:raison|reason|cause|error)\b/i.test(text.replace(/[*_`]/g, '')));
+  const text = (line ?? body.trimStart().split(/\n\s*\n/)[0]!).replace(/[*`]/g, '').replace(/\s+/g, ' ').trim();
+  return clip(text, REASON_LENGTH);
+}
+
+/** Gives each review asked by comment on the pull request, with where it stands at `now`. */
+export function requestStates(
+  snapshot: Pick<PullRequestSnapshot, 'reviews' | 'comments'>,
+  settings: Pick<Settings, 'mergePolicy' | 'reviewRequestTimeoutMinutes'>,
+  now: Date,
+): RequestState[] {
+  return reviewRequests(snapshot, reviewerGroup(settings.mergePolicy)).map(({ comment, bot, member }) => {
+    const after = (at: string) => at > comment.created_at;
+    const reactions = comment.reactions ?? [];
+    const answered = snapshot.reviews.some(
+      (review) => review.user && member(review.user.login) && !review.threadReply && after(review.submitted_at),
+    );
+    const failure = snapshot.comments.find(
+      (post) =>
+        post.user &&
+        member(post.user.login) &&
+        after(post.created_at) &&
+        FAILURE.test(post.body.trimStart().split(/\n\s*\n/)[0]!),
+    );
+    const minutes = (now.getTime() - Date.parse(comment.created_at)) / 60_000;
+    const failed = Boolean(failure) || reactions.includes('CONFUSED');
+    const outcome = ((): RequestOutcome => {
+      if (answered) return 'answered';
+      if (failed) return 'failed';
+      if (reactions.includes('EYES')) return 'acknowledged';
+      return reactions.length === 0 && minutes >= settings.reviewRequestTimeoutMinutes ? 'stale' : 'asked';
+    })();
+    return {
+      id: `comment:${comment.id ?? comment.created_at}`,
+      bot,
+      author: comment.user!.login,
+      createdAt: comment.created_at,
+      body: clip(comment.body, BODY_LENGTH),
+      outcome,
+      ...(outcome === 'failed' && { reason: failure ? reasonOf(failure.body) : 'the bot reacted with 😕' }),
+    };
+  });
+}
+
+/**
+ * Gives one `review-request` event for each request whose outcome is new, and keeps the outcomes in
+ * `known`. A request that `known` does not hold is new too.
+ */
+export function requestChanges(
+  pr: string,
+  states: readonly RequestState[],
+  known: Map<string, RequestOutcome>,
+  at: string,
+): WatchEvent[] {
+  const events: WatchEvent[] = [];
+  for (const { id, ...state } of states) {
+    if (known.get(id) === state.outcome) continue;
+    known.set(id, state.outcome);
+    events.push({ at, pr, event: 'review-request', ...state });
+  }
+  return events;
+}
 
 /** A comment of a person on a pull request: a conversation comment, the body of a review, or a line comment. */
 export interface PersonComment {
@@ -38,6 +131,8 @@ const BODY_LENGTH = 200;
 export function personComments(
   snapshot: PullRequestSnapshot,
   { ignoreLogins = [], ignoreMarkers = [] }: Partial<NonNullable<Settings['commentEvents']>> = {},
+  /** The comments that are not remarks: the review requests, which give `review-request` events. */
+  commands: ReadonlySet<string> = new Set(),
 ): PersonComment[] {
   const skip = new Set([snapshot.author, ...ignoreLogins].map((login) => login.toLowerCase()));
   const person = (login: string | undefined): login is string =>
@@ -67,7 +162,9 @@ export function personComments(
     for (const line of review.lineComments ?? [])
       comments.push({ id: `line:${line.id}`, author, createdAt: line.created_at, body: line.body, thread: true });
   }
-  return comments.filter(({ body }) => !marked(body)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return comments
+    .filter(({ id, body }) => !marked(body) && !commands.has(id))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 /** Gives one `comment` event for each comment of a person that `seen` does not hold, and adds it to `seen`. */
@@ -260,6 +357,8 @@ export async function watchEvents(
   let tracked = new Map<string, PullRequest>();
   // The comments of people that the watch knows, by pull request. The first read of a pull request gives no comment event.
   const seenComments = new Map<string, Set<string>>();
+  // The outcome of each review request that the watch knows, by pull request. The first read gives no event either.
+  const seenRequests = new Map<string, Map<string, RequestOutcome>>();
   while (!signal.aborted) {
     try {
       const listed = await sources.listPullRequests();
@@ -287,10 +386,14 @@ export async function watchEvents(
       for (const { pr, snapshot } of inputs) {
         if (snapshot?.status !== 'open') continue;
         const key = keyOf(pr);
-        const comments = personComments(snapshot, settings.commentEvents);
+        const requests = requestStates(snapshot, settings, now);
+        const comments = personComments(snapshot, settings.commentEvents, new Set(requests.map(({ id }) => id)));
         const seen = seenComments.get(key);
         if (seen) events.push(...newComments(key, comments, seen, now.toISOString()));
         else seenComments.set(key, new Set(comments.map((comment) => comment.id)));
+        const outcomes = seenRequests.get(key);
+        if (outcomes) events.push(...requestChanges(key, requests, outcomes, now.toISOString()));
+        else seenRequests.set(key, new Map(requests.map(({ id, outcome }) => [id, outcome])));
       }
       for (const event of events) {
         if (signal.aborted) return;
