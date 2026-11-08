@@ -908,3 +908,35 @@ test('a draft that the list keeps gives changes, not a left event', () => {
     ['left'],
   );
 });
+
+test('with drafts shown, a draft that leaves the search gives the left event of its new state', async () => {
+  const settings = { ...DEFAULT_SETTINGS, drafts: 'show' as const };
+  const reads: { listed: number[]; status: PullRequestSnapshot['status'] }[] = [
+    { listed: [1], status: 'draft' },
+    { listed: [], status: 'closed' },
+  ];
+  const abort = new AbortController();
+  let read = -1;
+  const events: WatchEvent[] = [];
+  await watchEvents(
+    {
+      listPullRequests: async () => {
+        read++;
+        if (read === reads.length - 1) setTimeout(() => abort.abort(), 20);
+        return reads[Math.min(read, reads.length - 1)]!.listed.map(pr);
+      },
+      fetchPullRequest: async () => snapshot({ status: reads[Math.min(read, reads.length - 1)]!.status }),
+      readOwners: async () => new Map(),
+    },
+    settings,
+    { intervalMs: 0, signal: abort.signal },
+    async (event) => void events.push(event),
+    () => {},
+  );
+  assert.deepEqual(
+    events.map((event) =>
+      event.event === 'left' ? `left ${event.reason}` : `${event.event} ${'state' in event ? event.state : ''}`,
+    ),
+    ['snapshot draft', 'left closed'],
+  );
+});
