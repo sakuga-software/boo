@@ -885,3 +885,52 @@ test('a pull request that starts to wait only for its owner gives one ready-for-
   ]);
   assert.deepEqual(diffReports(byKey(ready), [ready], AT), []);
 });
+
+test('a merge of a pull request with owner paths says if the owner merged it, and a merge by another gives owner-bypass', () => {
+  const needsOwner = { owner: 'Mheaus', paths: ['packages/x/package.json'], partial: false };
+  const open = report(1, { needsOwner, state: 'approved' });
+  const merged = (by: string) =>
+    report(1, { needsOwner, state: 'merged', mergedBy: by, mergedAt: '2026-10-29T10:00:00Z' });
+  assert.deepEqual(diffReports(byKey(open), [merged('sakuga-agent[bot]')], AT), [
+    {
+      at: AT,
+      pr: 'acme/web#1',
+      event: 'left',
+      reason: 'merged',
+      mergedBy: 'sakuga-agent[bot]',
+      mergedAt: '2026-10-29T10:00:00Z',
+      ownerPaths: ['packages/x/package.json'],
+      byOwner: false,
+    },
+    {
+      at: AT,
+      pr: 'acme/web#1',
+      event: 'owner-bypass',
+      owner: 'Mheaus',
+      mergedBy: 'sakuga-agent[bot]',
+      paths: ['packages/x/package.json'],
+      partial: false,
+      mergedAt: '2026-10-29T10:00:00Z',
+    },
+  ]);
+  assert.deepEqual(
+    diffReports(byKey(open), [merged('mheaus')], AT).map((event) => event.event === 'left' && event.byOwner),
+    [true],
+  );
+  const ghost = report(1, { needsOwner, state: 'merged', mergedBy: null, mergedAt: '2026-10-29T10:00:00Z' });
+  assert.deepEqual(
+    diffReports(byKey(open), [ghost], AT).map((event) => event.event),
+    ['left', 'owner-bypass'],
+  );
+  const plain = report(1, { state: 'merged', mergedBy: 'octocat', mergedAt: '2026-10-29T10:00:00Z' });
+  assert.deepEqual(diffReports(byKey(report(1)), [plain], AT), [
+    {
+      at: AT,
+      pr: 'acme/web#1',
+      event: 'left',
+      reason: 'merged',
+      mergedBy: 'octocat',
+      mergedAt: '2026-10-29T10:00:00Z',
+    },
+  ]);
+});
