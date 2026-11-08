@@ -1,3 +1,4 @@
+import { rename, rm, writeFile } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { reviewerGroup, reviewRequests } from './policy.js';
@@ -20,6 +21,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'policy'; policy: PullRequestReport['policy']; added: string[]; removed: string[] }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
   | ({ event: 'review-request' } & Omit<RequestState, 'id' | 'commentId'>)
+  | ({ event: 'findings' } & PullRequestReport['findings'])
 );
 
 /**
@@ -232,6 +234,10 @@ const sameReview = (a: Reviewer, b: Reviewer) =>
   a.score?.score === b.score?.score &&
   a.score?.total === b.score?.total;
 
+// GitHub can give the threads in another order: the list of the findings with no answer is compared sorted.
+const findingsKey = ({ unanswered, ...counts }: PullRequestReport['findings']) =>
+  JSON.stringify({ ...counts, unanswered: unanswered.map((finding) => JSON.stringify(finding)).sort() });
+
 /** Returns the changes of one pull request between two reads. */
 export function changesOf(before: PullRequestReport, after: PullRequestReport, at: string): WatchEvent[] {
   const pr = `${after.repo}#${after.number}`;
@@ -256,6 +262,12 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     const { login, at: reviewedAt, ...review } = reviewer;
     events.push({ at, pr, event: 'review', reviewer: login, ...review, reviewedAt });
   }
+  // A read without the threads knows less: it gives no event. A read that has the threads again tells what they hold.
+  if (
+    !(before.findings.threadsRead && !after.findings.threadsRead) &&
+    findingsKey(before.findings) !== findingsKey(after.findings)
+  )
+    events.push({ at, pr, event: 'findings', ...after.findings });
   // A rule of the merge policy that the pull request starts or stops to miss: a new open bot thread,
   // a score that comes, a proof that the agent posts. The notes compare as a set: their order is the settings order.
   const notesBefore = new Set(before.policy.map(({ note }) => note));
@@ -400,6 +412,67 @@ async function readAll(
   return { inputs, reports: buildReport(inputs, owners, settings, now, viewer) };
 }
 
+/** The state that `--state <file>` keeps between two runs of the watch. */
+export interface WatchState {
+  version: number;
+  /** The last data of each pull request that the watch follows. */
+  reports: PullRequestReport[];
+  /** The comments of people that the watch knows, by pull request. */
+  comments: Record<string, string[]>;
+  /** The outcome of each review request that the watch knows, by pull request. */
+  requests: Record<string, Record<string, RequestOutcome>>;
+}
+
+/** A state of another version is not read: its reports can lack keys, and give false changes. */
+export const STATE_VERSION = 1;
+
+/**
+ * Writes the state in one step: a write to a temporary file, then a rename. A stop during the write
+ * leaves the old state, not a broken file. A rename that fails removes the temporary file.
+ */
+export async function writeWatchState(path: string, state: WatchState): Promise<void> {
+  const temporary = `${path}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(state));
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
+/** Reads a saved state. A missing file, another version or a broken file gives no state: the watch starts as new. */
+export function parseWatchState(text: string | undefined): WatchState | undefined {
+  if (!text) return undefined;
+  try {
+    const value = JSON.parse(text) as Partial<WatchState>;
+    if (value.version !== STATE_VERSION || !Array.isArray(value.reports)) return undefined;
+    // A file edited by hand can hold anything: a report needs at least its repository and its number.
+    const reports = (value.reports as unknown[]).filter((report): report is PullRequestReport => {
+      const item = report as Partial<PullRequestReport> | null;
+      return (
+        typeof item === 'object' &&
+        item !== null &&
+        typeof item.repo === 'string' &&
+        Number.isInteger(item.number) &&
+        Array.isArray(item.reviewers) &&
+        typeof item.checks === 'object' &&
+        item.checks !== null
+      );
+    });
+    const record = <T>(field: unknown): Record<string, T> =>
+      typeof field === 'object' && field !== null && !Array.isArray(field) ? (field as Record<string, T>) : {};
+    return {
+      version: STATE_VERSION,
+      reports,
+      comments: record<string[]>(value.comments),
+      requests: record<Record<string, RequestOutcome>>(value.requests),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Reads the list at each interval and calls `emit` for each change. A pull request that leaves the
  * search result is read once more, so that its `left` event gives the reason. It posts nothing.
@@ -407,17 +480,48 @@ async function readAll(
 export async function watchEvents(
   sources: WatchSources,
   settings: Settings,
-  { intervalMs, signal }: { intervalMs: number; signal: AbortSignal },
+  {
+    intervalMs,
+    signal,
+    initial,
+    onState,
+    snapshots = false,
+    onStateError,
+  }: {
+    intervalMs: number;
+    signal: AbortSignal;
+    /** The state that an earlier run saved: the first read then gives only the changes since that state. */
+    initial?: WatchState | undefined;
+    /** Called after each read with the state to keep, for the next run. */
+    onState?: ((state: WatchState) => Promise<void>) | undefined;
+    /** With `initial`, the first read also gives a `snapshot` line for each pull request. */
+    snapshots?: boolean;
+    /** Called when `onState` fails, for example on a full disk. */
+    onStateError?: ((error: unknown) => void) | undefined;
+  },
   emit: (event: WatchEvent) => Promise<void>,
   onListError: (error: unknown) => void,
 ): Promise<void> {
-  let previous: Map<string, PullRequestReport> | undefined;
+  let previous: Map<string, PullRequestReport> | undefined = initial
+    ? new Map(initial.reports.map((report) => [`${report.repo}#${report.number}`, report]))
+    : undefined;
   const failures = new Map<string, number>();
-  let tracked = new Map<string, PullRequest>();
+  // The pull requests of the saved state are tracked: one that merged while no watch ran gives its `left` event.
+  let tracked = new Map<string, PullRequest>(
+    (initial?.reports ?? []).map((report) => [
+      `${report.repo}#${report.number}`,
+      { repo: report.repo, number: report.number, title: report.title, url: report.url },
+    ]),
+  );
   // The comments of people that the watch knows, by pull request. The first read of a pull request gives no comment event.
-  const seenComments = new Map<string, Set<string>>();
+  const seenComments = new Map<string, Set<string>>(
+    Object.entries(initial?.comments ?? {}).map(([key, ids]) => [key, new Set(ids)]),
+  );
   // The outcome of each review request that the watch knows, by pull request. The first read gives no event either.
-  const seenRequests = new Map<string, Map<string, RequestOutcome>>();
+  const seenRequests = new Map<string, Map<string, RequestOutcome>>(
+    Object.entries(initial?.requests ?? {}).map(([key, outcomes]) => [key, new Map(Object.entries(outcomes))]),
+  );
+  let first = true;
   while (!signal.aborted) {
     try {
       const listed = await sources.listPullRequests();
@@ -442,6 +546,17 @@ export async function watchEvents(
       // A stop during the read must not write the events of that read.
       if (signal.aborted) return;
       const events = diffReports(before, reports, now.toISOString());
+      if (first && initial && snapshots)
+        events.unshift(
+          ...reports
+            .filter((report) => !LEFT_STATES.has(report.state))
+            .map((report): WatchEvent => ({
+              at: now.toISOString(),
+              pr: keyOfReport(report),
+              event: 'snapshot',
+              ...report,
+            })),
+        );
       for (const { pr, snapshot } of inputs) {
         if (snapshot?.status !== 'open') continue;
         const key = keyOf(pr);
@@ -469,6 +584,17 @@ export async function watchEvents(
         ...[...(previous ?? [])].filter(([key]) => unread.has(key)),
       ]);
       tracked = new Map([...listed, ...gone.filter((pr) => unread.has(keyOf(pr)))].map((pr) => [keyOf(pr), pr]));
+      first = false;
+      // A pull request that the watch no longer follows needs no comments or requests: the file stays small.
+      for (const key of [...seenComments.keys()]) if (!previous.has(key)) seenComments.delete(key);
+      for (const key of [...seenRequests.keys()]) if (!previous.has(key)) seenRequests.delete(key);
+      // A state that cannot be written is not an error of GitHub: it gets its own message, and the watch goes on.
+      await onState?.({
+        version: STATE_VERSION,
+        reports: [...previous.values()],
+        comments: Object.fromEntries([...seenComments].map(([key, ids]) => [key, [...ids]])),
+        requests: Object.fromEntries([...seenRequests].map(([key, outcomes]) => [key, Object.fromEntries(outcomes)])),
+      }).catch((error: unknown) => onStateError?.(error));
     } catch (error) {
       onListError(error);
     }

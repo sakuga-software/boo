@@ -66,6 +66,8 @@ test('the output keeps the same keys, in the same order', () => {
     'notes',
     'policy',
     'stale',
+    'findings',
+    'threads',
   ]);
   assert.deepEqual(Object.keys(first!.checks), ['passed', 'failing', 'running', 'skipped', 'quota', 'reviewerErrors']);
   assert.deepEqual(Object.keys(first!.stack), ['parent', 'position', 'size', 'restack']);

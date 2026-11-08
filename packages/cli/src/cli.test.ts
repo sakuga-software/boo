@@ -36,3 +36,19 @@ test('--pr needs --json and a pull request it can read', () => {
   assert.match(wrong.stderr, /--pr takes owner\/repo#123/);
   assert.equal(wrong.stdout, '');
 });
+
+test('--snapshot refuses to run without --state', () => {
+  const run = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--watch', '--events', '--snapshot'], {
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /--snapshot .* needs --state <file>/);
+});
+
+test('--state refuses a file that it cannot read, but not a missing one', () => {
+  const run = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--watch', '--events', '--state', '/'], {
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /cannot read the state in \//);
+});

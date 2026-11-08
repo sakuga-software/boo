@@ -274,7 +274,7 @@ query(${VARIABLES}) {
     commits(last: 1) { nodes { commit { message committedDate authors(first: 10) { nodes { user { login } } }
       checkSuites(first: 100) { nodes { status workflowRun { databaseId workflow { name } } } }
       statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
-    ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } latest: comments(last: 1) { nodes { author { login __typename } body } } } }' : ''}
+    ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } body } } latest: comments(last: 1) { nodes { author { login __typename } body } } } }' : ''}
     ${files ? 'files(first: 100) { nodes { path } }' : ''}
   } }
 }`;
@@ -365,7 +365,7 @@ interface PullRequestNode {
   reviewThreads?: {
     nodes: {
       isResolved: boolean;
-      comments: { nodes: { author: Actor | null }[] };
+      comments: { nodes: { author: Actor | null; body?: string }[] };
       latest?: { nodes: { author: Actor | null; body: string }[] };
     }[];
   };
@@ -558,9 +558,13 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
         .map((thread): OpenThread => {
           const last = thread.latest?.nodes.at(-1);
           const lastBotComment = last && isBotLogin(loginOf(last.author) ?? '') ? last.body : undefined;
+          const first = thread.comments.nodes[0];
+          const lastAuthor = last && loginOf(last.author);
           return {
-            author: loginOf(thread.comments.nodes[0]?.author ?? null) ?? '',
+            author: loginOf(first?.author ?? null) ?? '',
             ...(lastBotComment !== undefined && { lastBotComment }),
+            ...(first?.body !== undefined && { body: first.body }),
+            ...(lastAuthor && { lastAuthor }),
           };
         }),
     }),

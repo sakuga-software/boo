@@ -1,5 +1,6 @@
 import { render } from 'ink';
 import meow from 'meow';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { setTimeout as wait } from 'node:timers/promises';
 import { App } from './app.js';
@@ -11,7 +12,7 @@ import {
   probePullRequests,
   viewerLogin,
 } from './github.js';
-import { readReport, watchEvents, type WatchSources } from './events.js';
+import { parseWatchState, readReport, watchEvents, writeWatchState, type WatchSources } from './events.js';
 import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, parseRepos, resolveRepos, saveSettings, settingsPath } from './settings.js';
@@ -57,6 +58,10 @@ const cli = meow(
                               repeat it for more
         --events              With --watch: print each change as one JSON line
                               (NDJSON), and post nothing; see the docs
+        --state <file>        With --events: keep the last state in this file, and
+                              print at the start only the changes since that state
+        --snapshot            With --state: also print one snapshot line for each
+                              pull request at the start
     -h, --help                Show this help
     -v, --version             Show the version
 
@@ -202,6 +207,8 @@ const cli = meow(
       json: { type: 'boolean', default: false },
       events: { type: 'boolean', default: false },
       pr: { type: 'string', isMultiple: true },
+      state: { type: 'string' },
+      snapshot: { type: 'boolean', default: false },
       help: { type: 'boolean', shortFlag: 'h' },
       version: { type: 'boolean', shortFlag: 'v' },
       remove: { type: 'boolean', default: false },
@@ -296,10 +303,37 @@ if (cli.flags.events) {
   const abort = new AbortController();
   process.once('SIGINT', () => abort.abort());
   process.once('SIGTERM', () => abort.abort());
+  if (cli.flags.snapshot && !cli.flags.state) {
+    console.error('--snapshot adds snapshot lines to a start from a saved state: it needs --state <file>.');
+    process.exit(2);
+  }
+  const statePath = cli.flags.state;
+  // A missing file is a first run. Another error, such as a right that is missing, must not start from nothing.
+  const text = statePath
+    ? await readFile(statePath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined;
+        console.error(`✖ cannot read the state in ${statePath}: ${error.message}`);
+        process.exit(2);
+      })
+    : undefined;
+  const initial = parseWatchState(text);
   await watchEvents(
     sources,
     settings,
-    { intervalMs: 60_000, signal: abort.signal },
+    {
+      intervalMs: 60_000,
+      signal: abort.signal,
+      initial,
+      snapshots: cli.flags.snapshot,
+      // A rename replaces the file in one step: a stop during the write leaves the old state, not a broken file.
+      ...(statePath && {
+        onState: (state) => writeWatchState(statePath, state),
+        onStateError: (error: unknown) =>
+          console.error(
+            `✖ cannot write the state to ${statePath}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+      }),
+    },
     async (event) => void (await write(`${JSON.stringify(event)}\n`)),
     (error) => console.error(`✖ ${error instanceof Error ? error.message : String(error)}`),
   );
