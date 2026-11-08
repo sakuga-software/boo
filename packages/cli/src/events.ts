@@ -256,9 +256,9 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     const { login, at: reviewedAt, ...review } = reviewer;
     events.push({ at, pr, event: 'review', reviewer: login, ...review, reviewedAt });
   }
-  // A read with the threads and a read without them count other findings: that is no change of the pull request.
+  // A read without the threads knows less: it gives no event. A read that has the threads again tells what they hold.
   if (
-    before.findings.threadsRead === after.findings.threadsRead &&
+    !(before.findings.threadsRead && !after.findings.threadsRead) &&
     findingsKey(before.findings) !== findingsKey(after.findings)
   )
     events.push({ at, pr, event: 'findings', ...after.findings });
