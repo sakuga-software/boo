@@ -59,6 +59,9 @@ const cli = meow(
                               repeat it for more
         --events              With --watch: print each change as one JSON line
                               (NDJSON), and post nothing; see the docs
+        --drafts              With --json or --events: keep the drafts, with the
+                              state "draft" and their checks, reviews and policy
+                              ("drafts": "show" in the settings file)
         --state <file>        With --events: keep the last state in this file, and
                               print at the start only the changes since that state
         --snapshot            With --state: also print one snapshot line for each
@@ -209,6 +212,7 @@ const cli = meow(
       events: { type: 'boolean', default: false },
       pr: { type: 'string', isMultiple: true },
       state: { type: 'string' },
+      drafts: { type: 'boolean', default: false },
       snapshot: { type: 'boolean', default: false },
       help: { type: 'boolean', shortFlag: 'h' },
       version: { type: 'boolean', shortFlag: 'v' },
@@ -258,6 +262,12 @@ if (since !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(D
 const org = cli.flags.org === 'all' ? '' : cli.flags.org;
 
 const settings = await loadSettings();
+// The terminal list has its own setting for the drafts, and it saves the settings: --drafts is only for one run of a script.
+if (cli.flags.drafts && !cli.flags.json && !cli.flags.events) {
+  console.error('--drafts keeps the drafts in the output of a script: it needs --json or --events.');
+  process.exit(2);
+}
+if (cli.flags.drafts) settings.drafts = 'show';
 const authors = parseAuthors(cli.flags.author) ?? settings.authors;
 const repoFlags = cli.flags.repo ?? [];
 const badRepo = repoFlags.find((repo) => !parseRepos([repo]));
@@ -274,7 +284,14 @@ try {
 }
 
 const sources: WatchSources = {
-  listPullRequests: () => listPullRequests({ org, authors, repos, ...(since && { since }) }),
+  listPullRequests: () =>
+    listPullRequests({
+      org,
+      authors,
+      repos,
+      ...(since && { since }),
+      ...(settings.drafts === 'show' && { drafts: true }),
+    }),
   // Only the events read the text of the line comments: the other modes do not need the bytes.
   fetchPullRequest: (pr) =>
     fetchPullRequest(pr, {

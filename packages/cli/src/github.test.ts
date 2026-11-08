@@ -323,3 +323,18 @@ test('a pull request named twice gives one object', () => {
     [7, 8],
   );
 });
+
+test('the search keeps the drafts only when asked, and a list with drafts has its own cache key', () => {
+  const results = [result('a', '2026-10-01T00:00:00Z'), result('b', '2026-10-02T00:00:00Z', true)];
+  assert.deepEqual(
+    mergeSearches([results]).map(({ url }) => url),
+    ['a'],
+  );
+  assert.deepEqual(
+    mergeSearches([results], true).map(({ url }) => url),
+    ['b', 'a'],
+  );
+  const options = { org: 'acme', authors: ['@me'] };
+  assert.notEqual(listKey(options), listKey({ ...options, drafts: true }));
+  assert.equal(listKey(options), listKey({ ...options, drafts: false }));
+});

@@ -70,6 +70,7 @@ test('the output keeps the same keys, in the same order', () => {
     'threads',
     'needsOwner',
     'readyForOwner',
+    'draftState',
   ]);
   assert.deepEqual(Object.keys(first!.checks), ['passed', 'failing', 'running', 'skipped', 'quota', 'reviewerErrors']);
   assert.deepEqual(Object.keys(first!.stack), ['parent', 'position', 'size', 'restack']);
@@ -349,4 +350,23 @@ test('a pull request named on the command line takes its title from the read', (
     now,
   );
   assert.equal(first!.title, 'feat: from the read');
+});
+
+test('with "drafts": "show", a draft keeps its row with the state draft, and the state it would have', () => {
+  const settings = { ...DEFAULT_SETTINGS, drafts: 'show' as const };
+  const green = snapshot({
+    status: 'draft',
+    checks: [{ name: 'test', state: 'success' }],
+    reviews: [{ user: { login: 'alice' }, commit_id: 'abc123', submitted_at: ago(5), state: 'APPROVED', body: '' }],
+  });
+  const [shown] = buildReport([{ pr: pr(1), snapshot: green }], new Map(), settings, now);
+  assert.equal(shown!.state, 'draft');
+  assert.equal(shown!.isDraft, true);
+  assert.equal(shown!.draftState, 'ready to merge');
+  assert.equal(shown!.checks.passed, 1);
+  assert.equal(shown!.reviewers[0]!.mark, 'approved');
+  const [hidden] = buildReport([{ pr: pr(1), snapshot: green }], new Map(), DEFAULT_SETTINGS, now);
+  assert.equal(hidden!.state, 'draft');
+  assert.equal(hidden!.draftState, null);
+  assert.equal(hidden!.checks.passed, 0);
 });

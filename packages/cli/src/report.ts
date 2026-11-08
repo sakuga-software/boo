@@ -187,6 +187,11 @@ export interface PullRequestReport {
   needsOwner: { owner: string; paths: string[]; partial: boolean } | null;
   /** Green, approved, mergeable, and every rule of the policy passes but `ownerOnly`: it waits only for the owner. */
   readyForOwner: boolean;
+  /**
+   * For a draft that the list keeps (`"drafts": "show"`), the state that it would have if it were ready
+   * for review, such as "approved" or "checks failing". Null for any other pull request.
+   */
+  draftState: string | null;
 }
 
 export type CoderabbitNote =
@@ -235,11 +240,13 @@ export function buildReport(
   now: Date,
   viewer?: string,
 ): PullRequestReport[] {
+  // With "drafts": "show", a draft is followed as an open pull request, with the state "draft".
+  const followed = (status: string) => status === 'open' || (status === 'draft' && settings.drafts === 'show');
   const fetched = new Map(
     inputs.flatMap(({ pr, snapshot }) => {
       if (!snapshot) return [];
       const { status, ...rest } = snapshot;
-      return [[keyOf(pr), { repo: pr.repo, fetched: rest, left: status !== 'open' }] as const];
+      return [[keyOf(pr), { repo: pr.repo, fetched: rest, left: !followed(status) }] as const];
     }),
   );
   const assessed = assess(fetched, now, {
@@ -257,7 +264,7 @@ export function buildReport(
       fork: snapshot?.fork,
       base: snapshot?.base,
       defaultBranch: snapshot?.defaultBranch,
-      left: Boolean(snapshot && snapshot.status !== 'open'),
+      left: Boolean(snapshot && !followed(snapshot.status)),
     })),
   );
 
@@ -278,7 +285,7 @@ export function buildReport(
       headSha: snapshot?.head ?? null,
       base: snapshot?.base ?? null,
       isDraft: snapshot?.status === 'draft',
-      state: stateOf(snapshot, summary, error),
+      state: stateOf(snapshot, summary && snapshot?.status !== 'draft' ? summary : undefined, error),
       ...stallOf({
         overall: summary?.overall,
         headAt: snapshot?.headAt,
@@ -351,6 +358,7 @@ export function buildReport(
             ownerPathsOf(settings.mergePolicy, { files: snapshot.files, changedFiles: snapshot.changes?.files })) ??
         null,
       readyForOwner: summary?.readyForOwner ?? false,
+      draftState: summary && snapshot?.status === 'draft' ? OVERALL_LABELS[summary.overall] : null,
     };
   });
 }

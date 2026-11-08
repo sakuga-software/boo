@@ -320,6 +320,9 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
 }
 
 const LEFT_STATES = new Set(['merged', 'closed', 'draft']);
+/** A pull request left the list: merged, closed, or a draft that the list does not keep (no `draftState`). */
+// A report of a state file written before `draftState` has no such key: `== null` takes it as null.
+const hasLeft = (report: PullRequestReport) => LEFT_STATES.has(report.state) && report.draftState == null;
 const sameLogin = (a: string, b: string) =>
   a.replace(/\[bot\]$/, '').toLowerCase() === b.replace(/\[bot\]$/, '').toLowerCase();
 
@@ -338,7 +341,7 @@ export function diffReports(
     const pr = `${report.repo}#${report.number}`;
     const before = previous?.get(pr);
     if (!previous) events.push({ at, pr, event: 'snapshot', ...report });
-    else if (LEFT_STATES.has(report.state)) {
+    else if (hasLeft(report)) {
       if (before) {
         const owner = report.state === 'merged' ? (report.needsOwner ?? before.needsOwner) : null;
         // "@me" names the user of boo: the report does not know that login, so it cannot tell who merged.
@@ -581,7 +584,7 @@ export async function watchEvents(
       const before = previous && new Map([...previous].filter(([key]) => !unread.has(key)));
       const reports = holdErrors(
         before,
-        read.filter((report) => !goneKeys.has(keyOfReport(report)) || LEFT_STATES.has(report.state)),
+        read.filter((report) => !goneKeys.has(keyOfReport(report)) || hasLeft(report)),
         failures,
       );
       // A stop during the read must not write the events of that read.
@@ -590,7 +593,7 @@ export async function watchEvents(
       if (first && initial && snapshots)
         events.unshift(
           ...reports
-            .filter((report) => !LEFT_STATES.has(report.state))
+            .filter((report) => !hasLeft(report))
             .map((report): WatchEvent => ({
               at: now.toISOString(),
               pr: keyOfReport(report),
@@ -599,7 +602,7 @@ export async function watchEvents(
             })),
         );
       for (const { pr, snapshot } of inputs) {
-        if (snapshot?.status !== 'open') continue;
+        if (snapshot?.status !== 'open' && !(snapshot?.status === 'draft' && settings.drafts === 'show')) continue;
         const key = keyOf(pr);
         const requests = requestStates(snapshot, settings, now);
         const comments = personComments(
@@ -620,7 +623,7 @@ export async function watchEvents(
       }
       previous = new Map([
         ...reports
-          .filter((report) => !LEFT_STATES.has(report.state))
+          .filter((report) => !hasLeft(report))
           .map((report) => [keyOfReport(report), keepLastData(previous, report)] as const),
         ...[...(previous ?? [])].filter(([key]) => unread.has(key)),
       ]);

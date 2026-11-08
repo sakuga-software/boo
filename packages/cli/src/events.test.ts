@@ -47,6 +47,7 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   threads: null,
   needsOwner: null,
   readyForOwner: false,
+  draftState: null,
   ...patch,
 });
 const byKey = (...reports: PullRequestReport[]) => new Map(reports.map((item) => [`acme/web#${item.number}`, item]));
@@ -933,4 +934,58 @@ test('a merge of a pull request with owner paths says if the owner merged it, an
       mergedAt: '2026-10-29T10:00:00Z',
     },
   ]);
+});
+
+test('a draft of a state file written before draftState still leaves the list', () => {
+  const { draftState: _old, ...saved } = report(1, { state: 'draft', isDraft: true });
+  assert.deepEqual(
+    diffReports(byKey(report(1)), [saved as PullRequestReport], AT).map((event) => event.event),
+    ['left'],
+  );
+});
+
+test('a draft that the list keeps gives changes, not a left event', () => {
+  const draft = report(1, { state: 'draft', isDraft: true, draftState: 'checks failing' });
+  const green = report(1, { state: 'draft', isDraft: true, draftState: 'approved' });
+  assert.deepEqual(
+    diffReports(byKey(report(1)), [draft], AT).map((event) => event.event),
+    ['state'],
+  );
+  assert.deepEqual(diffReports(byKey(draft), [green], AT), []);
+  assert.deepEqual(
+    diffReports(byKey(report(1)), [report(1, { state: 'draft', isDraft: true })], AT).map((event) => event.event),
+    ['left'],
+  );
+});
+
+test('with drafts shown, a draft that leaves the search gives the left event of its new state', async () => {
+  const settings = { ...DEFAULT_SETTINGS, drafts: 'show' as const };
+  const reads: { listed: number[]; status: PullRequestSnapshot['status'] }[] = [
+    { listed: [1], status: 'draft' },
+    { listed: [], status: 'closed' },
+  ];
+  const abort = new AbortController();
+  let read = -1;
+  const events: WatchEvent[] = [];
+  await watchEvents(
+    {
+      listPullRequests: async () => {
+        read++;
+        if (read === reads.length - 1) setTimeout(() => abort.abort(), 20);
+        return reads[Math.min(read, reads.length - 1)]!.listed.map(pr);
+      },
+      fetchPullRequest: async () => snapshot({ status: reads[Math.min(read, reads.length - 1)]!.status }),
+      readOwners: async () => new Map(),
+    },
+    settings,
+    { intervalMs: 0, signal: abort.signal },
+    async (event) => void events.push(event),
+    () => {},
+  );
+  assert.deepEqual(
+    events.map((event) =>
+      event.event === 'left' ? `left ${event.reason}` : `${event.event} ${'state' in event ? event.state : ''}`,
+    ),
+    ['snapshot draft', 'left closed'],
+  );
 });
