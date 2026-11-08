@@ -103,8 +103,9 @@ test('a request to one login of the reviewer list is answered by a review of ano
     assert.deepEqual(policyMisses(group, facts({ reviews: [old, answer], comments: [ask] })), [], body);
   }
   const reject = comment('mathieu', '@kento-review reject the file is generated', 5);
+  const remark = comment('mathieu', '@kento the lite mode is enough here, thanks', 5);
   const ownQuote = comment('kento-review[bot]', '@kento-ai review heavy', 5);
-  assert.deepEqual(policyMisses(group, facts({ reviews: [old], comments: [reject, ownQuote] })), []);
+  assert.deepEqual(policyMisses(group, facts({ reviews: [old], comments: [reject, remark, ownQuote] })), []);
   const other = comment('mathieu', '@greptile-apps review', 5);
   const greptile = comment('greptile-apps[bot]', 'Confidence Score: 4/5', 30);
   assert.deepEqual(unansweredRequests({ reviews: [old], comments: [greptile, other] }, undefined), [
