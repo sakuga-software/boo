@@ -296,7 +296,11 @@ test('an answered bot thread is told apart from an open one: only a person can r
   assert.deepEqual(policyMisses(policy, facts({ openThreads: [openThreads[1]!], author: 'mathieu', agents })), [
     { rule: 'resolvedBotThreads', note: '1 answered bot thread to resolve' },
   ]);
-  assert.deepEqual(botThreads(true, { openThreads, author: 'sakuga-agent[bot]' }), { open: 3, answered: 1 });
-  // On the pull request of mathieu, his own reply answers.
-  assert.deepEqual(botThreads(true, { openThreads, author: 'mathieu' }), { open: 3, answered: 1 });
+  // Each case on its own thread: the reply of mathieu answers only on his own pull request.
+  const byMathieu = [openThreads[2]!];
+  assert.deepEqual(botThreads(true, { openThreads: byMathieu, author: 'mathieu' }), { open: 0, answered: 1 });
+  assert.deepEqual(botThreads(true, { openThreads: byMathieu, author: 'sakuga-agent[bot]' }), { open: 1, answered: 0 });
+  const byAgent = [openThreads[1]!];
+  assert.deepEqual(botThreads(true, { openThreads: byAgent, author: 'sakuga-agent[bot]' }), { open: 0, answered: 1 });
+  assert.deepEqual(botThreads(true, { openThreads: byAgent, author: 'mathieu' }), { open: 1, answered: 0 });
 });
