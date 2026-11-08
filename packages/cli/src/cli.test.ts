@@ -52,3 +52,9 @@ test('--state refuses a file that it cannot read, but not a missing one', () => 
   assert.equal(run.status, 2);
   assert.match(run.stderr, /cannot read the state in \//);
 });
+
+test('--drafts needs --json or --events', () => {
+  const run = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--drafts'], { encoding: 'utf8' });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /--drafts keeps the drafts in the output of a script: it needs --json or --events/);
+});

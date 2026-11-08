@@ -261,6 +261,11 @@ if (since !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(D
 const org = cli.flags.org === 'all' ? '' : cli.flags.org;
 
 const settings = await loadSettings();
+// The terminal list has its own setting for the drafts, and it saves the settings: --drafts is only for one run of a script.
+if (cli.flags.drafts && !cli.flags.json && !cli.flags.events) {
+  console.error('--drafts keeps the drafts in the output of a script: it needs --json or --events.');
+  process.exit(2);
+}
 if (cli.flags.drafts) settings.drafts = 'show';
 const authors = parseAuthors(cli.flags.author) ?? settings.authors;
 const repoFlags = cli.flags.repo ?? [];
