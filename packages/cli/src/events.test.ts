@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import {
   diffReports,
   holdErrors,
+  parseWatchState,
+  STATE_VERSION,
   newComments,
   personComments,
   requestChanges,
@@ -10,6 +12,7 @@ import {
   watchEvents,
   type WatchEvent,
   type WatchSources,
+  type WatchState,
 } from './events.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import type { PullRequestReport } from './report.js';
@@ -643,4 +646,105 @@ test('a draft whose old requests are known gives no review-request event when it
       .map((event) => event.event === 'review-request' && event.createdAt),
     ['2026-10-24T11:59:00Z'],
   );
+});
+
+/** Runs the watch for the given reads of the list, and returns its events and the last saved state. */
+type Read = { listed: number[]; snapshots: Record<number, Partial<PullRequestSnapshot>> };
+async function runWatch(reads: (Read | (() => never))[], options: { initial?: WatchState; snapshots?: boolean } = {}) {
+  const abort = new AbortController();
+  let read = -1;
+  let state: WatchState | undefined;
+  const events: WatchEvent[] = [];
+  const current = () => reads[Math.min(read, reads.length - 1)]!;
+  const sources: WatchSources = {
+    listPullRequests: async () => {
+      read++;
+      const step = current();
+      if (typeof step === 'function') step();
+      return (step as Read).listed.map(pr);
+    },
+    fetchPullRequest: async (pull) => snapshot({ author: 'me', ...(current() as Read).snapshots[pull.number] }),
+    readOwners: async () => new Map(),
+  };
+  await watchEvents(
+    sources,
+    DEFAULT_SETTINGS,
+    {
+      intervalMs: 0,
+      signal: abort.signal,
+      ...options,
+      onState: async (saved) => {
+        state = JSON.parse(JSON.stringify(saved)) as WatchState;
+        if (read >= reads.length - 1) abort.abort();
+      },
+    },
+    async (event) => void events.push(event),
+    () => {},
+  );
+  return { events, state: state! };
+}
+
+const said = (id: number, body: string) => ({
+  id,
+  user: { login: 'octocat' },
+  body,
+  created_at: `2026-10-24T11:0${id}:00Z`,
+  updated_at: `2026-10-24T11:0${id}:00Z`,
+});
+
+test('a watch that starts from a saved state gives only the changes since that state', async () => {
+  const before = { listed: [1, 2], snapshots: { 1: { comments: [said(1, 'Why?')] }, 2: {} } };
+  const { events: firstRun, state } = await runWatch([before]);
+  assert.deepEqual(
+    firstRun.map((event) => event.event),
+    ['snapshot', 'snapshot'],
+  );
+  // The same pull requests, with no change: a restart gives no event.
+  const again = await runWatch([before], { initial: state });
+  assert.deepEqual(again.events, []);
+  // While no watch ran: a new head on #1, a new comment, and #2 merged.
+  const after = {
+    listed: [1],
+    snapshots: {
+      1: { head: 'def', comments: [said(1, 'Why?'), said(2, 'And this?')] },
+      2: { status: 'merged' as const, mergedBy: 'mathieu', mergedAt: '2026-10-24T11:30:00Z' },
+    },
+  };
+  const restart = await runWatch([after], { initial: state });
+  assert.deepEqual(
+    restart.events.map((event) => `${event.pr} ${event.event}`),
+    ['acme/web#1 head', 'acme/web#2 left', 'acme/web#1 comment'],
+  );
+  const snapshots = await runWatch([before], { initial: state, snapshots: true });
+  assert.deepEqual(
+    snapshots.events.map((event) => `${event.pr} ${event.event}`),
+    ['acme/web#1 snapshot', 'acme/web#2 snapshot'],
+  );
+});
+
+test('a list error between two reads gives no old event again', async () => {
+  const read = { listed: [1], snapshots: { 1: { comments: [said(1, 'Why?')] } } };
+  const { events } = await runWatch([
+    read,
+    () => {
+      throw new Error('HTTP 502');
+    },
+    read,
+  ]);
+  assert.deepEqual(
+    events.map((event) => event.event),
+    ['snapshot'],
+  );
+});
+
+test('a saved state of another version, or a broken file, is not read', () => {
+  assert.equal(parseWatchState(undefined), undefined);
+  assert.equal(parseWatchState('{'), undefined);
+  assert.equal(parseWatchState(JSON.stringify({ version: 99, reports: [] })), undefined);
+  assert.deepEqual(parseWatchState(JSON.stringify({ version: STATE_VERSION, reports: [] })), {
+    version: STATE_VERSION,
+    reports: [],
+    comments: {},
+    requests: {},
+  });
 });

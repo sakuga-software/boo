@@ -395,6 +395,37 @@ async function readAll(
   return { inputs, reports: buildReport(inputs, owners, settings, now, viewer) };
 }
 
+/** The state that `--state <file>` keeps between two runs of the watch. */
+export interface WatchState {
+  version: number;
+  /** The last data of each pull request that the watch follows. */
+  reports: PullRequestReport[];
+  /** The comments of people that the watch knows, by pull request. */
+  comments: Record<string, string[]>;
+  /** The outcome of each review request that the watch knows, by pull request. */
+  requests: Record<string, Record<string, RequestOutcome>>;
+}
+
+/** A state of another version is not read: its reports can lack keys, and give false changes. */
+export const STATE_VERSION = 1;
+
+/** Reads a saved state. A missing file, another version or a broken file gives no state: the watch starts as new. */
+export function parseWatchState(text: string | undefined): WatchState | undefined {
+  if (!text) return undefined;
+  try {
+    const value = JSON.parse(text) as Partial<WatchState>;
+    if (value.version !== STATE_VERSION || !Array.isArray(value.reports)) return undefined;
+    return {
+      version: STATE_VERSION,
+      reports: value.reports,
+      comments: value.comments ?? {},
+      requests: value.requests ?? {},
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Reads the list at each interval and calls `emit` for each change. A pull request that leaves the
  * search result is read once more, so that its `left` event gives the reason. It posts nothing.
@@ -402,17 +433,45 @@ async function readAll(
 export async function watchEvents(
   sources: WatchSources,
   settings: Settings,
-  { intervalMs, signal }: { intervalMs: number; signal: AbortSignal },
+  {
+    intervalMs,
+    signal,
+    initial,
+    onState,
+    snapshots = false,
+  }: {
+    intervalMs: number;
+    signal: AbortSignal;
+    /** The state that an earlier run saved: the first read then gives only the changes since that state. */
+    initial?: WatchState | undefined;
+    /** Called after each read with the state to keep, for the next run. */
+    onState?: ((state: WatchState) => Promise<void>) | undefined;
+    /** With `initial`, the first read also gives a `snapshot` line for each pull request. */
+    snapshots?: boolean;
+  },
   emit: (event: WatchEvent) => Promise<void>,
   onListError: (error: unknown) => void,
 ): Promise<void> {
-  let previous: Map<string, PullRequestReport> | undefined;
+  let previous: Map<string, PullRequestReport> | undefined = initial
+    ? new Map(initial.reports.map((report) => [`${report.repo}#${report.number}`, report]))
+    : undefined;
   const failures = new Map<string, number>();
-  let tracked = new Map<string, PullRequest>();
+  // The pull requests of the saved state are tracked: one that merged while no watch ran gives its `left` event.
+  let tracked = new Map<string, PullRequest>(
+    (initial?.reports ?? []).map((report) => [
+      `${report.repo}#${report.number}`,
+      { repo: report.repo, number: report.number, title: report.title, url: report.url },
+    ]),
+  );
   // The comments of people that the watch knows, by pull request. The first read of a pull request gives no comment event.
-  const seenComments = new Map<string, Set<string>>();
+  const seenComments = new Map<string, Set<string>>(
+    Object.entries(initial?.comments ?? {}).map(([key, ids]) => [key, new Set(ids)]),
+  );
   // The outcome of each review request that the watch knows, by pull request. The first read gives no event either.
-  const seenRequests = new Map<string, Map<string, RequestOutcome>>();
+  const seenRequests = new Map<string, Map<string, RequestOutcome>>(
+    Object.entries(initial?.requests ?? {}).map(([key, outcomes]) => [key, new Map(Object.entries(outcomes))]),
+  );
+  let first = true;
   while (!signal.aborted) {
     try {
       const listed = await sources.listPullRequests();
@@ -437,6 +496,17 @@ export async function watchEvents(
       // A stop during the read must not write the events of that read.
       if (signal.aborted) return;
       const events = diffReports(before, reports, now.toISOString());
+      if (first && initial && snapshots)
+        events.unshift(
+          ...reports
+            .filter((report) => !LEFT_STATES.has(report.state))
+            .map((report): WatchEvent => ({
+              at: now.toISOString(),
+              pr: keyOfReport(report),
+              event: 'snapshot',
+              ...report,
+            })),
+        );
       for (const { pr, snapshot } of inputs) {
         if (snapshot?.status !== 'open') continue;
         const key = keyOf(pr);
@@ -460,6 +530,13 @@ export async function watchEvents(
         ...[...(previous ?? [])].filter(([key]) => unread.has(key)),
       ]);
       tracked = new Map([...listed, ...gone.filter((pr) => unread.has(keyOf(pr)))].map((pr) => [keyOf(pr), pr]));
+      first = false;
+      await onState?.({
+        version: STATE_VERSION,
+        reports: [...previous.values()],
+        comments: Object.fromEntries([...seenComments].map(([key, ids]) => [key, [...ids]])),
+        requests: Object.fromEntries([...seenRequests].map(([key, outcomes]) => [key, Object.fromEntries(outcomes)])),
+      });
     } catch (error) {
       onListError(error);
     }

@@ -58,6 +58,7 @@ boo --repo boo --repo acme/web  # only these repositories: owner/name, or name i
 boo --dry-run           # post and merge nothing
 boo --json              # print the state as JSON for a script, and post nothing
 boo --watch --events    # print each change as one JSON line, and post nothing
+boo --watch --events --state ~/.cache/boo-watch.json  # after a restart, only the changes since the last run
 boo --help              # options, states and marks
 ```
 

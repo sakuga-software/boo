@@ -1,10 +1,11 @@
 import { render } from 'ink';
 import meow from 'meow';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { setTimeout as wait } from 'node:timers/promises';
 import { App } from './app.js';
 import { fetchPullRequest, listPullRequests, openInBrowser, probePullRequests, viewerLogin } from './github.js';
-import { readReport, watchEvents, type WatchSources } from './events.js';
+import { parseWatchState, readReport, watchEvents, type WatchSources } from './events.js';
 import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, parseRepos, resolveRepos, saveSettings, settingsPath } from './settings.js';
@@ -47,6 +48,10 @@ const cli = meow(
                               request, and post nothing; the docs give the keys
         --events              With --watch: print each change as one JSON line
                               (NDJSON), and post nothing; see the docs
+        --state <file>        With --events: keep the last state in this file, and
+                              print at the start only the changes since that state
+        --snapshot            With --state: also print one snapshot line for each
+                              pull request at the start
     -h, --help                Show this help
     -v, --version             Show the version
 
@@ -191,6 +196,8 @@ const cli = meow(
       dryRun: { type: 'boolean', shortFlag: 'n', default: false },
       json: { type: 'boolean', default: false },
       events: { type: 'boolean', default: false },
+      state: { type: 'string' },
+      snapshot: { type: 'boolean', default: false },
       help: { type: 'boolean', shortFlag: 'h' },
       version: { type: 'boolean', shortFlag: 'v' },
       remove: { type: 'boolean', default: false },
@@ -280,10 +287,25 @@ if (cli.flags.events) {
   const abort = new AbortController();
   process.once('SIGINT', () => abort.abort());
   process.once('SIGTERM', () => abort.abort());
+  const statePath = cli.flags.state;
+  const initial = statePath ? parseWatchState(await readFile(statePath, 'utf8').catch(() => undefined)) : undefined;
   await watchEvents(
     sources,
     settings,
-    { intervalMs: 60_000, signal: abort.signal },
+    {
+      intervalMs: 60_000,
+      signal: abort.signal,
+      initial,
+      snapshots: cli.flags.snapshot,
+      // A rename replaces the file in one step: a stop during the write leaves the old state, not a broken file.
+      ...(statePath && {
+        onState: async (state) => {
+          const temporary = `${statePath}.${process.pid}.tmp`;
+          await writeFile(temporary, JSON.stringify(state));
+          await rename(temporary, statePath);
+        },
+      }),
+    },
     async (event) => void (await write(`${JSON.stringify(event)}\n`)),
     (error) => console.error(`✖ ${error instanceof Error ? error.message : String(error)}`),
   );
