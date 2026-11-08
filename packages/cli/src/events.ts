@@ -18,7 +18,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
-  | ({ event: 'review-request' } & Omit<RequestState, 'id'>)
+  | ({ event: 'review-request' } & Omit<RequestState, 'id' | 'commentId'>)
 );
 
 /**
@@ -33,7 +33,10 @@ export type RequestOutcome = 'asked' | 'acknowledged' | 'failed' | 'answered' | 
 
 /** A comment that asks a bot for a review, and where it stands. `reason` gives the cause of a failure. */
 export interface RequestState {
+  /** The request: the comment and the bot. One comment can ask two bots. */
   id: string;
+  /** The comment of the request, as `personComments` names it. */
+  commentId: string;
   bot: string;
   author: string;
   createdAt: string;
@@ -117,7 +120,8 @@ export function requestStates(
       return minutes >= settings.reviewRequestTimeoutMinutes ? 'stale' : 'asked';
     })();
     return {
-      id: `comment:${comment.id ?? comment.created_at}`,
+      id: `comment:${comment.id ?? comment.created_at}:${bot}`,
+      commentId: `comment:${comment.id ?? comment.created_at}`,
       bot,
       author: comment.user!.login,
       createdAt: comment.created_at,
@@ -139,7 +143,7 @@ export function requestChanges(
   at: string,
 ): WatchEvent[] {
   const events: WatchEvent[] = [];
-  for (const { id, ...state } of states) {
+  for (const { id, commentId: _comment, ...state } of states) {
     if (known.get(id) === state.outcome) continue;
     known.set(id, state.outcome);
     events.push({ at, pr, event: 'review-request', ...state });
@@ -434,7 +438,11 @@ export async function watchEvents(
         if (snapshot?.status !== 'open') continue;
         const key = keyOf(pr);
         const requests = requestStates(snapshot, settings, now);
-        const comments = personComments(snapshot, settings.commentEvents, new Set(requests.map(({ id }) => id)));
+        const comments = personComments(
+          snapshot,
+          settings.commentEvents,
+          new Set(requests.map(({ commentId }) => commentId)),
+        );
         const seen = seenComments.get(key);
         if (seen) events.push(...newComments(key, comments, seen, now.toISOString()));
         else seenComments.set(key, new Set(comments.map((comment) => comment.id)));
