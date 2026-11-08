@@ -1,3 +1,4 @@
+import { rename, rm, writeFile } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { reviewerGroup, reviewRequests } from './policy.js';
@@ -424,6 +425,21 @@ export interface WatchState {
 
 /** A state of another version is not read: its reports can lack keys, and give false changes. */
 export const STATE_VERSION = 1;
+
+/**
+ * Writes the state in one step: a write to a temporary file, then a rename. A stop during the write
+ * leaves the old state, not a broken file. A rename that fails removes the temporary file.
+ */
+export async function writeWatchState(path: string, state: WatchState): Promise<void> {
+  const temporary = `${path}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(state));
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
 
 /** Reads a saved state. A missing file, another version or a broken file gives no state: the watch starts as new. */
 export function parseWatchState(text: string | undefined): WatchState | undefined {

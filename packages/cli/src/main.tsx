@@ -1,11 +1,11 @@
 import { render } from 'ink';
 import meow from 'meow';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { setTimeout as wait } from 'node:timers/promises';
 import { App } from './app.js';
 import { fetchPullRequest, listPullRequests, openInBrowser, probePullRequests, viewerLogin } from './github.js';
-import { parseWatchState, readReport, watchEvents, type WatchSources } from './events.js';
+import { parseWatchState, readReport, watchEvents, writeWatchState, type WatchSources } from './events.js';
 import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, parseRepos, resolveRepos, saveSettings, settingsPath } from './settings.js';
@@ -311,11 +311,7 @@ if (cli.flags.events) {
       snapshots: cli.flags.snapshot,
       // A rename replaces the file in one step: a stop during the write leaves the old state, not a broken file.
       ...(statePath && {
-        onState: async (state) => {
-          const temporary = `${statePath}.${process.pid}.tmp`;
-          await writeFile(temporary, JSON.stringify(state));
-          await rename(temporary, statePath);
-        },
+        onState: (state) => writeWatchState(statePath, state),
         onStateError: (error: unknown) =>
           console.error(
             `✖ cannot write the state to ${statePath}: ${error instanceof Error ? error.message : String(error)}`,

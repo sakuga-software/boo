@@ -4,6 +4,7 @@ import {
   diffReports,
   holdErrors,
   parseWatchState,
+  writeWatchState,
   STATE_VERSION,
   newComments,
   personComments,
@@ -858,4 +859,17 @@ test('the saved state forgets the comments and the requests of a pull request th
   const { state: after } = await runWatch([merged], { initial: state });
   assert.deepEqual(Object.keys(after.comments), ['acme/web#1']);
   assert.deepEqual(Object.keys(after.requests), ['acme/web#1']);
+});
+
+test('a state write that cannot rename its file leaves no temporary file', async () => {
+  const { mkdtemp, mkdir, readdir, readFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'boo-state-'));
+  const state = { version: STATE_VERSION, reports: [], comments: {}, requests: {} };
+  await writeWatchState(join(dir, 'state.json'), state);
+  assert.deepEqual(JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')), state);
+  await mkdir(join(dir, 'folder', 'inside'), { recursive: true });
+  await assert.rejects(writeWatchState(join(dir, 'folder'), state));
+  assert.deepEqual((await readdir(dir)).sort(), ['folder', 'state.json']);
 });
