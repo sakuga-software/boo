@@ -45,8 +45,17 @@ export interface FindingFacts {
 const BADGE = /<img\b[^>]*\balt="(P\d)"/i;
 const TITLE = /\*\*(.+?)\*\*/;
 const SHORT_ID = /`(#[0-9a-f]{6,12})`/i;
-// The block of Sakuga Review in the description. With no block, the whole description counts.
-const BLOCK = /<!-- sakuga-review:start -->([\s\S]*?)(?:<!-- sakuga-review:end -->|$)/;
+// The block of Sakuga Review in the description: its markers stand on their own lines. A text can
+// quote a marker inline, so the last start marker counts. With no block, the whole description counts.
+const START = /^<!-- sakuga-review:start -->\s*$/gm;
+const END = /^<!-- sakuga-review:end -->\s*$/m;
+const blockOf = (body: string) => {
+  const start = [...body.matchAll(START)].at(-1);
+  if (!start) return body;
+  const rest = body.slice(start.index + start[0].length);
+  const end = END.exec(rest);
+  return end ? rest.slice(0, end.index) : rest;
+};
 
 const sameLogin = (a: string, b: string) =>
   a.replace(/\[bot\]$/, '').toLowerCase() === b.replace(/\[bot\]$/, '').toLowerCase();
@@ -73,23 +82,27 @@ export function findingsIn(text: string): { level: string; title: string; id?: s
 
 /**
  * Finds the findings of the review bots, and tells if each one has an answer:
- * - a finding of an open thread has an answer if the last comment of the thread is not of its bot;
+ * - a finding of an open thread has an answer if the last comment of the thread is not of a review bot;
  * - a finding of the last review of a bot, or of the description, has an answer if a comment that is
  *   not of that bot quotes its title or gives its short ID. A finding of a review counts only the
  *   comments after the review. The description has no time: any comment counts.
  */
 export function findingsOf(facts: FindingFacts): Finding[] {
   const findings: Finding[] = [];
-  for (const thread of facts.openThreads ?? []) {
-    if (!isBotLogin(thread.author) || sameLogin(thread.author, facts.author) || !thread.body) continue;
-    const answered = Boolean(thread.lastAuthor && !sameLogin(thread.lastAuthor, thread.author));
-    for (const finding of findingsIn(thread.body).slice(0, 1))
-      findings.push({ ...finding, place: 'thread', bot: thread.author, answered });
-  }
   // The review bots: a bot login with a review, other than the author. An agent that posts as a bot reviews nothing.
   const reviewBots = facts.reviews
     .map((review) => review.user?.login)
     .filter((login): login is string => Boolean(login) && isBotLogin(login!) && !sameLogin(login!, facts.author));
+  for (const thread of facts.openThreads ?? []) {
+    if (!isBotLogin(thread.author) || sameLogin(thread.author, facts.author) || !thread.body) continue;
+    // A reply of another review bot is no answer: only the author, a person or an agent answers.
+    const last = thread.lastAuthor;
+    const answered = Boolean(
+      last && !sameLogin(last, thread.author) && !reviewBots.some((bot) => sameLogin(bot, last)),
+    );
+    for (const finding of findingsIn(thread.body).slice(0, 1))
+      findings.push({ ...finding, place: 'thread', bot: thread.author, answered });
+  }
   const quoted = (finding: { title: string; id?: string }, excluded: readonly string[], since = '') =>
     facts.comments.some((comment) => {
       if (!comment.user || excluded.some((bot) => sameLogin(bot, comment.user!.login))) return false;
@@ -110,7 +123,7 @@ export function findingsOf(facts: FindingFacts): Finding[] {
   for (const [bot, review] of lastReviews)
     for (const finding of findingsIn(review.body ?? ''))
       findings.push({ ...finding, place: 'review', bot, answered: quoted(finding, [bot], review.submitted_at) });
-  const block = BLOCK.exec(facts.body)?.[1] ?? facts.body;
+  const block = blockOf(facts.body);
   // The block of the description has no author: an answer of any account but a review bot counts.
   for (const finding of findingsIn(block))
     findings.push({ ...finding, place: 'description', bot: '', answered: quoted(finding, reviewBots) });

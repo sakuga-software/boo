@@ -43,6 +43,7 @@ test('the findings of the threads, the last review of each bot and the descripti
     author: 'sakuga-agent[bot]',
     body: BLOCK,
     reviews: [
+      review('coderabbitai[bot]', 'Looks fine.', '2026-11-08T08:00:00Z'),
       review(KENTO, `${badge('P1')} **Old finding of an old round**`, '2026-11-08T09:00:00Z'),
       review(KENTO, `Score 3/5\n\n- ${badge('P3')} **Un nom peu clair**`, '2026-11-08T10:00:00Z'),
       review('sakuga-agent[bot]', `${badge('P1')} **The author quotes a badge**`, '2026-11-08T10:30:00Z'),
@@ -60,6 +61,7 @@ test('the findings of the threads, the last review of each bot and the descripti
       { author: KENTO, body: `${badge('P1')} **Redirection non refusée**\n\nText.`, lastAuthor: 'sakuga-agent[bot]' },
       { author: KENTO, body: `${badge('P2')} **Second thread**`, lastAuthor: KENTO },
       { author: 'alice', body: `${badge('P1')} **A person**` },
+      { author: KENTO, body: `${badge('P2')} **Another bot replied**`, lastAuthor: 'coderabbitai[bot]' },
       { author: KENTO, body: 'No badge here.' },
     ],
   });
@@ -67,6 +69,7 @@ test('the findings of the threads, the last review of each bot and the descripti
     findings.map(({ level, place, answered }) => `${place} ${level} ${answered ? 'answered' : 'open'}`),
     [
       'thread P1 answered',
+      'thread P2 open',
       'thread P2 open',
       'review P3 open',
       'description P2 answered',
@@ -77,15 +80,15 @@ test('the findings of the threads, the last review of each bot and the descripti
   const summary = summarizeFindings(findings);
   assert.deepEqual(summary.levels, {
     P1: { count: 2, answered: 1 },
-    P2: { count: 3, answered: 2 },
+    P2: { count: 4, answered: 2 },
     P3: { count: 1, answered: 0 },
   });
   assert.deepEqual(summary.places, {
-    thread: { count: 2, answered: 1 },
+    thread: { count: 3, answered: 1 },
     review: { count: 1, answered: 0 },
     description: { count: 3, answered: 2 },
   });
-  assert.equal(summary.count, 6);
+  assert.equal(summary.count, 7);
   assert.equal(summary.answered, 3);
   assert.deepEqual(summary.unanswered.at(-1), {
     level: 'P1',
@@ -120,4 +123,12 @@ test('a description with no block counts the whole text, and no badge gives no f
     },
     unanswered: [],
   });
+});
+
+test('a quote of the start marker in the text of the description does not move the block', () => {
+  const body = `Parses the block (\`<!-- sakuga-review:start -->\` … \`end\`). ${badge('P3')} **Not a finding**\n\n${BLOCK}`;
+  assert.deepEqual(
+    findingsOf({ author: 'me', body, reviews: [], comments: [] }).map(({ title }) => title),
+    findingsIn(BLOCK).map(({ title }) => title),
+  );
 });
