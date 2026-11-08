@@ -14,6 +14,7 @@ import {
   listKey,
   listOrLast,
   mergeSearches,
+  parsePullRequestRef,
   pointsOutUntil,
   probeQuery,
   QuotaError,
@@ -289,4 +290,19 @@ test('a job log that GitHub does not give in time is a failed read, tried again 
   const now = Date.now();
   assert.equal(await jobErrorLine(cache, 'job', never, now, 20), undefined);
   assert.deepEqual((await cache.get('job', Infinity))?.value, { line: null, failed: true });
+});
+
+test('a pull request is named as owner/repo#n, repo#n in the organization, or its URL', () => {
+  const ref = (repo: string, number: number) => ({
+    repo,
+    number,
+    title: '',
+    url: `https://github.com/${repo}/pull/${number}`,
+  });
+  assert.deepEqual(parsePullRequestRef('fruitback#641', 'sakuga-software'), ref('sakuga-software/fruitback', 641));
+  assert.deepEqual(parsePullRequestRef('acme/web#7', 'sakuga-software'), ref('acme/web', 7));
+  assert.deepEqual(parsePullRequestRef('https://github.com/acme/web/pull/7', ''), ref('acme/web', 7));
+  assert.equal(parsePullRequestRef('fruitback#641', ''), undefined);
+  for (const wrong of ['fruitback', '#641', 'acme/web#x', 'https://github.com/acme/web/issues/7'])
+    assert.equal(parsePullRequestRef(wrong, 'acme'), undefined, wrong);
 });
