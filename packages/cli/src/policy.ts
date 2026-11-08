@@ -3,8 +3,18 @@ import type { Comment, Review } from './decide.js';
 
 /** The rules that a team adds to "ready to merge", from the `mergePolicy` of the settings file. */
 export interface MergePolicy {
-  /** The last confidence score of `reviewer` must be at least `score`, from a review of the head commit if `onHead`. */
-  minScore?: { reviewer: string; score: number; onHead: boolean; deepest?: ReviewLevels };
+  /**
+   * The last confidence score of `reviewer` must be at least `score`, from a review of the head commit if `onHead`.
+   * `reviewer` can be a list of logins that count as one reviewer, for a review App that changed its name.
+   * `commands` are the mentions that ask that reviewer for a review, such as "@kento-ai".
+   */
+  minScore?: {
+    reviewer: string | string[];
+    score: number;
+    onHead: boolean;
+    deepest?: ReviewLevels;
+    commands?: string[];
+  };
   /** A regular expression that the description or a comment must match: a link to a recording, or a reason. */
   requireProof?: string;
   /**
@@ -76,6 +86,20 @@ export const extraFields = (policy: MergePolicy | undefined) => ({
   files: Boolean(policy?.ownerOnly),
 });
 
+/** Reads a text or a list of texts. Drops the empty texts and the duplicates. */
+const texts = (value: unknown): string[] => [
+  ...new Set(
+    (Array.isArray(value) ? value : [value])
+      .filter((text): text is string => typeof text === 'string')
+      .map((text) => text.trim())
+      .filter(Boolean),
+  ),
+];
+
+/** The logins of the score reviewer. The first login names the reviewer in the notes. */
+export const reviewerLogins = (minScore: NonNullable<MergePolicy['minScore']>): string[] =>
+  Array.isArray(minScore.reviewer) ? minScore.reviewer : [minScore.reviewer];
+
 function parseLevels(value: unknown): ReviewLevels | undefined {
   if (!isRecord(value) || typeof value.pattern !== 'string' || !compiles(value.pattern)) return undefined;
   if (!/\((?!\?)/.test(value.pattern)) return undefined;
@@ -90,19 +114,17 @@ export function parseMergePolicy(value: unknown): MergePolicy | undefined {
   if (!isRecord(value)) return undefined;
   const policy: MergePolicy = {};
   const { minScore, requireProof, resolvedBotThreads, ownerOnly, answeredReviewRequests } = value;
-  if (
-    isRecord(minScore) &&
-    typeof minScore.reviewer === 'string' &&
-    minScore.reviewer.trim() &&
-    typeof minScore.score === 'number' &&
-    minScore.score > 0
-  ) {
+  const reviewers = isRecord(minScore) ? texts(minScore.reviewer) : [];
+  if (isRecord(minScore) && reviewers.length > 0 && typeof minScore.score === 'number' && minScore.score > 0) {
     const deepest = parseLevels(minScore.deepest);
+    const commands = texts(minScore.commands);
     policy.minScore = {
-      reviewer: minScore.reviewer.trim(),
+      // One login stays a string, so that the settings file keeps the shape that older versions read.
+      reviewer: reviewers.length === 1 ? reviewers[0]! : reviewers,
       score: minScore.score,
       onHead: minScore.onHead === true,
       ...(deepest && { deepest }),
+      ...(commands.length > 0 && { commands }),
     };
   }
   if (typeof requireProof === 'string' && requireProof.trim() && compiles(requireProof))
@@ -159,7 +181,7 @@ interface ScoredPost {
 }
 
 /** The posts of the reviewer that give a score, from the oldest to the newest. */
-function scoredPosts(reviewer: string, facts: PolicyFacts): ScoredPost[] {
+function scoredPosts(logins: readonly string[], facts: PolicyFacts): ScoredPost[] {
   return [
     ...facts.reviews.map((review) => ({
       login: review.user?.login,
@@ -175,7 +197,7 @@ function scoredPosts(reviewer: string, facts: PolicyFacts): ScoredPost[] {
     })),
   ]
     .flatMap(({ login, body, at, commit }) => {
-      const match = login && sameLogin(login, reviewer) ? CONFIDENCE.exec(body) : null;
+      const match = login && logins.some((reviewer) => sameLogin(login, reviewer)) ? CONFIDENCE.exec(body) : null;
       if (!match) return [];
       return [{ body, at, ...(commit && { commit }), score: Number(match[1]), total: Number(match[2]) }];
     })
@@ -191,7 +213,7 @@ function scoreOf(
   minScore: NonNullable<MergePolicy['minScore']>,
   facts: PolicyFacts,
 ): { post?: ScoredPost; level?: string } {
-  const posts = scoredPosts(minScore.reviewer, facts);
+  const posts = scoredPosts(reviewerLogins(minScore), facts);
   const { deepest } = minScore;
   if (!deepest) return { post: posts.at(-1) };
   const pattern = new RegExp(deepest.pattern, 'i');
@@ -209,29 +231,77 @@ function scoreOf(
   return { ...(post ? { post } : { post: deep.at(-1) }), ...(level && { level }) };
 }
 
+/** One reviewer with several logins, and the mentions that ask it for a review. */
+export interface ReviewerGroup {
+  logins: readonly string[];
+  /** The mentions that start a request, in addition to "@" + each login, such as "@kento-ai". */
+  commands: readonly string[];
+  /** The words that ask for a review after a mention, in addition to "review", such as "heavy". */
+  levels: readonly string[];
+}
+
+/** The reviewer group of the score rule, if it has one. */
+export function reviewerGroup(policy: MergePolicy | undefined): ReviewerGroup | undefined {
+  const minScore = policy?.minScore;
+  if (!minScore) return undefined;
+  return {
+    logins: reviewerLogins(minScore),
+    commands: minScore.commands ?? [],
+    levels: minScore.deepest?.levels ?? [],
+  };
+}
+
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const lastReviewOf = (reviews: readonly Review[], counts: (login: string) => boolean) =>
+  reviews
+    .filter((review) => review.user && counts(review.user.login))
+    .reduce((last, review) => (review.submitted_at > last ? review.submitted_at : last), '');
+
+/**
+ * True if a comment asks the group for a review after its last review: a line starts with a mention of
+ * the group, and the rest of the line has the word "review" or a level. "@kento-review reject …" is not a request.
+ */
+function asksGroup(group: ReviewerGroup, facts: Pick<PolicyFacts, 'reviews' | 'comments'>): boolean {
+  const member = (login: string) => group.logins.some((other) => sameLogin(login, other));
+  const lastReview = lastReviewOf(facts.reviews, member);
+  const mentions = [...group.commands, ...group.logins.map((login) => `@${login.replace(/\[bot\]$/, '')}`)];
+  const line = new RegExp(`^\\s*(?:${mentions.map(escape).join('|')})(?![\\w-])([^\\n]*)`, 'gim');
+  const words = new RegExp(`\\b(?:${['review', ...group.levels].map(escape).join('|')})\\b`, 'i');
+  return facts.comments.some(
+    (post) =>
+      post.user &&
+      !member(post.user.login) &&
+      post.created_at > lastReview &&
+      [...post.body.matchAll(line)].some((match) => words.test(match[1]!)),
+  );
+}
+
 /**
  * The bots that a comment asks for a review after their last review, such as "@sakuga-review review
  * balanced". A line of the comment must start with the mention and contain the word "review". A thank
  * you to the bot is not a request. The author of the comment must not be that bot: a
  * bot can quote its own command. An agent can post as a bot, so a request of another bot counts. A
  * bot is a bot login of a review or a comment of the pull request.
+ * The logins of `group` count as one bot, named by its first login: a review of one login answers a
+ * request to another, and a command of the group asks all of them.
  */
-export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comments'>): string[] {
+export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comments'>, group?: ReviewerGroup): string[] {
+  const member = (login: string) => Boolean(group?.logins.some((other) => sameLogin(login, other)));
   const logins = [
     ...facts.reviews.map((review) => review.user?.login),
     ...facts.comments.map((post) => post.user?.login),
   ];
-  const bots = [...new Set(logins.filter((login): login is string => Boolean(login) && isBotLogin(login!)))];
-  return bots.filter((bot) => {
-    const lastReview = facts.reviews
-      .filter((review) => review.user?.login === bot)
-      .reduce((last, review) => (review.submitted_at > last ? review.submitted_at : last), '');
-    const name = bot.replace(/\[bot\]$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const mention = new RegExp(`^\\s*@${name}(?![\\w-])[^\\n]*\\breview\\b`, 'im');
+  const bots = [
+    ...new Set(logins.filter((login): login is string => Boolean(login) && isBotLogin(login!) && !member(login!))),
+  ];
+  const asked = bots.filter((bot) => {
+    const lastReview = lastReviewOf(facts.reviews, (login) => login === bot);
+    const mention = new RegExp(`^\\s*@${escape(bot.replace(/\[bot\]$/, ''))}(?![\\w-])[^\\n]*\\breview\\b`, 'im');
     return facts.comments.some(
       (post) => post.user && post.user.login !== bot && post.created_at > lastReview && mention.test(post.body),
     );
   });
+  return group && asksGroup(group, facts) ? [group.logins[0]!, ...asked] : asked;
 }
 
 /** Returns the rules of the policy that the pull request misses, in the order of the settings file. */
@@ -241,7 +311,7 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
   const { minScore, requireProof, resolvedBotThreads, ownerOnly, answeredReviewRequests } = policy;
   if (minScore) {
     const { post, level } = scoreOf(minScore, facts);
-    const from = `${level ? `${level} ` : ''}score from ${minScore.reviewer}`;
+    const from = `${level ? `${level} ` : ''}score from ${reviewerLogins(minScore)[0]}`;
     if (!post) misses.push({ rule: 'minScore', note: `no ${from}` });
     else if (minScore.onHead && post.commit !== facts.head)
       misses.push({ rule: 'minScore', note: `no ${from} on head` });
@@ -276,7 +346,7 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
       });
   }
   if (answeredReviewRequests)
-    for (const bot of unansweredRequests(facts))
+    for (const bot of unansweredRequests(facts, reviewerGroup(policy)))
       misses.push({ rule: 'answeredReviewRequests', note: `review asked of ${displayName(bot)}, no answer yet` });
   return misses;
 }

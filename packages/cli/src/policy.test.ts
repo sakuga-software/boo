@@ -77,6 +77,60 @@ test('with levels, the deepest level counts, with its lowest score on head', () 
   assert.deepEqual(policyMisses(rule, facts({ reviews: [review(SAKUGA, 'head', 'Score de confiance : 4/5', 1)] })), []);
 });
 
+test('a renamed review App: every login of the reviewer list gives the score', () => {
+  const renamed = { minScore: { ...minScore, reviewer: ['kento-review', 'sakuga-review'] } };
+  const old = review(SAKUGA, 'head', 'Score de confiance : 5/5', 10);
+  assert.deepEqual(policyMisses(renamed, facts({ reviews: [old] })), []);
+  const low = review('kento-review[bot]', 'head', 'Score de confiance : 3/5', 1);
+  assert.deepEqual(policyMisses(renamed, facts({ reviews: [old, low] })), [
+    { rule: 'minScore', note: 'score 3/5 on head, 4 needed' },
+  ]);
+  assert.deepEqual(policyMisses(renamed, facts()), [{ rule: 'minScore', note: 'no score from kento-review' }]);
+});
+
+test('a request to one login of the reviewer list is answered by a review of another login', () => {
+  const deepest = { pattern: 'Niveau `(\\w+)`', levels: ['lite', 'balanced', 'heavy'] };
+  const group = {
+    minScore: { ...minScore, reviewer: ['kento-review', 'sakuga-review'], commands: ['@kento-ai', '@kento'], deepest },
+    answeredReviewRequests: true,
+  };
+  const old = review(SAKUGA, 'head', 'Score de confiance : 4/5', 20);
+  const answer = review('kento-review[bot]', 'head', 'Score de confiance : 4/5', 1);
+  const unanswered = [{ rule: 'answeredReviewRequests', note: 'review asked of kento-review, no answer yet' }];
+  for (const body of ['@sakuga-review review balanced', '@kento-ai review', '@kento heavy', '@kento-review lite']) {
+    const ask = comment('mathieu', body, 5);
+    assert.deepEqual(policyMisses(group, facts({ reviews: [old], comments: [ask] })), unanswered, body);
+    assert.deepEqual(policyMisses(group, facts({ reviews: [old, answer], comments: [ask] })), [], body);
+  }
+  const reject = comment('mathieu', '@kento-review reject the file is generated', 5);
+  const ownQuote = comment('kento-review[bot]', '@kento-ai review heavy', 5);
+  assert.deepEqual(policyMisses(group, facts({ reviews: [old], comments: [reject, ownQuote] })), []);
+  const other = comment('mathieu', '@greptile-apps review', 5);
+  const greptile = comment('greptile-apps[bot]', 'Confidence Score: 4/5', 30);
+  assert.deepEqual(unansweredRequests({ reviews: [old], comments: [greptile, other] }, undefined), [
+    'greptile-apps[bot]',
+  ]);
+});
+
+test('the reviewer list and the commands are read from the settings', () => {
+  assert.deepEqual(
+    parseMergePolicy({
+      minScore: {
+        reviewer: [' kento-review', 'sakuga-review', 3, 'kento-review'],
+        score: 4,
+        commands: ['@kento-ai', ''],
+      },
+    })?.minScore,
+    { reviewer: ['kento-review', 'sakuga-review'], score: 4, onHead: false, commands: ['@kento-ai'] },
+  );
+  assert.deepEqual(parseMergePolicy({ minScore: { reviewer: ['kento-review'], score: 4 } })?.minScore, {
+    reviewer: 'kento-review',
+    score: 4,
+    onHead: false,
+  });
+  assert.equal(parseMergePolicy({ minScore: { reviewer: [], score: 4 } }), undefined);
+});
+
 test('the proof can be in the description or in a comment', () => {
   const policy = { requireProof: '\\.(gif|webm|mp4)|No /tfp:' };
   assert.deepEqual(policyMisses(policy, facts({ body: 'A change.' })), [{ rule: 'requireProof', note: 'no proof' }]);

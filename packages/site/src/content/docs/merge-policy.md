@@ -28,6 +28,31 @@ to merge it and names the rules. `--json` gives the misses in `policy`.
 | `ownerOnly`              | If the pull request changes a file under one of `paths` (globs: `*` in a name, `**` for any folders), only `owner` merges it. The query reads the first 100 files: with more, only `owner` merges. `@me` is the account of `gh`, so a shared file names the owner by login.                                                                                                                                                                                                                                                                                                                                                                      | `mathieu merges`                                                                                                                                                                      |
 | `answeredReviewRequests` | An answer of each bot that a comment asked for a review after its last review: a line that starts with the mention of the bot and contains the word `review`, such as `@sakuga-review review balanced`. A thank you to the bot is not a request. A review of that bot after the comment answers it. The comment of the bot itself does not count, but the comment of an agent that posts as a bot does.                                                                                                                                                                                                                                          | `review asked of sakuga-review, no answer yet`                                                                                                                                        |
 
+## A review App with several logins
+
+A review App that changes its name posts under a new login, and the old pull requests keep the
+reviews of the old login. `reviewer` can then be a list of logins that count as one reviewer. The
+first login names it in the notes. `commands` lists the other mentions that ask it for a review:
+
+```json
+{
+  "minScore": {
+    "reviewer": ["kento-review", "sakuga-review"],
+    "commands": ["@kento-ai", "@kento"],
+    "score": 4,
+    "onHead": true,
+    "deepest": { "pattern": "Niveau `(\\w+)`", "levels": ["lite", "balanced", "heavy"] }
+  }
+}
+```
+
+- `minScore` reads the score of the last review of any of these logins.
+- `answeredReviewRequests` takes a request to one of them, such as `@sakuga-review review` or
+  `@kento-ai review`, and a review of any of them answers it. With `deepest`, a level after the
+  mention also asks for a review: `@kento-review heavy`. Another command, such as
+  `@kento-review reject`, does not.
+- `resolvedBotThreads` already counts the threads of every bot login.
+
 Some bots write in a thread that its finding is gone, but an agent may have no right to resolve the
 thread. Sakuga Review writes the marker `<!-- sakuga-review:gone -->` in that comment.
 
