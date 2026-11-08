@@ -26,7 +26,7 @@ export type WatchEvent = { at: string; pr: string } & (
  * - `answered`: a review of the bot came after the comment;
  * - `failed`: the bot put 😕 on the comment, or posted a comment after it that says it failed;
  * - `acknowledged`: the bot put 👀 on the comment;
- * - `stale`: no reaction and no review after `reviewRequestTimeoutMinutes`;
+ * - `stale`: no 👀, no 😕 and no review after `reviewRequestTimeoutMinutes`;
  * - `asked`: none of these yet.
  */
 export type RequestOutcome = 'asked' | 'acknowledged' | 'failed' | 'answered' | 'stale';
@@ -70,9 +70,14 @@ export function requestStates(
     const beforeNext = (at: string) => !next || at <= next.comment.created_at;
     const reactions = comment.reactions ?? [];
     // GitHub gives the times to the second: a review in the same second as the request answers it.
+    // A review after the next request to the same bot answers that one, not this one.
     const answered = snapshot.reviews.some(
       (review) =>
-        review.user && member(review.user.login) && !review.threadReply && review.submitted_at >= comment.created_at,
+        review.user &&
+        member(review.user.login) &&
+        !review.threadReply &&
+        review.submitted_at >= comment.created_at &&
+        (!next || review.submitted_at < next.comment.created_at),
     );
     const failure = snapshot.comments.find(
       (post) =>
@@ -88,7 +93,8 @@ export function requestStates(
       if (answered) return 'answered';
       if (failed) return 'failed';
       if (reactions.includes('EYES')) return 'acknowledged';
-      return reactions.length === 0 && minutes >= settings.reviewRequestTimeoutMinutes ? 'stale' : 'asked';
+      // Only 👀 and 😕 are answers of the bot: a 👍 of a person does not keep the request alive.
+      return minutes >= settings.reviewRequestTimeoutMinutes ? 'stale' : 'asked';
     })();
     return {
       id: `comment:${comment.id ?? comment.created_at}`,

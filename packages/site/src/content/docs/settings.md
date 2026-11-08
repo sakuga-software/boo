@@ -35,7 +35,7 @@ organization of `--org`. With no `repos`, the tool lists every repository of the
 ```
 
 The key `reviewRequestTimeoutMinutes` (15 by default) is the time after which a review asked by
-comment, with no reaction and no review, is `stale` in the events: see
+comment, with no 👀, no 😕 and no review, is `stale` in the events: see
 [Scripts and orchestrators](../automation/).
 
 ```json

@@ -122,13 +122,14 @@ is a command, not a remark: it gives `review-request` events, and no `comment` e
 follows the rules of [`answeredReviewRequests`](../merge-policy/), with the logins and the commands
 of `minScore`. Its `outcome` is the first that applies:
 
-- `answered`: a review of the bot came after the comment;
+- `answered`: a review of the bot came after the comment, and before the next request to the same
+  bot;
 - `failed`: the bot put 😕 on the comment, or posted a failure notice after it and before the next
   request to the same bot: a comment whose first line says `review en échec`, `review failed`,
   `unable to review`, `quota`, `usage limit` or `rate limit`. `reason` gives the cause: the line
   that starts with `Raison`, `Reason`, `Cause` or `Error`, else the first paragraph;
 - `acknowledged`: the bot put 👀 on the comment;
-- `stale`: no reaction and no review after `reviewRequestTimeoutMinutes` (15 by default);
+- `stale`: no 👀, no 😕 and no review after `reviewRequestTimeoutMinutes` (15 by default);
 - `asked`: none of these yet.
 
 The first read of a pull request gives no `review-request` event. Then each request gives one event

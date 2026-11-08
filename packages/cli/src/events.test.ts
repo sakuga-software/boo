@@ -475,6 +475,9 @@ test('a review asked by comment is asked, acknowledged, failed, answered or stal
   assert.deepEqual(outcome({ comments: [ask(['EYES', 'CONFUSED'])] }), ['failed']);
   assert.deepEqual(outcome({ reviews: [kentoReview], comments: [ask(['EYES'])] }, 40), ['answered']);
   assert.deepEqual(outcome({ reviews: [{ ...kentoReview, submitted_at: at(22) }], comments: [ask()] }), ['answered']);
+  assert.deepEqual(outcome({ comments: [ask(['THUMBS_UP'])] }, 38), ['stale']);
+  const retry = { ...ask(), id: 4, created_at: at(26), updated_at: at(26) };
+  assert.deepEqual(outcome({ reviews: [kentoReview], comments: [ask(), retry] }, 40), ['stale', 'answered']);
   const [failed] = requestStates({ reviews: [], comments: [ask(['EYES']), failure] }, settings, new Date(at(25)));
   assert.deepEqual(failed, {
     id: 'comment:1',
