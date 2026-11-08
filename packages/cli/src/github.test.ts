@@ -247,6 +247,13 @@ test('the first error line of a job log skips the timestamps and the exit code a
   );
   assert.equal(firstErrorLine('all good\n##[error]Process completed with exit code 1.'), undefined);
   assert.equal(firstErrorLine(`error: ${'x'.repeat(300)}`)!.length, 200);
+  const caught = [
+    'error: retry 1 of 3 failed',
+    '##[error]a caught warning',
+    'ok',
+    '##[error]Review failed: quota',
+  ].join('\n');
+  assert.equal(firstErrorLine(caught), 'Review failed: quota');
 });
 
 test('a read with the checks of the review bots does not answer a read without them', () => {
@@ -269,8 +276,17 @@ test('a job log that GitHub did not give is read again later, and a log that it 
   assert.equal(await jobErrorLine(cache, 'job', down, now), undefined);
   assert.equal(await jobErrorLine(cache, 'job', ready, now + 60_000), undefined);
   assert.equal(reads, 1);
-  const later = now + JOB_LOG_RETRY_MS + 1;
+  // The cache writes the real time, a few milliseconds after `now`: the margin keeps the test stable on a slow runner.
+  const later = now + JOB_LOG_RETRY_MS + 60_000;
   assert.equal(await jobErrorLine(cache, 'job', ready, later), 'fatal: Invalid revision range a..b');
   assert.equal(await jobErrorLine(cache, 'job', down, later + 24 * 3_600_000), 'fatal: Invalid revision range a..b');
   assert.equal(reads, 2);
+});
+
+test('a job log that GitHub does not give in time is a failed read, tried again later', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  const never = () => new Promise<string>(() => {});
+  const now = Date.now();
+  assert.equal(await jobErrorLine(cache, 'job', never, now, 20), undefined);
+  assert.deepEqual((await cache.get('job', Infinity))?.value, { line: null, failed: true });
 });

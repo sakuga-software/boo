@@ -11,9 +11,9 @@ import { isBotLogin, type Check, type CheckState } from './reviewers.js';
 
 const execFileAsync = promisify(execFile);
 
-async function gh(args: string[]): Promise<string> {
+async function gh(args: string[], { timeout = 0 }: { timeout?: number } = {}): Promise<string> {
   try {
-    const { stdout } = await execFileAsync('gh', args, { maxBuffer: 64 * 1024 * 1024 });
+    const { stdout } = await execFileAsync('gh', args, { maxBuffer: 64 * 1024 * 1024, timeout });
     return stdout;
   } catch (error) {
     const { stderr, stdout } = error as { stderr?: string; stdout?: string };
@@ -885,21 +885,28 @@ export const readKey = (pr: PullRequest, { threads, files, lineComments, reviewe
   }`;
 
 /**
- * The first error line of the log of a GitHub Actions job: a line that starts with "fatal" or
- * "error", or an "##[error]" annotation. The annotation "Process completed with exit code 1" tells nothing.
+ * The error line of the log of a GitHub Actions job. The last "##[error]" annotation wins: an action
+ * writes its cause there when it fails, and an earlier one can be an error that a step caught. With no
+ * annotation, the first line that starts with "fatal" or "error". The annotation "Process completed
+ * with exit code 1" tells nothing.
  */
 export function firstErrorLine(log: string): string | undefined {
+  let annotation: string | undefined;
+  let plain: string | undefined;
   for (const raw of log.split('\n')) {
     const line = raw.replace(/^\d{4}-\d{2}-\d{2}T\S+Z /, '').trim();
     if (/^##\[error\]Process completed with exit code/.test(line)) continue;
-    const text = line.startsWith('##[error]') ? line.slice('##[error]'.length).trim() : line;
-    if (text && (line !== text || /^(?:fatal|error)\b\W/i.test(text)))
-      return text.length > ERROR_LENGTH ? `${text.slice(0, ERROR_LENGTH - 1)}…` : text;
+    if (line.startsWith('##[error]')) annotation = line.slice('##[error]'.length).trim() || annotation;
+    else if (!plain && /^(?:fatal|error)\b\W/i.test(line)) plain = line;
   }
-  return undefined;
+  const text = annotation ?? plain;
+  return text && text.length > ERROR_LENGTH ? `${text.slice(0, ERROR_LENGTH - 1)}…` : text;
 }
 
 const ERROR_LENGTH = 200;
+
+/** A read of a log that takes longer fails: the read of the pull request waits for it. */
+export const JOB_LOG_TIMEOUT_MS = 10_000;
 
 /** A log that GitHub did not give is read again after this time: it can come some seconds after the end of the job. */
 export const JOB_LOG_RETRY_MS = 5 * 60_000;
@@ -914,11 +921,16 @@ export async function jobErrorLine(
   key: string,
   readLog: () => Promise<string>,
   now = Date.now(),
+  timeoutMs = JOB_LOG_TIMEOUT_MS,
 ): Promise<string | undefined> {
   const known = await store.get<{ line: string | null; failed?: true }>(key, Infinity, now);
   if (known && (!known.value.failed || now - known.at < JOB_LOG_RETRY_MS)) return known.value.line ?? undefined;
   try {
-    const line = firstErrorLine(await readLog());
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('the log read timed out')), timeoutMs);
+    });
+    const line = firstErrorLine(await Promise.race([readLog(), late]).finally(() => clearTimeout(timer)));
     await store.set(key, { line: line ?? null });
     return line;
   } catch {
@@ -928,7 +940,9 @@ export async function jobErrorLine(
 }
 
 const jobError = (repo: string, job: number) =>
-  jobErrorLine(cache, `job-error-${repo}-${job}`, () => gh(['api', `repos/${repo}/actions/jobs/${job}/logs`]));
+  jobErrorLine(cache, `job-error-${repo}-${job}`, () =>
+    gh(['api', `repos/${repo}/actions/jobs/${job}/logs`], { timeout: JOB_LOG_TIMEOUT_MS }),
+  );
 
 /** Adds the first error line to each failed check of a review bot that is a GitHub Actions job. */
 async function withReviewerErrors(repo: string, checks: Check[], names: readonly string[] = []): Promise<Check[]> {
