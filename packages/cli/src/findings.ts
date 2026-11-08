@@ -87,13 +87,6 @@ export function findingsIn(text: string): { level: string; title: string; id?: s
 }
 
 /**
- * Finds the findings of the review bots, and tells if each one has an answer:
- * - a finding of an open thread has an answer if the last comment of the thread answers (see `answers`);
- * - a finding of the last review of a bot, or of the description, has an answer if a comment that is
- *   answers quotes its title or gives its short ID. A finding of a review counts only the
- *   comments after the review. The description has no time: any comment counts.
- */
-/**
  * True if a comment of this login answers a bot: the author of the pull request, or an agent of the
  * settings. A person who discusses a finding does not answer it for the author.
  */
@@ -106,6 +99,13 @@ export function threadAnswered(thread: OpenThread, author: string, agents: reado
   return Boolean(last && !sameLogin(last, thread.author) && answersBots(last, author, agents));
 }
 
+/**
+ * Finds the findings of the review bots, and tells if each one has an answer:
+ * - a finding of an open thread has an answer if the last comment of the thread answers (see `answers`);
+ * - a finding of the last review of a bot, or of the description, has an answer if a comment that is
+ *   answers quotes its title or gives its short ID. A finding of a review counts only the
+ *   comments after the review. The description has no time: any comment counts.
+ */
 export function findingsOf(facts: FindingFacts): Finding[] {
   const findings: Finding[] = [];
   // An answer comes from the author of the pull request or from an agent of the settings, as #78 and #79 ask.
