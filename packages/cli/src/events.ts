@@ -352,7 +352,9 @@ export function diffReports(
           ...(report.state === 'merged' && { mergedBy: report.mergedBy, mergedAt: report.mergedAt }),
           ...(owner && { ownerPaths: owner.paths, byOwner }),
         });
-        if (owner && byOwner === false)
+        // An unknown account (GitHub gives none for a deleted account) can be a bypass too: it gets the alert.
+        const unknown = owner && owner.owner !== '@me' && !report.mergedBy;
+        if (owner && (byOwner === false || unknown))
           events.push({
             at,
             pr,

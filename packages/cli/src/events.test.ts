@@ -917,6 +917,11 @@ test('a merge of a pull request with owner paths says if the owner merged it, an
     diffReports(byKey(open), [merged('mheaus')], AT).map((event) => event.event === 'left' && event.byOwner),
     [true],
   );
+  const ghost = report(1, { needsOwner, state: 'merged', mergedBy: null, mergedAt: '2026-10-29T10:00:00Z' });
+  assert.deepEqual(
+    diffReports(byKey(open), [ghost], AT).map((event) => event.event),
+    ['left', 'owner-bypass'],
+  );
   const plain = report(1, { state: 'merged', mergedBy: 'octocat', mergedAt: '2026-10-29T10:00:00Z' });
   assert.deepEqual(diffReports(byKey(report(1)), [plain], AT), [
     {
