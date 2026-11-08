@@ -263,3 +263,16 @@ test('every call refuses a redirect, and a removal that the relay refuses says t
     assert.equal(await loadRelay(value.path), undefined);
   }
 });
+
+test('a slow_down with an interval of 0 still waits 5 s more than before', async () => {
+  const { fetchFn } = fakeNetwork(routes([{ body: { error: 'slow_down', interval: 0 } }, granted]));
+  const sleeps: number[] = [];
+  const { value } = await deps(fetchFn);
+  const sleep = value.sleep;
+  value.sleep = async (ms) => {
+    sleeps.push(ms);
+    await sleep(ms);
+  };
+  await setupWebhooks(RELAY, value);
+  assert.deepEqual(sleeps.slice(0, 2), [5_000, 10_000]);
+});
