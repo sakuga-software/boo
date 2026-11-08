@@ -42,8 +42,10 @@ export interface RequestState {
   reason?: string;
 }
 
-// The words of a failure in the first paragraph of a bot comment: "**Kentō · review en échec**", "quota", "usage limit".
-const FAILURE = /échec|\bfail(?:ed|ure)?\b|\berror\b|quota|rate.limit|limit reached|unable to review|usage limit/i;
+// A failure notice of a review bot says so on its first line: "**Kentō · review en échec**", "Review failed",
+// a quota or a usage limit. A bare "error" or "failed" can be the text of a walkthrough.
+const FAILURE =
+  /review (?:en )?échec|échec de (?:la )?review|review failed|failed to review|unable to review|quota|usage limit|rate.limit|limit reached/i;
 const REASON_LENGTH = 300;
 const clip = (text: string, length: number) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
 
@@ -60,8 +62,12 @@ export function requestStates(
   settings: Pick<Settings, 'mergePolicy' | 'reviewRequestTimeoutMinutes'>,
   now: Date,
 ): RequestState[] {
-  return reviewRequests(snapshot, reviewerGroup(settings.mergePolicy)).map(({ comment, bot, member }) => {
+  const requests = reviewRequests(snapshot, reviewerGroup(settings.mergePolicy));
+  return requests.map(({ comment, bot, member }) => {
     const after = (at: string) => at > comment.created_at;
+    // A failure notice answers the last request before it: a notice after the next request of the same bot is not for this one.
+    const next = requests.find((other) => other.bot === bot && other.comment.created_at > comment.created_at);
+    const beforeNext = (at: string) => !next || at <= next.comment.created_at;
     const reactions = comment.reactions ?? [];
     const answered = snapshot.reviews.some(
       (review) => review.user && member(review.user.login) && !review.threadReply && after(review.submitted_at),
@@ -71,7 +77,8 @@ export function requestStates(
         post.user &&
         member(post.user.login) &&
         after(post.created_at) &&
-        FAILURE.test(post.body.trimStart().split(/\n\s*\n/)[0]!),
+        beforeNext(post.created_at) &&
+        FAILURE.test(post.body.trimStart().split('\n')[0]!),
     );
     const minutes = (now.getTime() - Date.parse(comment.created_at)) / 60_000;
     const failed = Boolean(failure) || reactions.includes('CONFUSED');

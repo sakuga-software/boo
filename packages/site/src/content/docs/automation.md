@@ -123,9 +123,10 @@ follows the rules of [`answeredReviewRequests`](../merge-policy/), with the logi
 of `minScore`. Its `outcome` is the first that applies:
 
 - `answered`: a review of the bot came after the comment;
-- `failed`: the bot put 😕 on the comment, or posted a comment after it that says it failed (`échec`,
-  `failed`, `error`, `quota`, `usage limit` in its first paragraph). `reason` gives the cause: the
-  line that starts with `Raison`, `Reason`, `Cause` or `Error`, else the first paragraph;
+- `failed`: the bot put 😕 on the comment, or posted a failure notice after it and before the next
+  request to the same bot: a comment whose first line says `review en échec`, `review failed`,
+  `unable to review`, `quota`, `usage limit` or `rate limit`. `reason` gives the cause: the line
+  that starts with `Raison`, `Reason`, `Cause` or `Error`, else the first paragraph;
 - `acknowledged`: the bot put 👀 on the comment;
 - `stale`: no reaction and no review after `reviewRequestTimeoutMinutes` (15 by default);
 - `asked`: none of these yet.

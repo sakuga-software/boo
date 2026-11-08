@@ -486,6 +486,11 @@ test('a review asked by comment is asked, acknowledged, failed, answered or stal
       'Raison : no model gave a usable answer: ProviderError: Anthropic answered 400: {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits."}}',
   });
   assert.deepEqual(outcome({ comments: [ask([], 'Thanks @kento-review for the review.')] }), []);
+  const walkthrough = { ...failure, body: '## Walkthrough\nThe error path failed before; this change fixes it.' };
+  assert.deepEqual(outcome({ comments: [ask(['EYES']), walkthrough] }), ['acknowledged']);
+  const second = { ...ask(['EYES']), id: 3, created_at: at(23), updated_at: at(23) };
+  const late = { ...failure, created_at: at(24), updated_at: at(24) };
+  assert.deepEqual(outcome({ comments: [ask(['EYES']), second, late] }), ['acknowledged', 'failed']);
 });
 
 test('a review request gives review-request events when its outcome changes, and no comment event', () => {
