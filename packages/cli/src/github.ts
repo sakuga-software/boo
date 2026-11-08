@@ -201,7 +201,7 @@ const reviewFields = (lineComments?: boolean) =>
   `author { login __typename } state submittedAt body commit { oid } comments(first: 10) { totalCount nodes { replyTo { id }${lineComments ? ' databaseId body createdAt' : ''} } }`;
 const COMMENT_FIELDS = 'databaseId author { login __typename } body createdAt updatedAt';
 const CONTEXT_FIELDS =
-  '__typename ... on CheckRun { name status conclusion checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state description }';
+  '__typename ... on CheckRun { databaseId name status conclusion checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state description }';
 const OLDER = 'pageInfo { hasPreviousPage startCursor }';
 const NEWER = 'pageInfo { hasNextPage endCursor }';
 const PULL = 'repository(owner: $owner, name: $name) { pullRequest(number: $number)';
@@ -217,6 +217,8 @@ export interface ExtraFields {
   files?: boolean;
   /** The text of the line comments: the first 10 of each review. */
   lineComments?: boolean;
+  /** The names of the checks of the review bots. The read gives the first error line of each one that fails. */
+  reviewerChecks?: readonly string[] | undefined;
 }
 
 // The probe reads only the fields that change when the pull request changes. Known misses: a
@@ -322,6 +324,7 @@ interface Page<T> {
 type ContextNode =
   | {
       __typename: 'CheckRun';
+      databaseId?: number;
       name: string;
       status: string;
       conclusion: string | null;
@@ -441,6 +444,7 @@ function toCheck(node: ContextNode): Check {
     state: checkState(node),
     ...(run && { workflow: run.workflow.name, run: run.databaseId }),
     ...(node.conclusion === 'CANCELLED' && { cancelled: true }),
+    ...(node.databaseId !== undefined && { id: node.databaseId }),
   };
 }
 
@@ -875,8 +879,50 @@ export async function probePullRequests(prs: readonly PullRequest[]): Promise<vo
 }
 
 /** The cache key of a read. A read with fewer fields must not answer a read that needs the threads or the files. */
-export const readKey = (pr: PullRequest, { threads, files, lineComments }: ExtraFields) =>
-  `pr-${pr.repo}#${pr.number}${threads ? '+threads' : ''}${files ? '+files' : ''}${lineComments ? '+lines' : ''}`;
+export const readKey = (pr: PullRequest, { threads, files, lineComments, reviewerChecks }: ExtraFields) =>
+  `pr-${pr.repo}#${pr.number}${threads ? '+threads' : ''}${files ? '+files' : ''}${lineComments ? '+lines' : ''}${
+    reviewerChecks?.length ? `+errors:${reviewerChecks.join(',')}` : ''
+  }`;
+
+/**
+ * The first error line of the log of a GitHub Actions job: a line that starts with "fatal" or
+ * "error", or an "##[error]" annotation. The annotation "Process completed with exit code 1" tells nothing.
+ */
+export function firstErrorLine(log: string): string | undefined {
+  for (const raw of log.split('\n')) {
+    const line = raw.replace(/^\d{4}-\d{2}-\d{2}T\S+Z /, '').trim();
+    if (/^##\[error\]Process completed with exit code/.test(line)) continue;
+    const text = line.startsWith('##[error]') ? line.slice('##[error]'.length).trim() : line;
+    if (text && (line !== text || /^(?:fatal|error)\b\W/i.test(text)))
+      return text.length > ERROR_LENGTH ? `${text.slice(0, ERROR_LENGTH - 1)}…` : text;
+  }
+  return undefined;
+}
+
+const ERROR_LENGTH = 200;
+
+/** Reads the first error line of a finished job once: its log does not change. A log that GitHub does not give has no line. */
+async function jobError(repo: string, job: number): Promise<string | undefined> {
+  const key = `job-error-${repo}-${job}`;
+  const known = await cache.get<{ line: string | null }>(key, Infinity);
+  if (known) return known.value.line ?? undefined;
+  const line = await gh(['api', `repos/${repo}/actions/jobs/${job}/logs`]).then(firstErrorLine, () => undefined);
+  await cache.set(key, { line: line ?? null });
+  return line;
+}
+
+/** Adds the first error line to each failed check of a review bot that is a GitHub Actions job. */
+async function withReviewerErrors(repo: string, checks: Check[], names: readonly string[] = []): Promise<Check[]> {
+  const listed = (name: string) => names.some((other) => other.toLowerCase() === name.toLowerCase());
+  return Promise.all(
+    checks.map(async (check) => {
+      if (check.state !== 'failure' || check.cancelled || !check.workflow || !check.id || !listed(check.name))
+        return check;
+      const error = await jobError(repo, check.id);
+      return error ? { ...check, error } : check;
+    }),
+  );
+}
 
 async function readPullRequest(pr: PullRequest, extra: ExtraFields): Promise<PullRequestSnapshot> {
   const [owner = '', name = ''] = pr.repo.split('/');
@@ -909,7 +955,11 @@ async function readPullRequest(pr: PullRequest, extra: ExtraFields): Promise<Pul
       ],
     },
   });
-  return { ...snapshot, fingerprint: fingerprintOf(pull as unknown as Record<string, unknown>) };
+  return {
+    ...snapshot,
+    checks: await withReviewerErrors(pr.repo, snapshot.checks, extra.reviewerChecks),
+    fingerprint: fingerprintOf(pull as unknown as Record<string, unknown>),
+  };
 }
 
 /**

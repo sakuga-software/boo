@@ -223,6 +223,7 @@ test('a red check of a refused reviewer and a status that names a quota are quot
     skipped: 0,
     pending: 0,
     failed: ['lint'],
+    reviewerErrors: [],
     failedOnBase: [],
     cancelled: [],
     quota: 2,
@@ -586,4 +587,19 @@ test('the confidence of a reviewer comes from its last review or comment with a 
     'sakuga-review[bot]': { score: 4, total: 5 },
     'greptile-apps[bot]': { score: 2, total: 5 },
   });
+});
+
+test('a red check of a review bot is a reviewer error, after a failing check of the change', () => {
+  const crashed: Check = { name: 'Sakuga Review', state: 'failure', error: 'fatal: Invalid revision range' };
+  const approved = review('alice', 'head', 5, 'APPROVED');
+  const alone = summarize(facts({ reviews: [approved], checks: [crashed], reviewerChecks: ['sakuga review'] }));
+  assert.equal(alone.overall, 'reviewer error');
+  assert.deepEqual(alone.checks.failed, []);
+  assert.deepEqual(alone.checks.reviewerErrors, [{ check: 'Sakuga Review', error: 'fatal: Invalid revision range' }]);
+  const lint: Check = { name: 'lint', state: 'failure' };
+  assert.equal(
+    summarize(facts({ checks: [crashed, lint], reviewerChecks: ['Sakuga Review'] })).overall,
+    'checks failing',
+  );
+  assert.equal(summarize(facts({ reviews: [approved], checks: [crashed] })).overall, 'checks failing');
 });

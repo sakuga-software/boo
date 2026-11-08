@@ -357,7 +357,8 @@ export function App(props: AppProps) {
         ),
       );
       const policy = settingsRef.current.mergePolicy;
-      for (const [key, result] of assess(fetched, new Date(), { policy, viewer: viewerRef.current }))
+      const reviewerChecks = settingsRef.current.reviewerChecks;
+      for (const [key, result] of assess(fetched, new Date(), { policy, viewer: viewerRef.current, reviewerChecks }))
         rowsRef.current.set(key, { ...rowsRef.current.get(key)!, ...result });
       setRows([...rowsRef.current.values()]);
     }
@@ -367,7 +368,10 @@ export function App(props: AppProps) {
       try {
         const { status, ...state } = await gitHub.fetchPullRequest(pr, {
           maxAgeMs: fresh ? 0 : cacheAge(),
-          extra: extraFields(settingsRef.current.mergePolicy),
+          extra: {
+            ...extraFields(settingsRef.current.mergePolicy),
+            reviewerChecks: settingsRef.current.reviewerChecks,
+          },
         });
         if (status !== 'open') {
           const merged = status === 'merged' ? { by: state.mergedBy, at: state.mergedAt } : undefined;
@@ -878,7 +882,10 @@ export function App(props: AppProps) {
     if (requesting.length > 0)
       warnings.push(`${requesting.join(', ')} ${requesting.length === 1 ? 'requests' : 'request'} changes`);
     else if (!reviewers.some((reviewer) => reviewer.verdict === 'approved')) warnings.push('no reviewer approves');
-    const failed = row.summary?.checks.failed ?? [];
+    const failed = [
+      ...(row.summary?.checks.failed ?? []),
+      ...(row.summary?.checks.reviewerErrors ?? []).map(({ check }) => check),
+    ];
     if (failed.length > 0) warnings.push(`${failed.length} failing check${failed.length === 1 ? '' : 's'}`);
     if (row.summary?.checks.pending)
       warnings.push(`${row.summary.checks.pending} running check${row.summary.checks.pending === 1 ? '' : 's'}`);
@@ -1502,6 +1509,7 @@ const OVERALL_VIEWS: Record<Overall, Omit<View, 'icon'> & { icon: () => ReactNod
   approved: { icon: () => <Text color="green">✔</Text>, label: 'approved', color: 'green' },
   'changes requested': { icon: () => <Text color="red">✎</Text>, label: 'changes requested', color: 'red' },
   'checks failing': { icon: () => <Text color="red">✖</Text>, label: 'checks failing', color: 'red' },
+  'reviewer error': { icon: () => <Text color="yellow">⚠</Text>, label: 'reviewer error', color: 'yellow' },
   conflicts: { icon: () => <Text color="red">⚠</Text>, label: 'conflicts', color: 'red' },
   reviewing: { icon: () => spinner('cyan'), label: 'reviewing', color: 'cyan' },
   reviewed: { icon: () => <Text color="cyan">●</Text>, label: 'reviewed', color: 'cyan' },
@@ -1842,10 +1850,11 @@ function checkLines(checks: Summary['checks'], base: string | undefined): ReactN
   const parts: [string, string][] = [];
   if (checks.passed > 0) parts.push([`✔ ${checks.passed} passed`, 'green']);
   if (checks.failed.length > 0) parts.push([`✖ ${checks.failed.length} failing`, 'red']);
+  if (checks.reviewerErrors.length > 0) parts.push([`⚠ ${checks.reviewerErrors.length} reviewer error`, 'yellow']);
   if (checks.pending > 0) parts.push([`◌ ${checks.pending} running`, 'yellow']);
   if (checks.skipped > 0) parts.push([`⊘ ${checks.skipped} skipped`, 'gray']);
   if (checks.quota > 0) parts.push([`◷ ${checks.quota} quota only`, 'gray']);
-  if (parts.length === 0 && checks.cancelled.length === 0)
+  if (parts.length === 0 && checks.cancelled.length === 0 && checks.reviewerErrors.length === 0)
     return [
       <Text key="none" dimColor>
         no checks
@@ -1870,12 +1879,18 @@ function checkLines(checks: Summary['checks'], base: string | undefined): ReactN
       </Text>
     </Text>
   ));
+  const reviewerErrors = checks.reviewerErrors.map(({ check, error }) => (
+    <Text key={check} wrap="truncate-end">
+      <Text color="yellow">⚠ {check}</Text>
+      <Text dimColor> · the review bot failed, not the change{error ? `: ${error}` : ''}</Text>
+    </Text>
+  ));
   const cancelled = checks.cancelled.map((name) => (
     <Text key={name} dimColor wrap="truncate-end">
       ⊘ {name} · cancelled by a newer run
     </Text>
   ));
-  return [...(counts ? [counts] : []), ...failing, ...cancelled];
+  return [...(counts ? [counts] : []), ...failing, ...reviewerErrors, ...cancelled];
 }
 
 /** The lines of an unfolded row, by section: the agent, the reviewers, the checks, then the notes. */
@@ -1949,13 +1964,20 @@ const CHIPS: Record<ReviewerStatus, { icon: string; color: string }> = {
 
 function ChecksBadge({ summary, short }: { summary: Summary; short: boolean }) {
   const { checks } = summary;
-  const counted = checks.passed + checks.failed.length + checks.pending;
+  const counted = checks.passed + checks.failed.length + checks.reviewerErrors.length + checks.pending;
   const word = (text: string) => (short ? '' : ` ${text}`);
   if (checks.failed.length > 0)
     return (
       <Text color="red">
         ✖ {checks.failed.length}/{counted}
         {word('failing')}
+      </Text>
+    );
+  if (checks.reviewerErrors.length > 0)
+    return (
+      <Text color="yellow">
+        ⚠ {checks.reviewerErrors.length}/{counted}
+        {word('reviewer error')}
       </Text>
     );
   if (checks.pending > 0)
@@ -2167,6 +2189,7 @@ const FOOTER_ORDER: Overall[] = [
   'approved',
   'changes requested',
   'checks failing',
+  'reviewer error',
   'conflicts',
   'reviewing',
   'reviewed',

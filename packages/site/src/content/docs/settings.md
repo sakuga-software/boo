@@ -34,6 +34,13 @@ organization of `--org`. With no `repos`, the tool lists every repository of the
 { "repos": ["boo", "acme/web"] }
 ```
 
+The key `reviewerChecks` names the checks that the review bots run. A red check of this list is a
+failure of the bot, not of the change: see [Reviewers and checks](../reviewers/#approval-and-checks).
+
+```json
+{ "reviewerChecks": ["Sakuga Review"] }
+```
+
 ## Review bots
 
 The settings list the review bots of the action bar, with their key, the way the tool asks them, and

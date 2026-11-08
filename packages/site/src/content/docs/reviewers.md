@@ -48,6 +48,12 @@ reviewer, so each install works under its own name (`sakuga-review[bot]` at Saku
 - A check counts as a quota check, and not as a failure, if its description names a quota
   (CodeRabbit: "Review rate limited"), or if it fails and belongs to a reviewer that refused for
   quota. A red check of a refused reviewer tells nothing about the code.
+- A check that `reviewerChecks` in the settings lists, such as `"reviewerChecks": ["Sakuga Review"]`,
+  is the check of a review bot. When it fails, the bot failed, not the change: the state is
+  `reviewer error`, not `checks failing`, and the pull request is not stalled, since no agent can
+  fix it. A failing check of the change still wins: the state is then `checks failing`. If the check
+  is a GitHub Actions job, the tool reads its log once and shows its first error line, such as
+  `fatal: Invalid revision range a..b`. The names do not depend on case.
 - A check of a cancelled run does not fail if a newer run of the same workflow, on the same commit,
   has the same check, and that check passed or still runs. A push and a change of base can start a
   workflow twice, and a concurrency rule cancels one run. The details show

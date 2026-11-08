@@ -7,6 +7,7 @@ import { DiskCache } from './cache.js';
 import {
   concurrencyLimit,
   fingerprintOf,
+  firstErrorLine,
   isRateLimited,
   listKey,
   listOrLast,
@@ -228,4 +229,25 @@ test('the probe reads each pull request in its own repository, with quoted names
   assert.match(query, /p0: repository\(owner: "acme", name: "web"\) \{ pullRequest\(number: 1\) \{ \.\.\.Probe \} \}/);
   assert.match(query, /p1: repository\(owner: "other", name: "api"\) \{ pullRequest\(number: 7\)/);
   assert.match(query, /fragment Probe on PullRequest/);
+});
+
+test('the first error line of a job log skips the timestamps and the exit code annotation', () => {
+  const log = [
+    '2026-10-28T17:43:16.1Z Run git diff',
+    '2026-10-28T17:43:16.8755158Z fatal: Invalid revision range 0a35..5315',
+    '2026-10-28T17:43:16.8758960Z Error: Command failed: git diff --name-only 0a35..5315',
+    '2026-10-28T17:43:16.8833102Z ##[error]Process completed with exit code 1.',
+  ].join('\n');
+  assert.equal(firstErrorLine(log), 'fatal: Invalid revision range 0a35..5315');
+  assert.equal(
+    firstErrorLine('x\n##[error]API quota exhausted\n##[error]Process completed with exit code 1.'),
+    'API quota exhausted',
+  );
+  assert.equal(firstErrorLine('all good\n##[error]Process completed with exit code 1.'), undefined);
+  assert.equal(firstErrorLine(`error: ${'x'.repeat(300)}`)!.length, 200);
+});
+
+test('a read with the checks of the review bots does not answer a read without them', () => {
+  const pull = { repo: 'acme/web', number: 1, title: '', url: '' };
+  assert.notEqual(readKey(pull, { reviewerChecks: ['Sakuga Review'] }), readKey(pull, {}));
 });

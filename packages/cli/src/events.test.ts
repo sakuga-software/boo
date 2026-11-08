@@ -29,7 +29,7 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   mergedBy: null,
   mergedAt: null,
   error: null,
-  checks: { passed: 2, failing: [], running: 0, skipped: 0, quota: 0 },
+  checks: { passed: 2, failing: [], running: 0, skipped: 0, quota: 0, reviewerErrors: [] },
   reviewers: [],
   stack: { parent: null, position: 1, size: 1, restack: null },
   agent: { kind: null, session: null, subAgent: null, sessionState: 'none', cloudSession: null },
@@ -65,6 +65,34 @@ test('a new state gives the failing checks, and each check that turns red or lea
     { at: AT, pr: 'acme/web#1', event: 'state', from: 'approved', to: 'checks failing', failing: ['Migrations'] },
     { at: AT, pr: 'acme/web#1', event: 'check', check: 'Migrations', to: 'failing' },
     { at: AT, pr: 'acme/web#1', event: 'check', check: 'lint', to: 'not failing' },
+  ]);
+});
+
+test('a red check of a review bot gives a check event with reviewerError and the first error line', () => {
+  const crashed = {
+    ...report(1).checks,
+    failing: ['Sakuga Review'],
+    reviewerErrors: [{ check: 'Sakuga Review', error: 'fatal: Invalid revision range a..b' }],
+  };
+  const after = report(1, { state: 'reviewer error', checks: crashed });
+  assert.deepEqual(diffReports(byKey(report(1)), [after], AT), [
+    {
+      at: AT,
+      pr: 'acme/web#1',
+      event: 'state',
+      from: 'awaiting review',
+      to: 'reviewer error',
+      failing: ['Sakuga Review'],
+    },
+    {
+      at: AT,
+      pr: 'acme/web#1',
+      event: 'check',
+      check: 'Sakuga Review',
+      to: 'failing',
+      reviewerError: true,
+      error: 'fatal: Invalid revision range a..b',
+    },
   ]);
 });
 
