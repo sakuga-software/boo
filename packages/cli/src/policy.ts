@@ -324,6 +324,23 @@ export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comment
     : bots;
 }
 
+/**
+ * The owner that the changed files of a pull request need, and these files. Undefined if the rule
+ * `ownerOnly` names no file of the pull request. With more files than the query read, `partial` is true:
+ * a file after them can be owned too.
+ */
+export function ownerPathsOf(
+  policy: MergePolicy | undefined,
+  facts: Pick<PolicyFacts, 'files' | 'changedFiles'>,
+): { owner: string; paths: string[]; partial: boolean } | undefined {
+  const ownerOnly = policy?.ownerOnly;
+  if (!ownerOnly || !facts.files) return undefined;
+  const patterns = ownerOnly.paths.map(globToRegExp);
+  const paths = facts.files.filter((file) => patterns.some((pattern) => pattern.test(file)));
+  const partial = facts.changedFiles !== undefined && facts.files.length < facts.changedFiles;
+  return paths.length > 0 || partial ? { owner: ownerOnly.owner, paths, partial } : undefined;
+}
+
 /** Returns the rules of the policy that the pull request misses, in the order of the settings file. */
 export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts): PolicyMiss[] {
   if (!policy) return [];

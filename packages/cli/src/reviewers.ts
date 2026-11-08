@@ -8,7 +8,7 @@ import {
   type Review,
   type Verdict,
 } from './decide.js';
-import { policyMisses, type MergePolicy, type OpenThread, type PolicyMiss } from './policy.js';
+import { ownerPathsOf, policyMisses, type MergePolicy, type OpenThread, type PolicyMiss } from './policy.js';
 
 export type CheckState = 'pending' | 'success' | 'failure' | 'skipped';
 
@@ -390,6 +390,10 @@ export interface Summary {
   lastReview?: { name: string; at: Date };
   /** The rules of the merge policy that the pull request misses. */
   policy: PolicyMiss[];
+  /** The owner that the changed files need, and these files. Undefined if no file of the pull request is owned. */
+  needsOwner?: { owner: string; paths: string[]; partial: boolean };
+  /** Green, approved, mergeable, and every rule passes but `ownerOnly`: only the owner can merge it now. */
+  readyForOwner: boolean;
 }
 
 /**
@@ -428,6 +432,8 @@ export function summarize(facts: PullRequestFacts): Summary {
   // A rule of the team keeps the pull request from "ready to merge", as a rule of GitHub does.
   const plain = overallOf();
   const overall = plain === 'ready' && policy.length > 0 ? 'approved' : plain;
+  const needsOwner = ownerPathsOf(facts.policy, { files: facts.files, changedFiles: facts.changes?.files });
+  const readyForOwner = plain === 'ready' && policy.length > 0 && policy.every((miss) => miss.rule === 'ownerOnly');
 
   const last = reviewers
     .filter((reviewer) => reviewer.lastReviewAt)
@@ -441,6 +447,8 @@ export function summarize(facts: PullRequestFacts): Summary {
     reviews: reviewers.reduce((total, reviewer) => total + reviewer.reviews, 0),
     ...(last && { lastReview: { name: last.name, at: last.lastReviewAt! } }),
     policy,
+    ...(needsOwner && { needsOwner }),
+    readyForOwner,
   };
 }
 

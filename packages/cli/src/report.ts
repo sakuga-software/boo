@@ -2,7 +2,7 @@ import { activeBots, plannedRetries } from './bots.js';
 import { decide, quotaScope, quotaSignals, type Decision, type QuotaSignal } from './decide.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { confidenceOf, isOnHead, summarize, type Overall, type Summary } from './reviewers.js';
-import type { MergePolicy, PolicyMiss } from './policy.js';
+import { ownerPathsOf, type MergePolicy, type PolicyMiss } from './policy.js';
 import { isWorkingStatus, ownerWorks, type Owner, type SubAgentState } from './sessions.js';
 import type { Settings } from './settings.js';
 import { placeStacks } from './stacks.js';
@@ -167,6 +167,13 @@ export interface PullRequestReport {
    * at `at`. `until` is the time that the queries work again. Null if the read is of now.
    */
   stale: { at: string; until: string | null } | null;
+  /**
+   * The owner that the changed files need (`ownerOnly`), and these files. `partial` is true if the
+   * pull request has more files than the query read. Null if no file of the pull request is owned.
+   */
+  needsOwner: { owner: string; paths: string[]; partial: boolean } | null;
+  /** Green, approved, mergeable, and every rule of the policy passes but `ownerOnly`: it waits only for the owner. */
+  readyForOwner: boolean;
 }
 
 export type CoderabbitNote =
@@ -319,6 +326,14 @@ export function buildReport(
       },
       policy: summary?.policy ?? [],
       stale: snapshot?.stale ? { at: snapshot.stale.at, until: snapshot.stale.until ?? null } : null,
+      // A merged pull request has no summary: its files still name the owner, for the `left` event.
+      needsOwner:
+        (summary
+          ? summary.needsOwner
+          : snapshot &&
+            ownerPathsOf(settings.mergePolicy, { files: snapshot.files, changedFiles: snapshot.changes?.files })) ??
+        null,
+      readyForOwner: summary?.readyForOwner ?? false,
     };
   });
 }

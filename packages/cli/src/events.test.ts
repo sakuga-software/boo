@@ -38,6 +38,8 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   notes: { merge: null, retries: [], coderabbit: null },
   policy: [],
   stale: null,
+  needsOwner: null,
+  readyForOwner: false,
   ...patch,
 });
 const byKey = (...reports: PullRequestReport[]) => new Map(reports.map((item) => [`acme/web#${item.number}`, item]));
@@ -663,4 +665,14 @@ test('a change of the policy notes gives one policy event with the notes added a
     diffReports(byKey(after), [report(1)], AT).map((event) => event.event),
     ['policy'],
   );
+});
+
+test('a pull request that starts to wait only for its owner gives one ready-for-owner event', () => {
+  const needsOwner = { owner: 'mathieu', paths: ['apps/app/drizzle/0042.sql'], partial: false };
+  const waiting = report(1, { needsOwner, readyForOwner: false, state: 'approved' });
+  const ready = report(1, { needsOwner, readyForOwner: true, state: 'approved' });
+  assert.deepEqual(diffReports(byKey(waiting), [ready], AT), [
+    { at: AT, pr: 'acme/web#1', event: 'ready-for-owner', ...needsOwner },
+  ]);
+  assert.deepEqual(diffReports(byKey(ready), [ready], AT), []);
 });

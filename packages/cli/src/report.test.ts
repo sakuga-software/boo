@@ -66,6 +66,8 @@ test('the output keeps the same keys, in the same order', () => {
     'notes',
     'policy',
     'stale',
+    'needsOwner',
+    'readyForOwner',
   ]);
   assert.deepEqual(Object.keys(first!.checks), ['passed', 'failing', 'running', 'skipped', 'quota', 'reviewerErrors']);
   assert.deepEqual(Object.keys(first!.stack), ['parent', 'position', 'size', 'restack']);
@@ -308,4 +310,26 @@ test('a red check of a review bot is a reviewer error, not a failing check, and 
   const [unlisted] = buildReport(input([crashed]), new Map(), DEFAULT_SETTINGS, now);
   assert.equal(unlisted!.state, 'checks failing');
   assert.deepEqual(unlisted!.checks.reviewerErrors, []);
+});
+
+test('a pull request that touches owner paths names the owner and the files, and says when only the owner can merge it', () => {
+  const mergePolicy = { ownerOnly: { paths: ['**/drizzle/**'], owner: 'mathieu' } };
+  const settings = { ...DEFAULT_SETTINGS, mergePolicy };
+  const approved = { user: { login: 'alice' }, commit_id: 'abc123', submitted_at: ago(5), state: 'APPROVED', body: '' };
+  const owned = snapshot({
+    files: ['README.md', 'apps/app/drizzle/0042.sql'],
+    changes: { additions: 1, deletions: 0, files: 2 },
+    checks: [{ name: 'test', state: 'success' }],
+    reviews: [approved],
+  });
+  const [ready] = buildReport([{ pr: pr(1), snapshot: owned }], new Map(), settings, now, 'alice');
+  assert.deepEqual(ready!.needsOwner, { owner: 'mathieu', paths: ['apps/app/drizzle/0042.sql'], partial: false });
+  assert.equal(ready!.state, 'approved');
+  assert.equal(ready!.readyForOwner, true);
+  const red = snapshot({ ...owned, checks: [{ name: 'test', state: 'failure' }] });
+  assert.equal(buildReport([{ pr: pr(1), snapshot: red }], new Map(), settings, now, 'alice')[0]!.readyForOwner, false);
+  const proof = { ...settings, mergePolicy: { ...mergePolicy, requireProof: '\\.gif' } };
+  assert.equal(buildReport([{ pr: pr(1), snapshot: owned }], new Map(), proof, now, 'alice')[0]!.readyForOwner, false);
+  const plain = snapshot({ ...owned, files: ['README.md'], changes: { additions: 1, deletions: 0, files: 1 } });
+  assert.equal(buildReport([{ pr: pr(1), snapshot: plain }], new Map(), settings, now, 'alice')[0]!.needsOwner, null);
 });
