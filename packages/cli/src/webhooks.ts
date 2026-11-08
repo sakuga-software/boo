@@ -53,7 +53,11 @@ function timed(fetchFn: typeof fetch, ms: number): typeof fetch {
   return (async (input: string | URL | Request, init: RequestInit = {}) => {
     try {
       // A redirect could send the GitHub token to a URL that the HTTPS check did not see.
-      return await fetchFn(input, { redirect: 'error', ...init, signal: init.signal ?? AbortSignal.timeout(ms) });
+      return await fetchFn(input, {
+        redirect: 'error',
+        ...init,
+        signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms),
+      });
     } catch (error) {
       if (error instanceof Error && error.name === 'TimeoutError')
         throw new SetupError(`${String(input)} did not answer in ${ms / 1000} s`);
@@ -132,7 +136,7 @@ async function deviceFlow(
     if (token.access_token) return { ...token, access_token: token.access_token };
     if (token.error === 'authorization_pending') continue;
     // GitHub asks for a longer wait, and gives the new interval.
-    if (token.error === 'slow_down') interval = (token.interval ?? interval / 1000 + 5) * 1000;
+    if (token.error === 'slow_down') interval = Math.max(token.interval ?? 0, interval / 1000 + 5) * 1000;
     else if (token.error === 'access_denied') throw new SetupError('The authorization was denied on GitHub.');
     else if (token.error === 'expired_token') break;
     else throw new SetupError(`GitHub refused the token: ${token.error ?? 'no token'}`);
