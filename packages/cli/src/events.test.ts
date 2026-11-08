@@ -432,13 +432,13 @@ const KENTO_FAILURE = [
 
 test('a review asked by comment is asked, acknowledged, failed, answered or stale', () => {
   const at = (minute: number) => `2026-11-08T17:${String(minute).padStart(2, '0')}:00Z`;
-  const ask = (reactions: string[] = [], body = '@kento-review balanced') => ({
+  const ask = (reactions: string[] = [], body = '@kento-review balanced', by = 'kento-review[bot]') => ({
     id: 1,
     user: { login: 'Mheaus' },
     body,
     created_at: at(22),
     updated_at: at(22),
-    reactions,
+    reactions: reactions.map((content) => ({ content, logins: [by] })),
   });
   const settings = {
     ...DEFAULT_SETTINGS,
@@ -476,6 +476,9 @@ test('a review asked by comment is asked, acknowledged, failed, answered or stal
   assert.deepEqual(outcome({ reviews: [kentoReview], comments: [ask(['EYES'])] }, 40), ['answered']);
   assert.deepEqual(outcome({ reviews: [{ ...kentoReview, submitted_at: at(22) }], comments: [ask()] }), ['answered']);
   assert.deepEqual(outcome({ comments: [ask(['THUMBS_UP'])] }, 38), ['stale']);
+  assert.deepEqual(outcome({ comments: [ask(['EYES', 'CONFUSED'], '@kento-review balanced', 'octocat')] }, 38), [
+    'stale',
+  ]);
   const retry = { ...ask(), id: 4, created_at: at(26), updated_at: at(26) };
   assert.deepEqual(outcome({ reviews: [kentoReview], comments: [ask(), retry] }, 40), ['stale', 'answered']);
   const [failed] = requestStates({ reviews: [], comments: [ask(['EYES']), failure] }, settings, new Date(at(25)));

@@ -68,7 +68,9 @@ export function requestStates(
     // A failure notice answers the last request before it: a notice after the next request of the same bot is not for this one.
     const next = requests.find((other) => other.bot === bot && other.comment.created_at > comment.created_at);
     const beforeNext = (at: string) => !next || at <= next.comment.created_at;
-    const reactions = comment.reactions ?? [];
+    // Only a reaction of the bot counts: a 👀 or a 😕 of a person is no answer.
+    const reacted = (content: string) =>
+      (comment.reactions ?? []).some((reaction) => reaction.content === content && reaction.logins.some(member));
     // GitHub gives the times to the second: a review in the same second as the request answers it.
     // A review after the next request to the same bot answers that one, not this one.
     const answered = snapshot.reviews.some(
@@ -88,11 +90,11 @@ export function requestStates(
         FAILURE.test(post.body.trimStart().split('\n')[0]!),
     );
     const minutes = (now.getTime() - Date.parse(comment.created_at)) / 60_000;
-    const failed = Boolean(failure) || reactions.includes('CONFUSED');
+    const failed = Boolean(failure) || reacted('CONFUSED');
     const outcome = ((): RequestOutcome => {
       if (answered) return 'answered';
       if (failed) return 'failed';
-      if (reactions.includes('EYES')) return 'acknowledged';
+      if (reacted('EYES')) return 'acknowledged';
       // Only 👀 and 😕 are answers of the bot: a 👍 of a person does not keep the request alive.
       return minutes >= settings.reviewRequestTimeoutMinutes ? 'stale' : 'asked';
     })();

@@ -12,8 +12,11 @@ export interface Comment {
   body: string;
   created_at: string;
   updated_at: string;
-  /** The reactions that the comment has, such as "EYES" or "CONFUSED". Undefined if the read did not give them. */
-  reactions?: string[];
+  /**
+   * The reactions of the comment, such as "EYES" or "CONFUSED", with the logins of their first
+   * reactors. Undefined if the read did not give them.
+   */
+  reactions?: { content: string; logins: string[] }[];
 }
 
 export interface Review {
