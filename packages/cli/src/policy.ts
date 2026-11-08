@@ -79,6 +79,8 @@ export interface PolicyFacts {
   changedFiles?: number | undefined;
   /** The login of the user of boo, if GitHub gave it. */
   viewer?: string | undefined;
+  /** False if the read did not read the threads: their findings are then unknown. */
+  threadsRead?: boolean;
   /** The findings of the review bots. Only the `answerFindings` rule reads them. */
   findings?: readonly Finding[];
 }
@@ -393,6 +395,9 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
   if (answeredReviewRequests)
     for (const bot of unansweredRequests(facts, reviewerGroup(policy)))
       misses.push({ rule: 'answeredReviewRequests', note: `review asked of ${displayName(bot)}, no answer yet` });
+  // The query reads the threads with this rule. A read without them, from another run, cannot tell that no thread finding waits.
+  if (answerFindings && facts.threadsRead === false)
+    misses.push({ rule: 'answerFindings', note: 'threads not read: their findings are unknown' });
   if (answerFindings) {
     const places: FindingPlace[] = ['thread', 'review', 'description'];
     for (const level of answerFindings)

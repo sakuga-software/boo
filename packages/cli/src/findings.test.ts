@@ -108,6 +108,9 @@ test('the answerFindings rule names the level and the place of the findings with
     { rule: 'answerFindings', note: '2 P2 not answered (description)' },
   ]);
   assert.deepEqual(policyMisses({ answerFindings: ['P3'] }, facts), []);
+  assert.deepEqual(policyMisses({ answerFindings: ['P3'] }, { ...facts, threadsRead: false }), [
+    { rule: 'answerFindings', note: 'threads not read: their findings are unknown' },
+  ]);
 });
 
 test('a description with no block counts the whole text, and no badge gives no finding', () => {
