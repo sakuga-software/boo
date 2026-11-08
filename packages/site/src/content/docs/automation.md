@@ -93,17 +93,18 @@ merges nothing. Each line has `at`, `pr` (`owner/repo#number`) and `event`:
 {"at":"…","pr":"acme/web#480","event":"left","reason":"merged","mergedBy":"octocat","mergedAt":"…"}
 ```
 
-| `event`    | When                                                                | Other keys                                                                                                             |
-| ---------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `snapshot` | The first read, one line for each pull request                      | The keys of `--json`                                                                                                   |
-| `entered`  | A pull request enters the list                                      | The keys of `--json`                                                                                                   |
-| `state`    | The state changes                                                   | `from`, `to`, `failing`, and `error` with the message of GitHub if `to` is `error`                                     |
-| `head`     | A new head commit                                                   | `from`, `to`                                                                                                           |
-| `review`   | A reviewer has a new mark, verdict, score or review                 | `reviewer`, then the keys of `reviewers[]` in `--json`, with `reviewedAt` for `at`                                     |
-| `check`    | A check starts to fail, or stops (it passed, or it runs again)      | `check`, `to`: `failing` or `not failing`; `reviewerError: true` and `error` for a check of `reviewerChecks`           |
-| `left`     | A pull request leaves the list                                      | `reason`: `merged`, `closed`, `draft`, or `unlisted` if it is still open; for `merged`, also `mergedBy` and `mergedAt` |
-| `restack`  | GitHub moved the pull request to a new base after its parent merged | `oldBase`, `base`, `parent`: the pull request that it was stacked on, or `null` if it was not listed                   |
-| `comment`  | A person writes a comment, a review or a line comment               | `author`, `createdAt`, `body` (the first 200 characters), `thread`: `true` for a line comment                          |
+| `event`          | When                                                                 | Other keys                                                                                                                       |
+| ---------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `snapshot`       | The first read, one line for each pull request                       | The keys of `--json`                                                                                                             |
+| `entered`        | A pull request enters the list                                       | The keys of `--json`                                                                                                             |
+| `state`          | The state changes                                                    | `from`, `to`, `failing`, and `error` with the message of GitHub if `to` is `error`                                               |
+| `head`           | A new head commit                                                    | `from`, `to`                                                                                                                     |
+| `review`         | A reviewer has a new mark, verdict, score or review                  | `reviewer`, then the keys of `reviewers[]` in `--json`, with `reviewedAt` for `at`                                               |
+| `check`          | A check starts to fail, or stops (it passed, or it runs again)       | `check`, `to`: `failing` or `not failing`; `reviewerError: true` and `error` for a check of `reviewerChecks`                     |
+| `left`           | A pull request leaves the list                                       | `reason`: `merged`, `closed`, `draft`, or `unlisted` if it is still open; for `merged`, also `mergedBy` and `mergedAt`           |
+| `restack`        | GitHub moved the pull request to a new base after its parent merged  | `oldBase`, `base`, `parent`: the pull request that it was stacked on, or `null` if it was not listed                             |
+| `comment`        | A person writes a comment, a review or a line comment                | `author`, `createdAt`, `body` (the first 200 characters), `thread`: `true` for a line comment                                    |
+| `review-request` | A comment asks a bot for a review, or that request has a new outcome | `bot`, `author`, `createdAt`, `body`, `outcome`: `asked`, `acknowledged`, `failed`, `answered` or `stale`; `reason` for `failed` |
 
 A `comment` event comes from a person, so that the agent of the pull request reads it at once. A
 bot, the author of the pull request (an agent often posts as the author) and the logins of
@@ -114,6 +115,38 @@ of the line comments only with `--events`: the first 10 of each review.
 
 ```json
 { "commentEvents": { "ignoreLogins": ["my-agent-account"], "ignoreMarkers": ["<!-- claude-reply -->"] } }
+```
+
+A comment that asks a bot for a review, such as `@coderabbitai review` or `@kento-review heavy`,
+is a command, not a remark: it gives `review-request` events, and no `comment` event. The request
+follows the rules of [`answeredReviewRequests`](../merge-policy/), with the logins and the commands
+of `minScore`. Its `outcome` is the first that applies:
+
+- `answered`: a review of the bot came after the comment, and before the next request to the same
+  bot;
+- `failed`: the bot put 😕 on the comment, or posted a failure notice after it and before the next
+  request to the same bot: a comment whose first line says `review en échec`, `review failed`,
+  `unable to review`, `quota`, `usage limit` or `rate limit`. A notice that names another level than the request (`lite` for a `balanced` request) is for another review. `reason` gives the cause: the line
+  that starts with `Raison`, `Reason`, `Cause` or `Error`, else the first paragraph;
+- `acknowledged`: the bot put 👀 on the comment (the read gives the first 50 reactors of each reaction; with more, the reaction counts);
+- `stale`: no 👀, no 😕 and no review after `reviewRequestTimeoutMinutes` (15 by default);
+- `asked`: none of these yet.
+
+The first read of a pull request gives no `review-request` event. Then each request gives one event
+when it comes, and one more each time its outcome changes:
+
+```json
+{
+  "at": "…",
+  "pr": "acme/web#864",
+  "event": "review-request",
+  "bot": "kento-review",
+  "author": "octocat",
+  "createdAt": "…",
+  "body": "@kento-review balanced",
+  "outcome": "failed",
+  "reason": "Raison : no model gave a usable answer: … You have reached your specified API usage limits."
+}
 ```
 
 GitHub fails one read now and then. A pull request goes to `error` only after two failed reads in a

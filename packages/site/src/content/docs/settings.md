@@ -41,6 +41,14 @@ failure of the bot, not of the change: see [Reviewers and checks](../reviewers/#
 { "reviewerChecks": ["Sakuga Review"] }
 ```
 
+The key `reviewRequestTimeoutMinutes` (15 by default) is the time after which a review asked by
+comment, with no 👀, no 😕 and no review, is `stale` in the events: see
+[Scripts and orchestrators](../automation/).
+
+```json
+{ "reviewRequestTimeoutMinutes": 15 }
+```
+
 ## Review bots
 
 The settings list the review bots of the action bar, with their key, the way the tool asks them, and

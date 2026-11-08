@@ -12,6 +12,11 @@ export interface Comment {
   body: string;
   created_at: string;
   updated_at: string;
+  /**
+   * The reactions of the comment, such as "EYES" or "CONFUSED", with the logins of their first
+   * reactors, and `more` if GitHub has more reactors than these. Undefined if the read did not give them.
+   */
+  reactions?: { content: string; logins: string[]; more?: true }[];
 }
 
 export interface Review {
