@@ -456,7 +456,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     reviews: reviewers.reduce((total, reviewer) => total + reviewer.reviews, 0),
     ...(last && { lastReview: { name: last.name, at: last.lastReviewAt! } }),
     policy,
-    findings: summarizeFindings(findings),
+    findings: summarizeFindings(findings, facts.openThreads !== undefined),
   };
 }
 
