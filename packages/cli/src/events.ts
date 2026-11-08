@@ -423,11 +423,26 @@ export function parseWatchState(text: string | undefined): WatchState | undefine
   try {
     const value = JSON.parse(text) as Partial<WatchState>;
     if (value.version !== STATE_VERSION || !Array.isArray(value.reports)) return undefined;
+    // A file edited by hand can hold anything: a report needs at least its repository and its number.
+    const reports = (value.reports as unknown[]).filter((report): report is PullRequestReport => {
+      const item = report as Partial<PullRequestReport> | null;
+      return (
+        typeof item === 'object' &&
+        item !== null &&
+        typeof item.repo === 'string' &&
+        Number.isInteger(item.number) &&
+        Array.isArray(item.reviewers) &&
+        typeof item.checks === 'object' &&
+        item.checks !== null
+      );
+    });
+    const record = <T>(field: unknown): Record<string, T> =>
+      typeof field === 'object' && field !== null && !Array.isArray(field) ? (field as Record<string, T>) : {};
     return {
       version: STATE_VERSION,
-      reports: value.reports,
-      comments: value.comments ?? {},
-      requests: value.requests ?? {},
+      reports,
+      comments: record<string[]>(value.comments),
+      requests: record<Record<string, RequestOutcome>>(value.requests),
     };
   } catch {
     return undefined;

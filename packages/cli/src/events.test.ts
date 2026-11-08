@@ -754,6 +754,10 @@ test('a saved state of another version, or a broken file, is not read', () => {
   assert.equal(parseWatchState(undefined), undefined);
   assert.equal(parseWatchState('{'), undefined);
   assert.equal(parseWatchState(JSON.stringify({ version: 99, reports: [] })), undefined);
+  const kept = report(1);
+  const mixed = { version: STATE_VERSION, reports: [null, 3, { repo: 'acme/web' }, kept], comments: [] };
+  assert.deepEqual(parseWatchState(JSON.stringify(mixed))?.reports, [kept]);
+  assert.deepEqual(parseWatchState(JSON.stringify(mixed))?.comments, {});
   assert.deepEqual(parseWatchState(JSON.stringify({ version: STATE_VERSION, reports: [] })), {
     version: STATE_VERSION,
     reports: [],
