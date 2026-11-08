@@ -1092,8 +1092,15 @@ export function parsePullRequestRef(text: string, org: string): PullRequest | un
   const short = /^((?:[\w.-]+\/)?[\w.-]+)#(\d+)$/.exec(text.trim());
   const match = url ?? short;
   if (!match) return undefined;
+  // "." and ".." name no repository: GitHub would refuse the read with an error that tells less.
+  if (match[1]!.split('/').some((part) => part === '.' || part === '..')) return undefined;
   if (!match[1]!.includes('/') && !org) return undefined;
   const repo = match[1]!.includes('/') ? match[1]! : `${org}/${match[1]}`;
   const number = Number(match[2]);
   return { repo, number, title: '', url: `https://github.com/${repo}/pull/${number}` };
 }
+
+/** Keeps one of each pull request: a pull request named twice gives one object. */
+export const uniqueRefs = (refs: readonly PullRequest[]): PullRequest[] => [
+  ...new Map(refs.map((ref) => [`${ref.repo}#${ref.number}`, ref])).values(),
+];

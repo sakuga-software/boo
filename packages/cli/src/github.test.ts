@@ -15,6 +15,7 @@ import {
   listOrLast,
   mergeSearches,
   parsePullRequestRef,
+  uniqueRefs,
   pointsOutUntil,
   probeQuery,
   QuotaError,
@@ -303,6 +304,22 @@ test('a pull request is named as owner/repo#n, repo#n in the organization, or it
   assert.deepEqual(parsePullRequestRef('acme/web#7', 'sakuga-software'), ref('acme/web', 7));
   assert.deepEqual(parsePullRequestRef('https://github.com/acme/web/pull/7', ''), ref('acme/web', 7));
   assert.equal(parsePullRequestRef('fruitback#641', ''), undefined);
-  for (const wrong of ['fruitback', '#641', 'acme/web#x', 'https://github.com/acme/web/issues/7'])
+  for (const wrong of [
+    'fruitback',
+    '#641',
+    'acme/web#x',
+    'https://github.com/acme/web/issues/7',
+    '..#1',
+    '../x#1',
+    'acme/.#2',
+  ])
     assert.equal(parsePullRequestRef(wrong, 'acme'), undefined, wrong);
+});
+
+test('a pull request named twice gives one object', () => {
+  const ref = parsePullRequestRef('acme/web#7', '')!;
+  assert.deepEqual(
+    uniqueRefs([ref, { ...ref }, parsePullRequestRef('acme/web#8', '')!]).map(({ number }) => number),
+    [7, 8],
+  );
 });

@@ -10,6 +10,7 @@ import {
   openInBrowser,
   parsePullRequestRef,
   probePullRequests,
+  uniqueRefs,
   viewerLogin,
 } from './github.js';
 import { parseWatchState, readReport, watchEvents, writeWatchState, type WatchSources } from './events.js';
@@ -353,7 +354,7 @@ if (cli.flags.json) {
     process.exit(2);
   }
   // A named pull request skips the search: the read uses the shared cache, as each row of the list does.
-  const prs = named.length > 0 ? refs.filter((ref) => ref !== undefined) : await sources.listPullRequests();
+  const prs = named.length > 0 ? uniqueRefs(refs.filter((ref) => ref !== undefined)) : await sources.listPullRequests();
   const reports = await readReport(prs, sources, settings, new Date());
   await write(`${JSON.stringify(reports, null, 2)}\n`);
   process.exit(0);
