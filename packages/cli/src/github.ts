@@ -636,7 +636,7 @@ function cacheOfAccount(): Promise<DiskCache | undefined> {
 
 const cache = {
   get: async <T>(key: string, maxAgeMs: number, now?: number) => (await cacheOfAccount())?.get<T>(key, maxAgeMs, now),
-  set: async (key: string, value: unknown) => (await cacheOfAccount())?.set(key, value),
+  set: async (key: string, value: unknown, now?: number) => (await cacheOfAccount())?.set(key, value, now),
 };
 const RATE_KEY = 'graphql-rate-limit';
 // GitHub gives a new count at each query. A count older than its reset time is a full count again.

@@ -1,6 +1,7 @@
 import { render } from 'ink';
 import meow from 'meow';
 import { homedir } from 'node:os';
+import { setTimeout as wait } from 'node:timers/promises';
 import { App } from './app.js';
 import { fetchPullRequest, listPullRequests, openInBrowser, probePullRequests, viewerLogin } from './github.js';
 import { readReport, watchEvents, type WatchSources } from './events.js';
@@ -8,7 +9,8 @@ import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, parseRepos, resolveRepos, saveSettings, settingsPath } from './settings.js';
 import { detectBackground } from './theme.js';
-import { DEFAULT_RELAY, relayPath, removeWebhooks, setupWebhooks } from './webhooks.js';
+import { relayStream } from './stream.js';
+import { DEFAULT_RELAY, loadRelay, relayPath, removeWebhooks, setupWebhooks } from './webhooks.js';
 
 const DEFAULT_ORG = 'sakuga-software';
 
@@ -303,11 +305,20 @@ const background = process.stdout.isTTY
   ? await detectBackground(process.stdin, process.stdout, process.env)
   : 'unknown';
 const { watch, dryRun } = cli.flags;
+// Without `boo setup-webhooks`, the watch polls GitHub as before.
+const connection = watch ? await loadRelay() : undefined;
+const relay = connection
+  ? relayStream(connection, {
+      fetch,
+      sleep: (ms, signal) => wait(ms, undefined, { signal }),
+    })
+  : undefined;
 const app = render(
   <App
     options={{ watch, dryRun, org, authors, repos, ...(since && { since }), interactive, background }}
     settings={settings}
     saveSettings={saveSettings}
+    relay={relay}
   />,
   { alternateScreen: interactive },
 );

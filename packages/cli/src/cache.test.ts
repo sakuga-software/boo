@@ -102,3 +102,14 @@ test('two keys with the same readable part get two entries', async () => {
   await cache.set('pr-a_b/c#1', 'second', now);
   assert.deepEqual(await cache.get('pr-a/b_c#1', 30_000, now), { value: 'first', at: now });
 });
+
+test('a cached read is dated at its start, so a change during the read makes it old', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  const start = Date.now();
+  await cachedRead(cache, 'pr', 30_000, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return { head: 'h1' };
+  });
+  const entry = await cache.get('pr', 30_000);
+  assert.ok(entry && entry.at < start + 25, `entry dated ${(entry?.at ?? 0) - start} ms after the start`);
+});

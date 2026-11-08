@@ -69,6 +69,8 @@ CodeRabbit is the reviewer that the tool can ask again by itself.
   `$XDG_CACHE_HOME`): a terminal watch, a scheduled run, the watch of an agent. A pull request that
   another run read less than 30 s ago costs no query. `r`, and the reads after a post or a merge,
   read GitHub, not the cache.
+- With a webhook relay (`boo setup-webhooks`), the watch reads a pull request only when the relay
+  says that it changed, plus a safety read every 10 minutes. See [Webhooks](../webhooks/).
 - A run of boo sends at most 4 GraphQL queries at the same time. GitHub also has secondary rate
   limits: the points of each minute and the concurrent requests of a token. The agents that use the
   same `gh` token share these limits with boo. After a secondary limit, the error says

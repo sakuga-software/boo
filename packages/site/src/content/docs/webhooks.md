@@ -36,7 +36,19 @@ the repositories that its user can read through the installations of the App, an
 To run your own relay, see the
 [README of the relay](https://github.com/sakuga-software/boo/tree/main/packages/relay).
 
-:::note
-The watch does not read the stream yet: that comes next. Until then, the setup only prepares the
-connection, and the watch polls as before.
-:::
+## In the watch
+
+With a relay, `boo --watch` reads the stream of the relay:
+
+- A change reads only its pull request again, a few seconds after the last change of a burst: a push
+  gives about twenty check events. A read by another run of boo on this machine after the change
+  answers with no query.
+- A pull request that opens, closes or leaves draft reads the list again.
+- The list and every pull request get a safety read every 10 minutes, for a webhook that GitHub
+  delivers late or not at all.
+- The header shows the state of the stream: `live · safety check in 9:58`, or `poll · next check in
+  0:28` while the stream is down and the watch polls as without a relay. `relay session ended: run
+  boo setup-webhooks` means that the relay no longer knows the session.
+
+Without `~/.config/boo/relay.json`, the watch polls GitHub as before. `--json` and `--watch --events`
+poll in both cases.
