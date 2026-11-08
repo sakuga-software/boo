@@ -259,20 +259,22 @@ const lastReviewOf = (reviews: readonly Review[], counts: (login: string) => boo
 
 /**
  * True if a comment asks the group for a review after its last review: a line starts with a mention of
- * the group, and the rest of the line has the word "review" or a level. "@kento-review reject …" is not a request.
+ * the group, then a level, or a text with the word "review". "@kento-review reject …" is not a request.
  */
 function asksGroup(group: ReviewerGroup, facts: Pick<PolicyFacts, 'reviews' | 'comments'>): boolean {
   const member = (login: string) => group.logins.some((other) => sameLogin(login, other));
   const lastReview = lastReviewOf(facts.reviews, member);
   const mentions = [...group.commands, ...group.logins.map((login) => `@${login.replace(/\[bot\]$/, '')}`)];
   const line = new RegExp(`^\\s*(?:${mentions.map(escape).join('|')})(?![\\w-])([^\\n]*)`, 'gim');
-  const words = new RegExp(`\\b(?:${['review', ...group.levels].map(escape).join('|')})\\b`, 'i');
+  // A level counts only as the first word after the mention: "@kento-review the lite mode works" is no request.
+  const level = new RegExp(`^\\s*(?:${group.levels.map(escape).join('|') || '(?!)'})\\b`, 'i');
+  const asks = (rest: string) => /\breview\b/i.test(rest) || level.test(rest);
   return facts.comments.some(
     (post) =>
       post.user &&
       !member(post.user.login) &&
       post.created_at > lastReview &&
-      [...post.body.matchAll(line)].some((match) => words.test(match[1]!)),
+      [...post.body.matchAll(line)].some((match) => asks(match[1]!)),
   );
 }
 
