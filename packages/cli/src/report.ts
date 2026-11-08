@@ -3,7 +3,7 @@ import { decide, quotaScope, quotaSignals, type Decision, type QuotaSignal } fro
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { confidenceOf, isOnHead, summarize, type Overall, type Summary } from './reviewers.js';
 import { agentLogins, summarizeFindings, type FindingsSummary } from './findings.js';
-import type { MergePolicy, PolicyMiss } from './policy.js';
+import { ownerPathsOf, type MergePolicy, type PolicyMiss } from './policy.js';
 import { isWorkingStatus, ownerWorks, type Owner, type SubAgentState } from './sessions.js';
 import type { Settings } from './settings.js';
 import { placeStacks } from './stacks.js';
@@ -181,6 +181,13 @@ export interface PullRequestReport {
    */
   threads: { open: number; answered: number } | null;
   /**
+   * The owner that the changed files need (`ownerOnly`), and these files. `partial` is true if the
+   * pull request has more files than the query read. Null if no file of the pull request is owned.
+   */
+  needsOwner: { owner: string; paths: string[]; partial: boolean } | null;
+  /** Green, approved, mergeable, and every rule of the policy passes but `ownerOnly`: it waits only for the owner. */
+  readyForOwner: boolean;
+  /**
    * For a draft that the list keeps (`"drafts": "show"`), the state that it would have if it were ready
    * for review, such as "approved" or "checks failing". Null for any other pull request.
    */
@@ -343,6 +350,14 @@ export function buildReport(
       stale: snapshot?.stale ? { at: snapshot.stale.at, until: snapshot.stale.until ?? null } : null,
       findings: summary?.findings ?? summarizeFindings([]),
       threads: summary?.threads ?? null,
+      // A merged pull request has no summary: its files still name the owner, for the `left` event.
+      needsOwner:
+        (summary
+          ? summary.needsOwner
+          : snapshot &&
+            ownerPathsOf(settings.mergePolicy, { files: snapshot.files, changedFiles: snapshot.changes?.files })) ??
+        null,
+      readyForOwner: summary?.readyForOwner ?? false,
       draftState: summary && snapshot?.status === 'draft' ? OVERALL_LABELS[summary.overall] : null,
     };
   });

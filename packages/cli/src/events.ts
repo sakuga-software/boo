@@ -18,6 +18,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'check'; check: string; to: 'failing' | 'not failing'; reviewerError?: true; error?: string }
   | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
+  | ({ event: 'ready-for-owner' } & NonNullable<PullRequestReport['needsOwner']>)
   | { event: 'policy'; policy: PullRequestReport['policy']; added: string[]; removed: string[] }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
   | ({ event: 'review-request' } & Omit<RequestState, 'id' | 'commentId'>)
@@ -275,6 +276,9 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
   const added = [...notesAfter].filter((note) => !notesBefore.has(note));
   const removed = [...notesBefore].filter((note) => !notesAfter.has(note));
   if (added.length + removed.length > 0) events.push({ at, pr, event: 'policy', policy: after.policy, added, removed });
+  // One event when the pull request starts to wait only for its owner, not one at each read.
+  if (after.readyForOwner && !before.readyForOwner && after.needsOwner)
+    events.push({ at, pr, event: 'ready-for-owner', ...after.needsOwner });
   const restack = after.stack.restack;
   if (restack && restack.at !== before.stack.restack?.at)
     events.push({ at, pr, event: 'restack', oldBase: restack.oldBase, base: after.base, parent: before.stack.parent });
@@ -301,7 +305,8 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
 
 const LEFT_STATES = new Set(['merged', 'closed', 'draft']);
 /** A pull request left the list: merged, closed, or a draft that the list does not keep (no `draftState`). */
-const hasLeft = (report: PullRequestReport) => LEFT_STATES.has(report.state) && report.draftState === null;
+// A report of a state file written before `draftState` has no such key: `== null` takes it as null.
+const hasLeft = (report: PullRequestReport) => LEFT_STATES.has(report.state) && report.draftState == null;
 
 /**
  * Returns the events between two reads of the list. `previous` is undefined at the first read: each
