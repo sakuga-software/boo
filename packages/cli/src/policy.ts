@@ -1,6 +1,6 @@
 import { displayName, isBotLogin } from './reviewers.js';
 import type { Comment, Review } from './decide.js';
-import { reviewBotsOf, threadAnswered, type Finding, type FindingPlace } from './findings.js';
+import { threadAnswered, type Finding, type FindingPlace } from './findings.js';
 
 /** The rules that a team adds to "ready to merge", from the `mergePolicy` of the settings file. */
 export interface MergePolicy {
@@ -81,6 +81,8 @@ export interface PolicyFacts {
   viewer?: string | undefined;
   /** The author of the pull request: a reply of the author answers a bot thread. */
   author?: string;
+  /** The logins of the agents of the settings: a reply of an agent answers a bot thread. */
+  agents?: readonly string[] | undefined;
   /** The findings of the review bots. Only the `answerFindings` rule reads them. */
   findings?: readonly Finding[];
 }
@@ -353,19 +355,18 @@ export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comment
 
 /**
  * Counts the unresolved threads that a bot started: `open` has no answer, `answered` ends with a reply
- * of the author, a person or an agent (see `threadAnswered`). A thread whose last bot comment has the
+ * of the author, a person or an agent of the settings (see `threadAnswered`). A thread whose last bot comment has the
  * gone marker counts as resolved.
  */
 export function botThreads(
   rule: NonNullable<MergePolicy['resolvedBotThreads']> | undefined,
-  facts: Pick<PolicyFacts, 'openThreads' | 'reviews' | 'author'>,
+  facts: Pick<PolicyFacts, 'openThreads' | 'author' | 'agents'>,
 ): { open: number; answered: number } {
   const marker = rule && rule !== true ? rule.goneMarker : undefined;
-  const reviewBots = reviewBotsOf(facts.reviews, facts.author ?? '');
   const threads = facts.openThreads.filter(
     (thread) => isBotLogin(thread.author) && !(marker && thread.lastBotComment?.includes(marker)),
   );
-  const answered = threads.filter((thread) => threadAnswered(thread, reviewBots)).length;
+  const answered = threads.filter((thread) => threadAnswered(thread, facts.author ?? '', facts.agents)).length;
   return { open: threads.length - answered, answered };
 }
 

@@ -37,6 +37,8 @@ export interface FindingFacts {
   body: string;
   reviews: readonly Review[];
   comments: readonly Comment[];
+  /** The logins of the agents of the settings (`authors`): an agent can post as a bot, and answer. */
+  agents?: readonly string[] | undefined;
   /** Undefined if the read did not read the threads: the threads then count no finding. */
   openThreads?: readonly OpenThread[] | undefined;
 }
@@ -82,36 +84,35 @@ export function findingsIn(text: string): { level: string; title: string; id?: s
 
 /**
  * Finds the findings of the review bots, and tells if each one has an answer:
- * - a finding of an open thread has an answer if the last comment of the thread is not of a review bot;
+ * - a finding of an open thread has an answer if the last comment of the thread answers (see `answers`);
  * - a finding of the last review of a bot, or of the description, has an answer if a comment that is
- *   not of that bot quotes its title or gives its short ID. A finding of a review counts only the
+ *   answers quotes its title or gives its short ID. A finding of a review counts only the
  *   comments after the review. The description has no time: any comment counts.
  */
-/** The review bots of a pull request: a bot login with a review, other than the author. An agent that posts as a bot reviews nothing. */
-export const reviewBotsOf = (reviews: readonly Review[], author: string): string[] =>
-  reviews
-    .map((review) => review.user?.login)
-    .filter((login): login is string => Boolean(login) && isBotLogin(login!) && !sameLogin(login!, author));
+/** True if a comment of this login can answer a bot: the author of the pull request, a person, or an agent of the settings. */
+export const answersBots = (login: string, author: string, agents: readonly string[] = []): boolean =>
+  !isBotLogin(login) || sameLogin(login, author) || agents.some((agent) => sameLogin(agent, login));
 
-/** True if the last comment of a thread answers its first one: it is of the author, a person or an agent, not of a review bot. */
-export function threadAnswered(thread: OpenThread, reviewBots: readonly string[]): boolean {
+/** True if the last comment of a thread answers its first one (see `answersBots`). */
+export function threadAnswered(thread: OpenThread, author: string, agents: readonly string[] = []): boolean {
   const last = thread.lastAuthor;
-  return Boolean(last && !sameLogin(last, thread.author) && !reviewBots.some((bot) => sameLogin(bot, last)));
+  return Boolean(last && !sameLogin(last, thread.author) && answersBots(last, author, agents));
 }
 
 export function findingsOf(facts: FindingFacts): Finding[] {
   const findings: Finding[] = [];
-  const reviewBots = reviewBotsOf(facts.reviews, facts.author);
+  // An answer comes from the author, a person, or an agent of the settings: not from a bot that reviews or runs CI.
+  const answers = (login: string) => answersBots(login, facts.author, facts.agents);
   for (const thread of facts.openThreads ?? []) {
     if (!isBotLogin(thread.author) || sameLogin(thread.author, facts.author) || !thread.body) continue;
     // A reply of another review bot is no answer: only the author, a person or an agent answers.
-    const answered = threadAnswered(thread, reviewBots);
+    const answered = threadAnswered(thread, facts.author, facts.agents);
     for (const finding of findingsIn(thread.body).slice(0, 1))
       findings.push({ ...finding, place: 'thread', bot: thread.author, answered });
   }
-  const quoted = (finding: { title: string; id?: string }, excluded: readonly string[], since = '') =>
+  const quoted = (finding: { title: string; id?: string }, since = '') =>
     facts.comments.some((comment) => {
-      if (!comment.user || excluded.some((bot) => sameLogin(bot, comment.user!.login))) return false;
+      if (!comment.user || !answers(comment.user.login)) return false;
       if (comment.created_at <= since) return false;
       const text = plain(comment.body);
       return (
@@ -128,11 +129,11 @@ export function findingsOf(facts: FindingFacts): Finding[] {
   }
   for (const [bot, review] of lastReviews)
     for (const finding of findingsIn(review.body ?? ''))
-      findings.push({ ...finding, place: 'review', bot, answered: quoted(finding, [bot], review.submitted_at) });
+      findings.push({ ...finding, place: 'review', bot, answered: quoted(finding, review.submitted_at) });
   const block = blockOf(facts.body);
   // The block of the description has no author: an answer of any account but a review bot counts.
   for (const finding of findingsIn(block))
-    findings.push({ ...finding, place: 'description', bot: '', answered: quoted(finding, reviewBots) });
+    findings.push({ ...finding, place: 'description', bot: '', answered: quoted(finding) });
   return findings;
 }
 
@@ -155,3 +156,10 @@ export function summarizeFindings(findings: readonly Finding[]): FindingsSummary
       .map(({ level, place, title, id }) => ({ level, place, title, id: id ?? null })),
   };
 }
+
+/** The logins of the agents of a list of authors: "app/my-agent" is "my-agent[bot]". "@me" names no login. */
+export const agentLogins = (authors: readonly string[]): string[] =>
+  authors.flatMap((author) => {
+    if (author === '@me') return [];
+    return [author.startsWith('app/') ? `${author.slice(4)}[bot]` : author];
+  });

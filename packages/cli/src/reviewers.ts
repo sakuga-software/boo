@@ -72,6 +72,8 @@ export interface PullRequestFacts {
   now: Date;
   /** The CodeRabbit decision. It knows the quota clock of CodeRabbit better than a generic rule. */
   coderabbit?: Decision;
+  /** The logins of the agents of the settings: a reply of an agent answers a finding. */
+  agents?: readonly string[] | undefined;
   /** The names of the checks that a review bot runs: see `reviewerChecks` in the settings. */
   reviewerChecks?: readonly string[] | undefined;
   /** The facts that only the merge policy reads. */
@@ -426,6 +428,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     reviews: facts.reviews,
     comments: facts.comments,
     openThreads: facts.openThreads,
+    agents: facts.agents,
   });
   const policy = policyMisses(facts.policy, {
     head: facts.head,
@@ -437,6 +440,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     changedFiles: facts.changes?.files,
     viewer: facts.viewer,
     author: facts.author,
+    agents: facts.agents,
     findings,
   });
   // A rule of the team keeps the pull request from "ready to merge", as a rule of GitHub does.
@@ -459,8 +463,8 @@ export function summarize(facts: PullRequestFacts): Summary {
     ...(facts.openThreads && {
       threads: botThreads(facts.policy?.resolvedBotThreads, {
         openThreads: facts.openThreads,
-        reviews: facts.reviews,
         author: facts.author,
+        agents: facts.agents,
       }),
     }),
   };

@@ -2,7 +2,7 @@ import { activeBots, plannedRetries } from './bots.js';
 import { decide, quotaScope, quotaSignals, type Decision, type QuotaSignal } from './decide.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { confidenceOf, isOnHead, summarize, type Overall, type Summary } from './reviewers.js';
-import { summarizeFindings, type FindingsSummary } from './findings.js';
+import { agentLogins, summarizeFindings, type FindingsSummary } from './findings.js';
 import type { MergePolicy, PolicyMiss } from './policy.js';
 import { isWorkingStatus, ownerWorks, type Owner, type SubAgentState } from './sessions.js';
 import type { Settings } from './settings.js';
@@ -45,10 +45,12 @@ export function assess(
     policy,
     viewer,
     reviewerChecks,
+    agents,
   }: {
     policy?: MergePolicy | undefined;
     viewer?: string | undefined;
     reviewerChecks?: readonly string[] | undefined;
+    agents?: readonly string[] | undefined;
   } = {},
 ): Map<string, { decision: Decision; summary: Summary }> {
   const scopeOf = ({ repo, fetched }: { repo: string; fetched: Fetched }) =>
@@ -68,7 +70,7 @@ export function assess(
     const decision = decide({ ...entry.fetched, now, pr: key, quota });
     results.set(key, {
       decision,
-      summary: summarize({ ...entry.fetched, now, coderabbit: decision, policy, viewer, reviewerChecks }),
+      summary: summarize({ ...entry.fetched, now, coderabbit: decision, policy, viewer, reviewerChecks, agents }),
     });
   }
   return results;
@@ -237,6 +239,7 @@ export function buildReport(
     policy: settings.mergePolicy,
     viewer,
     reviewerChecks: settings.reviewerChecks,
+    agents: agentLogins(settings.authors),
   });
   const byKey = new Map(inputs.map((input) => [keyOf(input.pr), input]));
   const places = placeStacks(

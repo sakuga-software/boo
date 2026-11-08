@@ -284,13 +284,17 @@ test('an answered bot thread is told apart from an open one: only a person can r
     { author: SAKUGA, lastAuthor: 'mathieu' },
     { author: SAKUGA, lastAuthor: 'coderabbitai[bot]' },
   ];
-  const reviews = [review('coderabbitai[bot]', 'head', 'LGTM', 30)];
-  assert.deepEqual(policyMisses(policy, facts({ openThreads, reviews, author: 'sakuga-agent[bot]' })), [
+  assert.deepEqual(policyMisses(policy, facts({ openThreads, author: 'sakuga-agent[bot]' })), [
     { rule: 'resolvedBotThreads', note: '2 open bot threads' },
     { rule: 'resolvedBotThreads', note: '2 answered bot threads to resolve' },
   ]);
-  assert.deepEqual(policyMisses(policy, facts({ openThreads: [openThreads[1]!] })), [
+  // On a pull request of a person, the agent answers only if the settings list it.
+  assert.deepEqual(policyMisses(policy, facts({ openThreads: [openThreads[1]!], author: 'mathieu' })), [
+    { rule: 'resolvedBotThreads', note: '1 open bot thread' },
+  ]);
+  const agents = ['sakuga-agent[bot]'];
+  assert.deepEqual(policyMisses(policy, facts({ openThreads: [openThreads[1]!], author: 'mathieu', agents })), [
     { rule: 'resolvedBotThreads', note: '1 answered bot thread to resolve' },
   ]);
-  assert.deepEqual(botThreads(true, { openThreads, reviews, author: 'sakuga-agent[bot]' }), { open: 2, answered: 2 });
+  assert.deepEqual(botThreads(true, { openThreads, author: 'sakuga-agent[bot]' }), { open: 2, answered: 2 });
 });
