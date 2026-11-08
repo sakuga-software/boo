@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Comment, Review } from './decide.js';
-import { globToRegExp, parseMergePolicy, policyMisses, unansweredRequests, type PolicyFacts } from './policy.js';
+import {
+  botThreads,
+  globToRegExp,
+  parseMergePolicy,
+  policyMisses,
+  unansweredRequests,
+  type PolicyFacts,
+} from './policy.js';
 import { parseSettings } from './settings.js';
 
 const at = (minutes: number) => new Date(Date.parse('2026-10-24T12:00:00Z') - minutes * 60_000).toISOString();
@@ -267,4 +274,23 @@ test('the settings drop a rule with an invalid field, and keep the others', () =
   });
   assert.equal(parseMergePolicy({ resolvedBotThreads: { goneMarker: '' } }), undefined);
   assert.equal(parseMergePolicy({ resolvedBotThreads: false }), undefined);
+});
+
+test('an answered bot thread is told apart from an open one: only a person can resolve it now', () => {
+  const policy = { resolvedBotThreads: true } as const;
+  const openThreads = [
+    { author: SAKUGA, lastAuthor: SAKUGA },
+    { author: SAKUGA, lastAuthor: 'sakuga-agent[bot]' },
+    { author: SAKUGA, lastAuthor: 'mathieu' },
+    { author: SAKUGA, lastAuthor: 'coderabbitai[bot]' },
+  ];
+  const reviews = [review('coderabbitai[bot]', 'head', 'LGTM', 30)];
+  assert.deepEqual(policyMisses(policy, facts({ openThreads, reviews, author: 'sakuga-agent[bot]' })), [
+    { rule: 'resolvedBotThreads', note: '2 open bot threads' },
+    { rule: 'resolvedBotThreads', note: '2 answered bot threads to resolve' },
+  ]);
+  assert.deepEqual(policyMisses(policy, facts({ openThreads: [openThreads[1]!] })), [
+    { rule: 'resolvedBotThreads', note: '1 answered bot thread to resolve' },
+  ]);
+  assert.deepEqual(botThreads(true, { openThreads, reviews, author: 'sakuga-agent[bot]' }), { open: 2, answered: 2 });
 });

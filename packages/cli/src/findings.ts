@@ -87,19 +87,25 @@ export function findingsIn(text: string): { level: string; title: string; id?: s
  *   not of that bot quotes its title or gives its short ID. A finding of a review counts only the
  *   comments after the review. The description has no time: any comment counts.
  */
+/** The review bots of a pull request: a bot login with a review, other than the author. An agent that posts as a bot reviews nothing. */
+export const reviewBotsOf = (reviews: readonly Review[], author: string): string[] =>
+  reviews
+    .map((review) => review.user?.login)
+    .filter((login): login is string => Boolean(login) && isBotLogin(login!) && !sameLogin(login!, author));
+
+/** True if the last comment of a thread answers its first one: it is of the author, a person or an agent, not of a review bot. */
+export function threadAnswered(thread: OpenThread, reviewBots: readonly string[]): boolean {
+  const last = thread.lastAuthor;
+  return Boolean(last && !sameLogin(last, thread.author) && !reviewBots.some((bot) => sameLogin(bot, last)));
+}
+
 export function findingsOf(facts: FindingFacts): Finding[] {
   const findings: Finding[] = [];
-  // The review bots: a bot login with a review, other than the author. An agent that posts as a bot reviews nothing.
-  const reviewBots = facts.reviews
-    .map((review) => review.user?.login)
-    .filter((login): login is string => Boolean(login) && isBotLogin(login!) && !sameLogin(login!, facts.author));
+  const reviewBots = reviewBotsOf(facts.reviews, facts.author);
   for (const thread of facts.openThreads ?? []) {
     if (!isBotLogin(thread.author) || sameLogin(thread.author, facts.author) || !thread.body) continue;
     // A reply of another review bot is no answer: only the author, a person or an agent answers.
-    const last = thread.lastAuthor;
-    const answered = Boolean(
-      last && !sameLogin(last, thread.author) && !reviewBots.some((bot) => sameLogin(bot, last)),
-    );
+    const answered = threadAnswered(thread, reviewBots);
     for (const finding of findingsIn(thread.body).slice(0, 1))
       findings.push({ ...finding, place: 'thread', bot: thread.author, answered });
   }
