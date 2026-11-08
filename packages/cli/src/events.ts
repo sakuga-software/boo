@@ -569,6 +569,9 @@ export async function watchEvents(
       ]);
       tracked = new Map([...listed, ...gone.filter((pr) => unread.has(keyOf(pr)))].map((pr) => [keyOf(pr), pr]));
       first = false;
+      // A pull request that the watch no longer follows needs no comments or requests: the file stays small.
+      for (const key of [...seenComments.keys()]) if (!previous.has(key)) seenComments.delete(key);
+      for (const key of [...seenRequests.keys()]) if (!previous.has(key)) seenRequests.delete(key);
       // A state that cannot be written is not an error of GitHub: it gets its own message, and the watch goes on.
       await onState?.({
         version: STATE_VERSION,

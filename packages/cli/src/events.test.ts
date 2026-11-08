@@ -846,3 +846,16 @@ test('a change of the policy notes gives one policy event with the notes added a
     ['policy'],
   );
 });
+
+test('the saved state forgets the comments and the requests of a pull request that left', async () => {
+  const kept = {
+    listed: [1, 2],
+    snapshots: { 1: { comments: [said(1, 'Why?')] }, 2: { comments: [said(2, 'And?')] } },
+  };
+  const { state } = await runWatch([kept]);
+  assert.deepEqual(Object.keys(state.comments).sort(), ['acme/web#1', 'acme/web#2']);
+  const merged = { listed: [1], snapshots: { 1: kept.snapshots[1], 2: { status: 'merged' as const } } };
+  const { state: after } = await runWatch([merged], { initial: state });
+  assert.deepEqual(Object.keys(after.comments), ['acme/web#1']);
+  assert.deepEqual(Object.keys(after.requests), ['acme/web#1']);
+});

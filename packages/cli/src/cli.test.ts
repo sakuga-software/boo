@@ -32,3 +32,11 @@ test('--snapshot refuses to run without --state', () => {
   assert.equal(run.status, 2);
   assert.match(run.stderr, /--snapshot .* needs --state <file>/);
 });
+
+test('--state refuses a file that it cannot read, but not a missing one', () => {
+  const run = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', '--watch', '--events', '--state', '/'], {
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /cannot read the state in \//);
+});

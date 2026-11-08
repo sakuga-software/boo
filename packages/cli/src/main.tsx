@@ -292,7 +292,15 @@ if (cli.flags.events) {
     process.exit(2);
   }
   const statePath = cli.flags.state;
-  const initial = statePath ? parseWatchState(await readFile(statePath, 'utf8').catch(() => undefined)) : undefined;
+  // A missing file is a first run. Another error, such as a right that is missing, must not start from nothing.
+  const text = statePath
+    ? await readFile(statePath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined;
+        console.error(`✖ cannot read the state in ${statePath}: ${error.message}`);
+        process.exit(2);
+      })
+    : undefined;
+  const initial = parseWatchState(text);
   await watchEvents(
     sources,
     settings,
