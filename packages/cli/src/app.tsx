@@ -51,6 +51,7 @@ import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Setting
 import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
 import { extraFields } from './policy.js';
 import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from './report.js';
+import type { RelayChange, RelaySource, RelayState } from './stream.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
@@ -115,6 +116,10 @@ export interface Timing {
   watchPollMs: number;
   listRefreshMs: number;
   sessionsPollMs: number;
+  /** With a live relay stream: the safety poll of the list and of every pull request. */
+  relayPollMs: number;
+  /** The quiet time after a relay change before the read. The read waits at most 4 times this. */
+  relaySettleMs: number;
 }
 
 const DEFAULT_TIMING: Timing = {
@@ -123,7 +128,12 @@ const DEFAULT_TIMING: Timing = {
   watchPollMs: 30_000,
   listRefreshMs: 60_000,
   sessionsPollMs: 5_000,
+  // A push gives about twenty check events in a minute: the watch reads after a quiet time, or after the cap.
+  relaySettleMs: 2_500,
+  relayPollMs: 10 * 60_000,
 };
+// The actions of a pull request that can add it to the list of the search, or take it out.
+const LIST_ACTIONS = new Set(['opened', 'reopened', 'closed', 'ready_for_review', 'converted_to_draft']);
 const REPOST_GUARD_MS = 15 * 60_000;
 // The poll interval and the cache age while less than 20 % of the GraphQL points remain.
 const SLOW_POLL_MS = 5 * 60_000;
@@ -234,21 +244,25 @@ interface AppProps {
   options: Options;
   gitHub?: GitHub;
   sessions?: Sessions;
-  timing?: Timing;
+  /** Each time that is missing takes its default. */
+  timing?: Partial<Timing>;
   settings?: Settings;
   /** Stores the settings after a change in the settings panel. */
   saveSettings?: (settings: Settings) => Promise<void>;
+  /** The webhook relay of `boo setup-webhooks`. Without it, the watch polls GitHub. */
+  relay?: RelaySource | undefined;
 }
 
 export function App(props: AppProps) {
   // The workflow posts comments. If a new prop restarts it, it posts again and loses its repost guard.
   // Thus the component keeps the props of its first render.
-  const [{ options, gitHub, sessions, timing, saveSettings }] = useState(() => ({
+  const [{ options, gitHub, sessions, timing, saveSettings, relay }] = useState(() => ({
     options: props.options,
     gitHub: props.gitHub ?? github,
     sessions: props.sessions ?? localSessions(),
-    timing: props.timing ?? DEFAULT_TIMING,
+    timing: { ...DEFAULT_TIMING, ...props.timing },
     saveSettings: props.saveSettings,
+    relay: props.relay,
   }));
   const { exit } = useApp();
   const { stdin } = useStdin();
@@ -260,6 +274,7 @@ export function App(props: AppProps) {
   const [triggered, setTriggered] = useState(0);
   const [now, setNow] = useState(() => new Date());
   const [nextCheckAt, setNextCheckAt] = useState<Date>();
+  const [relayState, setRelayState] = useState<{ state: RelayState; detail?: string | undefined }>();
   const [listError, setListError] = useState<string>();
   const [selected, setSelected] = useState<string>();
   const [confirmation, setConfirmation] = useState<Confirmation>();
@@ -357,17 +372,22 @@ export function App(props: AppProps) {
         ),
       );
       const policy = settingsRef.current.mergePolicy;
-      for (const [key, result] of assess(fetched, new Date(), { policy, viewer: viewerRef.current }))
+      const reviewerChecks = settingsRef.current.reviewerChecks;
+      for (const [key, result] of assess(fetched, new Date(), { policy, viewer: viewerRef.current, reviewerChecks }))
         rowsRef.current.set(key, { ...rowsRef.current.get(key)!, ...result });
       setRows([...rowsRef.current.values()]);
     }
 
-    async function refresh(pr: PullRequest, fresh = false): Promise<Decision | undefined> {
+    // `since`: the time of a change that the relay announced. A read by another run after it is new enough.
+    async function refresh(pr: PullRequest, fresh: boolean | { since: number } = false): Promise<Decision | undefined> {
       update(pr, { activity: 'loading' });
       try {
         const { status, ...state } = await gitHub.fetchPullRequest(pr, {
-          maxAgeMs: fresh ? 0 : cacheAge(),
-          extra: extraFields(settingsRef.current.mergePolicy),
+          maxAgeMs: maxAgeOf(fresh),
+          extra: {
+            ...extraFields(settingsRef.current.mergePolicy),
+            reviewerChecks: settingsRef.current.reviewerChecks,
+          },
         });
         if (status !== 'open') {
           const merged = status === 'merged' ? { by: state.mergedBy, at: state.mergedAt } : undefined;
@@ -505,6 +525,62 @@ export function App(props: AppProps) {
       );
     }
 
+    // The pull requests that the relay announced since the last turn, with the time of their last change.
+    const changed = new Map<string, number>();
+    let listChanged = false;
+    let live = false;
+    let settle: NodeJS.Timeout | undefined;
+    let firstChangeAt: number | undefined;
+    signal.addEventListener('abort', () => clearTimeout(settle));
+
+    function wakeSoon() {
+      const now = Date.now();
+      firstChangeAt ??= now;
+      clearTimeout(settle);
+      settle = setTimeout(
+        () => {
+          firstChangeAt = undefined;
+          wake.abort();
+        },
+        Math.max(0, Math.min(timing.relaySettleMs, firstChangeAt + 4 * timing.relaySettleMs - now)),
+      );
+    }
+
+    function keyOfChange(change: RelayChange): string | undefined {
+      const repo = change.repo.toLowerCase();
+      for (const [key, row] of rowsRef.current) {
+        if (row.pr.repo.toLowerCase() !== repo) continue;
+        if (change.number !== undefined ? row.pr.number === change.number : row.fetched?.head === change.sha)
+          return key;
+      }
+      return undefined;
+    }
+
+    if (options.watch)
+      relay?.subscribe(
+        {
+          change(change) {
+            if (change.type === 'pull_request' && change.action && LIST_ACTIONS.has(change.action)) listChanged = true;
+            const key = keyOfChange(change);
+            const at = Date.parse(change.at) || Date.now();
+            if (key) changed.set(key, Math.max(changed.get(key) ?? 0, at));
+            if (key || listChanged) wakeSoon();
+          },
+          reset() {
+            for (const key of rowsRef.current.keys()) changed.set(key, Date.now());
+            listChanged = true;
+            wake.abort();
+          },
+          state(state, detail) {
+            live = state === 'live';
+            setRelayState({ state, detail });
+            // A live stream changes the time of the next check: the loop computes it again.
+            wake.abort();
+          },
+        },
+        signal,
+      );
+
     // A retry of another bot needs no new fetch: the loop only wakes up at its time.
     function nextDelay(watched: PullRequest[]): number {
       const waits = watched
@@ -516,7 +592,7 @@ export function App(props: AppProps) {
       const ends = [...waits, ...retries, ...(refusedUntil ? [Date.parse(refusedUntil)] : [])].map(
         (end) => end + 2_000 - Date.now(),
       );
-      return Math.max(1_000, Math.min(lowRef.current ? SLOW_POLL_MS : timing.watchPollMs, ...ends));
+      return Math.max(1_000, Math.min(pollEvery(timing.watchPollMs), ...ends));
     }
 
     const tracked = () => [...rowsRef.current.values()].map((row) => row.pr);
@@ -530,6 +606,17 @@ export function App(props: AppProps) {
     }
 
     const cacheAge = () => (lowRef.current ? SLOW_POLL_MS : github.CACHE_TTL_MS);
+
+    function maxAgeOf(fresh: boolean | { since: number }): number {
+      if (typeof fresh === 'object') return Math.max(0, Date.now() - fresh.since);
+      return fresh ? 0 : cacheAge();
+    }
+
+    /** The time between two polls: the safety poll with a live stream, else `normalMs`, slower when the points are low. */
+    function pollEvery(normalMs: number): number {
+      if (live) return timing.relayPollMs;
+      return lowRef.current ? SLOW_POLL_MS : normalMs;
+    }
 
     async function readPoints() {
       const rate = await gitHub.readRateLimit?.().catch(() => undefined);
@@ -573,6 +660,7 @@ export function App(props: AppProps) {
       await retryOthers(tracked());
       if (!options.watch) return;
 
+      let polledAt = Date.now();
       while (true) {
         if (settingsRef.current.mergePolicy?.ownerOnly && !viewerRef.current)
           viewerRef.current = await gitHub.viewerLogin?.();
@@ -586,8 +674,16 @@ export function App(props: AppProps) {
         wake = new AbortController();
         setNextCheckAt(undefined);
 
-        const listEvery = lowRef.current ? SLOW_POLL_MS : timing.listRefreshMs;
-        if (refreshAsked || Date.now() - listedAt >= listEvery) {
+        // With a live stream, the relay says what changed, and the poll is only a safety net.
+        const pollDue = !live || Date.now() - polledAt >= timing.relayPollMs;
+        if (pollDue) polledAt = Date.now();
+        const announced = [...changed];
+        changed.clear();
+        const listAnnounced = listChanged;
+        listChanged = false;
+
+        const listEvery = pollEvery(timing.listRefreshMs);
+        if (refreshAsked || listAnnounced || Date.now() - listedAt >= listEvery) {
           // r asks for the state now, so it reads GitHub and not the cache of the other runs.
           const fresh = refreshAsked;
           refreshAsked = false;
@@ -600,17 +696,31 @@ export function App(props: AppProps) {
           }
           // A settled or waiting row can change by itself: a first review starts or ends, a push lands,
           // or someone approves a pull request that waits for the quota. The loop below refreshes the others.
-          const quiet = tracked().filter((pr) => {
-            const row = rowOf(pr);
-            return !row.left && !inProgress(row) && (!needsWatch(row, autoPost) || row.decision?.kind === 'wait');
-          });
-          await refreshAll(quiet, fresh);
+          if (fresh || pollDue) {
+            const quiet = tracked().filter((pr) => {
+              const row = rowOf(pr);
+              return !row.left && !inProgress(row) && (!needsWatch(row, autoPost) || row.decision?.kind === 'wait');
+            });
+            await refreshAll(quiet, fresh);
+          }
         }
 
+        const announcedKeys = new Set(announced.map(([key]) => key));
+        await Promise.all(
+          announced.flatMap(([key, at]) => {
+            const row = rowsRef.current.get(key);
+            return row ? [refresh(row.pr, { since: at })] : [];
+          }),
+        );
+        if (announced.length > 0) await readPoints();
+
+        // Between two safety polls, only a wait that ended needs a read: the relay announces the rest.
         const due = watched.filter((pr) => {
           const row = rowOf(pr);
-          if (row.left) return false;
-          return inProgress(row) || row.decision?.kind !== 'wait' || row.decision.availableAt.getTime() <= Date.now();
+          if (row.left || announcedKeys.has(keyOf(pr))) return false;
+          const waitEnded = row.decision?.kind === 'wait' && row.decision.availableAt.getTime() <= Date.now();
+          if (!pollDue) return waitEnded;
+          return inProgress(row) || row.decision?.kind !== 'wait' || waitEnded;
         });
         await refreshAll(due);
         await triggerReady(tracked());
@@ -878,7 +988,10 @@ export function App(props: AppProps) {
     if (requesting.length > 0)
       warnings.push(`${requesting.join(', ')} ${requesting.length === 1 ? 'requests' : 'request'} changes`);
     else if (!reviewers.some((reviewer) => reviewer.verdict === 'approved')) warnings.push('no reviewer approves');
-    const failed = row.summary?.checks.failed ?? [];
+    const failed = [
+      ...(row.summary?.checks.failed ?? []),
+      ...(row.summary?.checks.reviewerErrors ?? []).map(({ check }) => check),
+    ];
     if (failed.length > 0) warnings.push(`${failed.length} failing check${failed.length === 1 ? '' : 's'}`);
     if (row.summary?.checks.pending)
       warnings.push(`${row.summary.checks.pending} running check${row.summary.checks.pending === 1 ? '' : 's'}`);
@@ -1296,6 +1409,7 @@ export function App(props: AppProps) {
         now={clock}
         nextCheckAt={nextCheckAt}
         rate={rate}
+        relay={relayState}
       />
       {rows === null && !fatal && !listError && (
         <Text>
@@ -1405,6 +1519,8 @@ interface HeaderProps {
   nextCheckAt?: Date | undefined;
   /** The GraphQL points of the account. The header shows them below 20 %. */
   rate?: github.RateLimit | undefined;
+  /** The state of the relay stream, if the machine has one. */
+  relay?: { state: RelayState; detail?: string | undefined } | undefined;
 }
 
 export function Ghost({ mood, background = 'unknown' }: { mood: Mood; background?: Background | undefined }) {
@@ -1434,12 +1550,15 @@ export function Ghost({ mood, background = 'unknown' }: { mood: Mood; background
 const scopeOf = ({ org, repos = [] }: Pick<Options, 'org' | 'repos'>) =>
   repos.length > 0 ? repos.join(', ') : org || 'all organizations';
 
-export function Header({ options, mood, now, nextCheckAt, rate }: HeaderProps) {
+const RELAY_LABELS: Record<RelayState, string> = { live: 'live', poll: 'poll', expired: 'poll' };
+
+export function Header({ options, mood, now, nextCheckAt, rate, relay }: HeaderProps) {
   const refusedUntil = github.pointsOutUntil(rate, now);
+  const check = relay?.state === 'live' ? 'safety check' : 'next check';
   const status =
     !options.watch || mood === 'done' || mood === 'failed'
       ? ' '
-      : `${nextCheckAt ? `next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : 'checking…'}${options.interactive ? '' : ' · Ctrl+C to quit'}`;
+      : `${relay ? `${RELAY_LABELS[relay.state]} · ` : ''}${nextCheckAt ? `${check} in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : 'checking…'}${options.interactive ? '' : ' · Ctrl+C to quit'}`;
   const scope = [
     options.authors.join(' + '),
     scopeOf(options),
@@ -1462,6 +1581,7 @@ export function Header({ options, mood, now, nextCheckAt, rate }: HeaderProps) {
         </Text>
         <Text wrap="truncate-end">
           <Text dimColor>{status}</Text>
+          {relay?.state === 'expired' && <Text color="yellow"> · relay session ended: run boo setup-webhooks</Text>}
           {refusedUntil ? (
             <Text color="yellow">
               {status.trim() && ' · '}GitHub refuses the GraphQL queries until {formatTime(new Date(refusedUntil))}: the
@@ -1502,6 +1622,7 @@ const OVERALL_VIEWS: Record<Overall, Omit<View, 'icon'> & { icon: () => ReactNod
   approved: { icon: () => <Text color="green">✔</Text>, label: 'approved', color: 'green' },
   'changes requested': { icon: () => <Text color="red">✎</Text>, label: 'changes requested', color: 'red' },
   'checks failing': { icon: () => <Text color="red">✖</Text>, label: 'checks failing', color: 'red' },
+  'reviewer error': { icon: () => <Text color="yellow">⚠</Text>, label: 'reviewer error', color: 'yellow' },
   conflicts: { icon: () => <Text color="red">⚠</Text>, label: 'conflicts', color: 'red' },
   reviewing: { icon: () => spinner('cyan'), label: 'reviewing', color: 'cyan' },
   reviewed: { icon: () => <Text color="cyan">●</Text>, label: 'reviewed', color: 'cyan' },
@@ -1842,10 +1963,11 @@ function checkLines(checks: Summary['checks'], base: string | undefined): ReactN
   const parts: [string, string][] = [];
   if (checks.passed > 0) parts.push([`✔ ${checks.passed} passed`, 'green']);
   if (checks.failed.length > 0) parts.push([`✖ ${checks.failed.length} failing`, 'red']);
+  if (checks.reviewerErrors.length > 0) parts.push([`⚠ ${checks.reviewerErrors.length} reviewer error`, 'yellow']);
   if (checks.pending > 0) parts.push([`◌ ${checks.pending} running`, 'yellow']);
   if (checks.skipped > 0) parts.push([`⊘ ${checks.skipped} skipped`, 'gray']);
   if (checks.quota > 0) parts.push([`◷ ${checks.quota} quota only`, 'gray']);
-  if (parts.length === 0 && checks.cancelled.length === 0)
+  if (parts.length === 0 && checks.cancelled.length === 0 && checks.reviewerErrors.length === 0)
     return [
       <Text key="none" dimColor>
         no checks
@@ -1870,12 +1992,18 @@ function checkLines(checks: Summary['checks'], base: string | undefined): ReactN
       </Text>
     </Text>
   ));
+  const reviewerErrors = checks.reviewerErrors.map(({ check, error }) => (
+    <Text key={check} wrap="truncate-end">
+      <Text color="yellow">⚠ {check}</Text>
+      <Text dimColor> · the review bot failed, not the change{error ? `: ${error}` : ''}</Text>
+    </Text>
+  ));
   const cancelled = checks.cancelled.map((name) => (
     <Text key={name} dimColor wrap="truncate-end">
       ⊘ {name} · cancelled by a newer run
     </Text>
   ));
-  return [...(counts ? [counts] : []), ...failing, ...cancelled];
+  return [...(counts ? [counts] : []), ...failing, ...reviewerErrors, ...cancelled];
 }
 
 /** The lines of an unfolded row, by section: the agent, the reviewers, the checks, then the notes. */
@@ -1949,13 +2077,20 @@ const CHIPS: Record<ReviewerStatus, { icon: string; color: string }> = {
 
 function ChecksBadge({ summary, short }: { summary: Summary; short: boolean }) {
   const { checks } = summary;
-  const counted = checks.passed + checks.failed.length + checks.pending;
+  const counted = checks.passed + checks.failed.length + checks.reviewerErrors.length + checks.pending;
   const word = (text: string) => (short ? '' : ` ${text}`);
   if (checks.failed.length > 0)
     return (
       <Text color="red">
         ✖ {checks.failed.length}/{counted}
         {word('failing')}
+      </Text>
+    );
+  if (checks.reviewerErrors.length > 0)
+    return (
+      <Text color="yellow">
+        ⚠ {checks.reviewerErrors.length}/{counted}
+        {word('reviewer error')}
       </Text>
     );
   if (checks.pending > 0)
@@ -2167,6 +2302,7 @@ const FOOTER_ORDER: Overall[] = [
   'approved',
   'changes requested',
   'checks failing',
+  'reviewer error',
   'conflicts',
   'reviewing',
   'reviewed',

@@ -7,6 +7,9 @@ import { DiskCache } from './cache.js';
 import {
   concurrencyLimit,
   fingerprintOf,
+  firstErrorLine,
+  JOB_LOG_RETRY_MS,
+  jobErrorLine,
   isRateLimited,
   listKey,
   listOrLast,
@@ -228,4 +231,62 @@ test('the probe reads each pull request in its own repository, with quoted names
   assert.match(query, /p0: repository\(owner: "acme", name: "web"\) \{ pullRequest\(number: 1\) \{ \.\.\.Probe \} \}/);
   assert.match(query, /p1: repository\(owner: "other", name: "api"\) \{ pullRequest\(number: 7\)/);
   assert.match(query, /fragment Probe on PullRequest/);
+});
+
+test('the first error line of a job log skips the timestamps and the exit code annotation', () => {
+  const log = [
+    '2026-10-28T17:43:16.1Z Run git diff',
+    '2026-10-28T17:43:16.8755158Z fatal: Invalid revision range 0a35..5315',
+    '2026-10-28T17:43:16.8758960Z Error: Command failed: git diff --name-only 0a35..5315',
+    '2026-10-28T17:43:16.8833102Z ##[error]Process completed with exit code 1.',
+  ].join('\n');
+  assert.equal(firstErrorLine(log), 'fatal: Invalid revision range 0a35..5315');
+  assert.equal(
+    firstErrorLine('x\n##[error]API quota exhausted\n##[error]Process completed with exit code 1.'),
+    'API quota exhausted',
+  );
+  assert.equal(firstErrorLine('all good\n##[error]Process completed with exit code 1.'), undefined);
+  assert.equal(firstErrorLine(`error: ${'x'.repeat(300)}`)!.length, 200);
+  const caught = [
+    'error: retry 1 of 3 failed',
+    '##[error]a caught warning',
+    'ok',
+    '##[error]Review failed: quota',
+  ].join('\n');
+  assert.equal(firstErrorLine(caught), 'Review failed: quota');
+});
+
+test('a read with the checks of the review bots does not answer a read without them', () => {
+  const pull = { repo: 'acme/web', number: 1, title: '', url: '' };
+  assert.notEqual(readKey(pull, { reviewerChecks: ['Sakuga Review'] }), readKey(pull, {}));
+});
+
+test('a job log that GitHub did not give is read again later, and a log that it gave is read once', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  let reads = 0;
+  const down = async () => {
+    reads++;
+    throw new Error('HTTP 404: log not ready');
+  };
+  const ready = async () => {
+    reads++;
+    return '2026-10-28T17:43:16Z fatal: Invalid revision range a..b';
+  };
+  const now = Date.now();
+  assert.equal(await jobErrorLine(cache, 'job', down, now), undefined);
+  assert.equal(await jobErrorLine(cache, 'job', ready, now + 60_000), undefined);
+  assert.equal(reads, 1);
+  // The cache writes the real time, a few milliseconds after `now`: the margin keeps the test stable on a slow runner.
+  const later = now + JOB_LOG_RETRY_MS + 60_000;
+  assert.equal(await jobErrorLine(cache, 'job', ready, later), 'fatal: Invalid revision range a..b');
+  assert.equal(await jobErrorLine(cache, 'job', down, later + 24 * 3_600_000), 'fatal: Invalid revision range a..b');
+  assert.equal(reads, 2);
+});
+
+test('a job log that GitHub does not give in time is a failed read, tried again later', async () => {
+  const cache = new DiskCache(await mkdtemp(join(tmpdir(), 'boo-cache-')));
+  const never = () => new Promise<string>(() => {});
+  const now = Date.now();
+  assert.equal(await jobErrorLine(cache, 'job', never, now, 20), undefined);
+  assert.deepEqual((await cache.get('job', Infinity))?.value, { line: null, failed: true });
 });

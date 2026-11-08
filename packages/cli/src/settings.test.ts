@@ -116,3 +116,8 @@ test('the comment events keep the valid logins and markers', () => {
   assert.equal(parseSettings({ commentEvents: { ignoreLogins: [] } }).commentEvents, undefined);
   assert.equal(parseSettings({ commentEvents: ['alice'] }).commentEvents, undefined);
 });
+
+test('the checks of the review bots are a list of names', () => {
+  assert.deepEqual(parseSettings({ reviewerChecks: [' Sakuga Review', 3, ''] }).reviewerChecks, ['Sakuga Review']);
+  assert.equal(parseSettings({ reviewerChecks: 'Sakuga Review' }).reviewerChecks, undefined);
+});

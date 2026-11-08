@@ -1,6 +1,7 @@
 import { render } from 'ink';
 import meow from 'meow';
 import { homedir } from 'node:os';
+import { setTimeout as wait } from 'node:timers/promises';
 import { App } from './app.js';
 import { fetchPullRequest, listPullRequests, openInBrowser, probePullRequests, viewerLogin } from './github.js';
 import { readReport, watchEvents, type WatchSources } from './events.js';
@@ -8,7 +9,8 @@ import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, parseRepos, resolveRepos, saveSettings, settingsPath } from './settings.js';
 import { detectBackground } from './theme.js';
-import { DEFAULT_RELAY, relayPath, removeWebhooks, setupWebhooks } from './webhooks.js';
+import { relayStream } from './stream.js';
+import { DEFAULT_RELAY, loadRelay, relayPath, removeWebhooks, setupWebhooks } from './webhooks.js';
 
 const DEFAULT_ORG = 'sakuga-software';
 
@@ -54,6 +56,8 @@ const cli = meow(
                        reviewer counts, as on GitHub)
     checks failing     a check of the last commit fails; a check of a run that
                        a newer run of the same workflow replaces does not count
+    reviewer error     only a check of a review bot fails ("reviewerChecks"
+                       in the settings): the bot failed, not the change
     ready to merge     approved, every check passes, GitHub can merge, and the
                        "mergePolicy" of the settings file passes (see the docs)
     approved           approved, but a check runs or a rule blocks the merge; a
@@ -255,7 +259,11 @@ const sources: WatchSources = {
   // Only the events read the text of the line comments: the other modes do not need the bytes.
   fetchPullRequest: (pr) =>
     fetchPullRequest(pr, {
-      extra: { ...extraFields(settings.mergePolicy), ...(cli.flags.events && { lineComments: true }) },
+      extra: {
+        ...extraFields(settings.mergePolicy),
+        reviewerChecks: settings.reviewerChecks,
+        ...(cli.flags.events && { lineComments: true }),
+      },
     }),
   probePullRequests,
   readOwners: () => readOwners(new LinkIndex()),
@@ -297,11 +305,20 @@ const background = process.stdout.isTTY
   ? await detectBackground(process.stdin, process.stdout, process.env)
   : 'unknown';
 const { watch, dryRun } = cli.flags;
+// Without `boo setup-webhooks`, the watch polls GitHub as before.
+const connection = watch ? await loadRelay() : undefined;
+const relay = connection
+  ? relayStream(connection, {
+      fetch,
+      sleep: (ms, signal) => wait(ms, undefined, { signal }),
+    })
+  : undefined;
 const app = render(
   <App
     options={{ watch, dryRun, org, authors, repos, ...(since && { since }), interactive, background }}
     settings={settings}
     saveSettings={saveSettings}
+    relay={relay}
   />,
   { alternateScreen: interactive },
 );

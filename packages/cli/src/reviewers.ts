@@ -23,6 +23,10 @@ export interface Check {
   cancelled?: boolean;
   /** The check stands for a whole workflow run that does not run its jobs yet: queued, or waiting. */
   wholeRun?: boolean;
+  /** The ID of the check run. For GitHub Actions, it is also the ID of the job. */
+  id?: number;
+  /** The first error line of the log of a failed reviewer check, if the tool read it. */
+  error?: string;
 }
 
 export type ReviewerStatus =
@@ -67,6 +71,8 @@ export interface PullRequestFacts {
   now: Date;
   /** The CodeRabbit decision. It knows the quota clock of CodeRabbit better than a generic rule. */
   coderabbit?: Decision;
+  /** The names of the checks that a review bot runs: see `reviewerChecks` in the settings. */
+  reviewerChecks?: readonly string[] | undefined;
   /** The facts that only the merge policy reads. */
   body?: string;
   openThreads?: OpenThread[];
@@ -281,8 +287,10 @@ export interface ChecksSummary {
   passed: number;
   skipped: number;
   pending: number;
-  /** The checks that fail, also the ones in `failedOnBase`. */
+  /** The checks that fail, also the ones in `failedOnBase`. A reviewer check is in `reviewerErrors`, not here. */
   failed: string[];
+  /** The reviewer checks that fail: the review bot failed, not the change. */
+  reviewerErrors: { check: string; error?: string }[];
   /** The failing checks that also fail on the last commit of the base branch. */
   failedOnBase: string[];
   /** The checks of a cancelled run that a newer run of the same workflow replaces. They do not fail. */
@@ -319,7 +327,9 @@ export function summarizeChecks(
   checks: Check[],
   reviewers: Reviewer[],
   baseChecks: readonly Check[] = [],
+  reviewerChecks: readonly string[] = [],
 ): ChecksSummary {
+  const ofReviewer = (name: string) => reviewerChecks.some((other) => other.toLowerCase() === name.toLowerCase());
   const refused = reviewers.filter((reviewer) => reviewer.status === 'quota' || reviewer.status === 'to retry');
   const summary: ChecksSummary = {
     total: checks.length,
@@ -327,6 +337,7 @@ export function summarizeChecks(
     skipped: 0,
     pending: 0,
     failed: [],
+    reviewerErrors: [],
     failedOnBase: [],
     cancelled: [],
     quota: 0,
@@ -340,6 +351,8 @@ export function summarizeChecks(
     else if (check.state === 'skipped') summary.skipped++;
     else if (check.state === 'pending') summary.pending++;
     else if (replacedByNewerRun(check, checks)) summary.cancelled.push(check.name);
+    else if (ofReviewer(check.name))
+      summary.reviewerErrors.push({ check: check.name, ...(check.error && { error: check.error }) });
     else {
       summary.failed.push(check.name);
       if (failsOn(check.name, baseChecks)) summary.failedOnBase.push(check.name);
@@ -352,6 +365,7 @@ export type Overall =
   | 'conflicts'
   | 'changes requested'
   | 'checks failing'
+  | 'reviewer error'
   | 'ready'
   | 'approved'
   | 'reviewing'
@@ -384,7 +398,7 @@ export interface Summary {
  */
 export function summarize(facts: PullRequestFacts): Summary {
   const reviewers = reviewersOf(facts);
-  const checks = summarizeChecks(facts.checks, reviewers, facts.baseChecks);
+  const checks = summarizeChecks(facts.checks, reviewers, facts.baseChecks, facts.reviewerChecks);
   const changes = reviewers.some((reviewer) => reviewer.verdict === 'changes requested');
   const approved = !changes && reviewers.some((reviewer) => reviewer.verdict === 'approved');
   const any = (...statuses: ReviewerStatus[]) => reviewers.some((reviewer) => statuses.includes(reviewer.status));
@@ -393,6 +407,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     if (facts.mergeState === 'dirty') return 'conflicts';
     if (changes) return 'changes requested';
     if (checks.failed.length > 0) return 'checks failing';
+    if (checks.reviewerErrors.length > 0) return 'reviewer error';
     if (approved && checks.pending === 0 && MERGEABLE.has(facts.mergeState)) return 'ready';
     if (approved) return 'approved';
     if (any('reviewing')) return 'reviewing';

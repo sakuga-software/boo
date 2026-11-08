@@ -57,6 +57,11 @@ export type Settings = Record<SettingKey, boolean> & {
   reviewRequestTimeoutMinutes: number;
   /** The rules that a team adds before "ready to merge". */
   mergePolicy?: MergePolicy;
+  /**
+   * The names of the checks that a review bot runs, such as "Sakuga Review". A red check of this list
+   * is a failure of the bot, not of the change: the state is "reviewer error", not "checks failing".
+   */
+  reviewerChecks?: string[];
 };
 
 export const DEFAULT_AUTHORS: readonly string[] = ['@me'];
@@ -187,6 +192,8 @@ export function parseSettings(value: unknown): Settings {
   }
   settings.bots = parseSwitches((value as Record<string, unknown>).bots);
   settings.agentPrompts = parsePrompts((value as Record<string, unknown>).agentPrompts);
+  const reviewerChecks = parseAuthors((value as Record<string, unknown>).reviewerChecks);
+  if (reviewerChecks) settings.reviewerChecks = reviewerChecks;
   const mergePolicy = parseMergePolicy((value as Record<string, unknown>).mergePolicy);
   if (mergePolicy) settings.mergePolicy = mergePolicy;
   const custom = (value as Record<string, unknown>).customBots;

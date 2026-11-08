@@ -34,6 +34,13 @@ organization of `--org`. With no `repos`, the tool lists every repository of the
 { "repos": ["boo", "acme/web"] }
 ```
 
+The key `reviewerChecks` names the checks that the review bots run. A red check of this list is a
+failure of the bot, not of the change: see [Reviewers and checks](../reviewers/#approval-and-checks).
+
+```json
+{ "reviewerChecks": ["Sakuga Review"] }
+```
+
 The key `reviewRequestTimeoutMinutes` (15 by default) is the time after which a review asked by
 comment, with no 👀, no 😕 and no review, is `stale` in the events: see
 [Scripts and orchestrators](../automation/).
