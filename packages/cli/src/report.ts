@@ -13,6 +13,7 @@ export const OVERALL_LABELS: Record<Overall, string> = {
   conflicts: 'conflicts',
   'changes requested': 'changes requested',
   'checks failing': 'checks failing',
+  'reviewer error': 'reviewer error',
   ready: 'ready to merge',
   approved: 'approved',
   reviewing: 'reviewing',
@@ -39,7 +40,15 @@ export type Fetched = Omit<PullRequestSnapshot, 'status'>;
 export function assess(
   fetched: ReadonlyMap<string, { repo: string; fetched: Fetched; left: boolean }>,
   now: Date,
-  { policy, viewer }: { policy?: MergePolicy | undefined; viewer?: string | undefined } = {},
+  {
+    policy,
+    viewer,
+    reviewerChecks,
+  }: {
+    policy?: MergePolicy | undefined;
+    viewer?: string | undefined;
+    reviewerChecks?: readonly string[] | undefined;
+  } = {},
 ): Map<string, { decision: Decision; summary: Summary }> {
   const scopeOf = ({ repo, fetched }: { repo: string; fetched: Fetched }) =>
     quotaScope(repo, fetched.comments, fetched.reviews);
@@ -56,7 +65,10 @@ export function assess(
     if (entry.left) continue;
     const quota = signalsByScope.get(scopeOf(entry)) ?? [];
     const decision = decide({ ...entry.fetched, now, pr: key, quota });
-    results.set(key, { decision, summary: summarize({ ...entry.fetched, now, coderabbit: decision, policy, viewer }) });
+    results.set(key, {
+      decision,
+      summary: summarize({ ...entry.fetched, now, coderabbit: decision, policy, viewer, reviewerChecks }),
+    });
   }
   return results;
 }
@@ -115,7 +127,16 @@ export interface PullRequestReport {
   mergedBy: string | null;
   mergedAt: string | null;
   error: string | null;
-  checks: { passed: number; failing: string[]; running: number; skipped: number; quota: number };
+  checks: {
+    passed: number;
+    /** The red checks, also the reviewer checks of `reviewerErrors`. */
+    failing: string[];
+    running: number;
+    skipped: number;
+    quota: number;
+    /** The red reviewer checks: the review bot failed, not the change. `error` is the first error line of its log. */
+    reviewerErrors: { check: string; error: string | null }[];
+  };
   reviewers: {
     login: string;
     mark: string;
@@ -184,7 +205,7 @@ function stateOf(snapshot: PullRequestSnapshot | undefined, summary: Summary | u
   return summary ? OVERALL_LABELS[summary.overall] : snapshot.status;
 }
 
-const NO_CHECKS = { passed: 0, failing: [], running: 0, skipped: 0, quota: 0 };
+const NO_CHECKS = { passed: 0, failing: [], running: 0, skipped: 0, quota: 0, reviewerErrors: [] };
 
 /** Builds the output of `boo --json`, in the order of the list: each stacked pull request after its base. */
 export function buildReport(
@@ -201,7 +222,11 @@ export function buildReport(
       return [[keyOf(pr), { repo: pr.repo, fetched: rest, left: status !== 'open' }] as const];
     }),
   );
-  const assessed = assess(fetched, now, { policy: settings.mergePolicy, viewer });
+  const assessed = assess(fetched, now, {
+    policy: settings.mergePolicy,
+    viewer,
+    reviewerChecks: settings.reviewerChecks,
+  });
   const byKey = new Map(inputs.map((input) => [keyOf(input.pr), input]));
   const places = placeStacks(
     inputs.map(({ pr, snapshot }) => ({
@@ -245,10 +270,12 @@ export function buildReport(
       checks: summary
         ? {
             passed: summary.checks.passed,
-            failing: summary.checks.failed,
+            // A red reviewer check stays in `failing`, as before `reviewerErrors`: a script can still see it.
+            failing: [...summary.checks.failed, ...summary.checks.reviewerErrors.map(({ check }) => check)],
             running: summary.checks.pending,
             skipped: summary.checks.skipped,
             quota: summary.checks.quota,
+            reviewerErrors: summary.checks.reviewerErrors.map(({ check, error }) => ({ check, error: error ?? null })),
           }
         : NO_CHECKS,
       reviewers: (summary?.reviewers ?? []).map((reviewer) => ({

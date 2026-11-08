@@ -54,6 +54,8 @@ const cli = meow(
                        reviewer counts, as on GitHub)
     checks failing     a check of the last commit fails; a check of a run that
                        a newer run of the same workflow replaces does not count
+    reviewer error     only a check of a review bot fails ("reviewerChecks"
+                       in the settings): the bot failed, not the change
     ready to merge     approved, every check passes, GitHub can merge, and the
                        "mergePolicy" of the settings file passes (see the docs)
     approved           approved, but a check runs or a rule blocks the merge; a
@@ -255,7 +257,11 @@ const sources: WatchSources = {
   // Only the events read the text of the line comments: the other modes do not need the bytes.
   fetchPullRequest: (pr) =>
     fetchPullRequest(pr, {
-      extra: { ...extraFields(settings.mergePolicy), ...(cli.flags.events && { lineComments: true }) },
+      extra: {
+        ...extraFields(settings.mergePolicy),
+        reviewerChecks: settings.reviewerChecks,
+        ...(cli.flags.events && { lineComments: true }),
+      },
     }),
   probePullRequests,
   readOwners: () => readOwners(new LinkIndex()),

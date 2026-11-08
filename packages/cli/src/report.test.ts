@@ -67,7 +67,7 @@ test('the output keeps the same keys, in the same order', () => {
     'policy',
     'stale',
   ]);
-  assert.deepEqual(Object.keys(first!.checks), ['passed', 'failing', 'running', 'skipped', 'quota']);
+  assert.deepEqual(Object.keys(first!.checks), ['passed', 'failing', 'running', 'skipped', 'quota', 'reviewerErrors']);
   assert.deepEqual(Object.keys(first!.stack), ['parent', 'position', 'size', 'restack']);
   assert.deepEqual(Object.keys(first!.agent), ['kind', 'session', 'subAgent', 'sessionState', 'cloudSession']);
   assert.deepEqual(Object.keys(first!.notes), ['merge', 'retries', 'coderabbit']);
@@ -87,7 +87,7 @@ test('an approved pull request with green checks is ready to merge, as in the hu
     },
   ]);
   assert.equal(first!.state, 'approved');
-  assert.deepEqual(first!.checks, { passed: 1, failing: [], running: 1, skipped: 0, quota: 0 });
+  assert.deepEqual(first!.checks, { passed: 1, failing: [], running: 1, skipped: 0, quota: 0, reviewerErrors: [] });
   assert.deepEqual(first!.reviewers, [
     { login: 'alice', mark: 'approved', onHead: true, verdict: 'approved', score: null, at: ago(5) },
   ]);
@@ -286,4 +286,26 @@ test('a merged or closed pull request is never stalled', () => {
   });
   for (const report of buildReport([left('merged', 1), left('closed', 2)], new Map(), DEFAULT_SETTINGS, now))
     assert.equal(report.stalled, false);
+});
+
+test('a red check of a review bot is a reviewer error, not a failing check, and does not stall the pull request', () => {
+  const settings = { ...DEFAULT_SETTINGS, reviewerChecks: ['Sakuga Review'] };
+  const crashed = { name: 'sakuga review', state: 'failure' as const, error: 'fatal: Invalid revision range a..b' };
+  const input = (checks: PullRequestSnapshot['checks']) => [
+    { pr: pr(1), snapshot: snapshot({ headAt: ago(120), checks: [{ name: 'test', state: 'success' }, ...checks] }) },
+  ];
+  const [alone] = buildReport(input([crashed]), new Map(), settings, now);
+  assert.equal(alone!.state, 'reviewer error');
+  assert.equal(alone!.stalled, false);
+  assert.deepEqual(alone!.checks.failing, ['sakuga review']);
+  assert.deepEqual(alone!.checks.reviewerErrors, [
+    { check: 'sakuga review', error: 'fatal: Invalid revision range a..b' },
+  ]);
+  const [both] = buildReport(input([crashed, { name: 'lint', state: 'failure' }]), new Map(), settings, now);
+  assert.equal(both!.state, 'checks failing');
+  assert.equal(both!.stalled, true);
+  assert.deepEqual(both!.checks.failing, ['lint', 'sakuga review']);
+  const [unlisted] = buildReport(input([crashed]), new Map(), DEFAULT_SETTINGS, now);
+  assert.equal(unlisted!.state, 'checks failing');
+  assert.deepEqual(unlisted!.checks.reviewerErrors, []);
 });

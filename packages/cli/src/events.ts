@@ -13,7 +13,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'state'; from: string; to: string; failing: string[]; error?: string }
   | { event: 'head'; from: string | null; to: string | null }
   | ({ event: 'review'; reviewer: string; reviewedAt: string | null } & Omit<Reviewer, 'login' | 'at'>)
-  | { event: 'check'; check: string; to: 'failing' | 'not failing' }
+  | { event: 'check'; check: string; to: 'failing' | 'not failing'; reviewerError?: true; error?: string }
   | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
@@ -124,8 +124,20 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     events.push({ at, pr, event: 'restack', oldBase: restack.oldBase, base: after.base, parent: before.stack.parent });
   const failingBefore = new Set(before.checks.failing);
   const failingAfter = new Set(after.checks.failing);
+  const reviewerErrors = new Map(after.checks.reviewerErrors.map(({ check, error }) => [check, error]));
   for (const check of failingAfter)
-    if (!failingBefore.has(check)) events.push({ at, pr, event: 'check', check, to: 'failing' });
+    if (!failingBefore.has(check)) {
+      const error = reviewerErrors.get(check);
+      events.push({
+        at,
+        pr,
+        event: 'check',
+        check,
+        to: 'failing',
+        ...(reviewerErrors.has(check) && { reviewerError: true as const }),
+        ...(error && { error }),
+      });
+    }
   for (const check of failingBefore)
     if (!failingAfter.has(check)) events.push({ at, pr, event: 'check', check, to: 'not failing' });
   return events;
