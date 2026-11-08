@@ -459,7 +459,8 @@ export function summarize(facts: PullRequestFacts): Summary {
   const plain = overallOf();
   const overall = plain === 'ready' && policy.length > 0 ? 'approved' : plain;
   const needsOwner = ownerPathsOf(facts.policy, { files: facts.files, changedFiles: facts.changes?.files });
-  const readyForOwner = plain === 'ready' && policy.length > 0 && policy.every((miss) => miss.rule === 'ownerOnly');
+  // For the owner, `ownerOnly` misses nothing: the pull request is then "ready to merge", and still waits for that owner.
+  const readyForOwner = plain === 'ready' && Boolean(needsOwner) && policy.every((miss) => miss.rule === 'ownerOnly');
 
   const last = reviewers
     .filter((reviewer) => reviewer.lastReviewAt)

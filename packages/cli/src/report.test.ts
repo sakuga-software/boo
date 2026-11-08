@@ -328,6 +328,10 @@ test('a pull request that touches owner paths names the owner and the files, and
   assert.deepEqual(ready!.needsOwner, { owner: 'mathieu', paths: ['apps/app/drizzle/0042.sql'], partial: false });
   assert.equal(ready!.state, 'approved');
   assert.equal(ready!.readyForOwner, true);
+  // Read by the owner: no rule misses, the state is "ready to merge", and it still waits for that owner.
+  const [mine] = buildReport([{ pr: pr(1), snapshot: owned }], new Map(), settings, now, 'mathieu');
+  assert.equal(mine!.state, 'ready to merge');
+  assert.equal(mine!.readyForOwner, true);
   const red = snapshot({ ...owned, checks: [{ name: 'test', state: 'failure' }] });
   assert.equal(buildReport([{ pr: pr(1), snapshot: red }], new Map(), settings, now, 'alice')[0]!.readyForOwner, false);
   const proof = { ...settings, mergePolicy: { ...mergePolicy, requireProof: '\\.gif' } };
