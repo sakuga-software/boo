@@ -83,7 +83,7 @@ export class DiskCache {
 /** The part of a cache that `cachedRead` uses. */
 export interface ReadCache {
   get<T>(key: string, maxAgeMs: number, now?: number): Promise<{ value: T; at: number } | undefined>;
-  set(key: string, value: unknown): Promise<void>;
+  set(key: string, value: unknown, now?: number): Promise<void>;
 }
 
 /** Returns the cached value if it is younger than `maxAgeMs`. Else calls `read`, and caches its result. */
@@ -95,7 +95,9 @@ export async function cachedRead<T>(
 ): Promise<T> {
   const cached = await cache.get<T>(key, maxAgeMs);
   if (cached) return cached.value;
+  // The time of the entry is the start of the read: a change during the read must make the entry old.
+  const started = Date.now();
   const value = await read();
-  await cache.set(key, value);
+  await cache.set(key, value, started);
   return value;
 }
