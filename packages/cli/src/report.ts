@@ -251,7 +251,8 @@ export function buildReport(
     return {
       repo: pr.repo,
       number: pr.number,
-      title: pr.title,
+      // A pull request named on the command line has no title from the search: the read gives it.
+      title: pr.title || snapshot?.title || '',
       url: pr.url,
       headSha: snapshot?.head ?? null,
       base: snapshot?.base ?? null,

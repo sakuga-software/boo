@@ -309,3 +309,14 @@ test('a red check of a review bot is a reviewer error, not a failing check, and 
   assert.equal(unlisted!.state, 'checks failing');
   assert.deepEqual(unlisted!.checks.reviewerErrors, []);
 });
+
+test('a pull request named on the command line takes its title from the read', () => {
+  const named = { ...pr(1), title: '' };
+  const [first] = buildReport(
+    [{ pr: named, snapshot: snapshot({ title: 'feat: from the read' }) }],
+    new Map(),
+    DEFAULT_SETTINGS,
+    now,
+  );
+  assert.equal(first!.title, 'feat: from the read');
+});

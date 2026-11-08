@@ -172,6 +172,8 @@ export interface PullRequestSnapshot {
   agent?: Agent;
   /** The description of the pull request. */
   body?: string;
+  /** The title of the pull request, as the read gives it. */
+  title?: string;
   /** The review threads that are not resolved. Undefined if the query did not read the threads. */
   openThreads?: OpenThread[];
   /** The changed files. Undefined if the query did not read them. */
@@ -259,7 +261,7 @@ query(${VARIABLES}) {
   rateLimit { limit remaining resetAt }
   ${PULL} {
     ...Probe
-    state isDraft merged mergedAt mergedBy { login __typename } mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
+    title state isDraft merged mergedAt mergedBy { login __typename } mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
     additions deletions changedFiles
     timelineItems(itemTypes: [AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, PULL_REQUEST_COMMIT], last: 1) {
       nodes { __typename ... on AutomaticBaseChangeSucceededEvent { oldBase createdAt } } }
@@ -338,6 +340,7 @@ type ContextNode =
   | { __typename: 'StatusContext'; context: string; state: string; description: string | null };
 
 interface PullRequestNode {
+  title?: string;
   state: 'OPEN' | 'CLOSED' | 'MERGED';
   isDraft: boolean;
   merged: boolean;
@@ -548,6 +551,7 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
       .filter((login): login is string => Boolean(login)),
     ...(agent && { agent }),
     body: pull.body,
+    ...(pull.title !== undefined && { title: pull.title }),
     ...(pull.reviewThreads && {
       openThreads: pull.reviewThreads.nodes
         .filter((thread) => !thread.isResolved)
@@ -1073,4 +1077,19 @@ export function openInBrowser(url: string): Promise<void> {
       resolve();
     });
   });
+}
+
+/**
+ * Reads a pull request named as "owner/repo#123", "repo#123" in the organization, or its URL. Returns
+ * undefined if the text names no pull request.
+ */
+export function parsePullRequestRef(text: string, org: string): PullRequest | undefined {
+  const url = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)\/?$/.exec(text.trim());
+  const short = /^((?:[\w.-]+\/)?[\w.-]+)#(\d+)$/.exec(text.trim());
+  const match = url ?? short;
+  if (!match) return undefined;
+  if (!match[1]!.includes('/') && !org) return undefined;
+  const repo = match[1]!.includes('/') ? match[1]! : `${org}/${match[1]}`;
+  const number = Number(match[2]);
+  return { repo, number, title: '', url: `https://github.com/${repo}/pull/${number}` };
 }

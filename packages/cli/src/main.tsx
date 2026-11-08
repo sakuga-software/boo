@@ -3,7 +3,14 @@ import meow from 'meow';
 import { homedir } from 'node:os';
 import { setTimeout as wait } from 'node:timers/promises';
 import { App } from './app.js';
-import { fetchPullRequest, listPullRequests, openInBrowser, probePullRequests, viewerLogin } from './github.js';
+import {
+  fetchPullRequest,
+  listPullRequests,
+  openInBrowser,
+  parsePullRequestRef,
+  probePullRequests,
+  viewerLogin,
+} from './github.js';
 import { readReport, watchEvents, type WatchSources } from './events.js';
 import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
@@ -45,6 +52,9 @@ const cli = meow(
     -n, --dry-run             Show the state, but post and merge nothing
         --json                Print the state as JSON, one object for each pull
                               request, and post nothing; the docs give the keys
+        --pr <repo#number>    With --json: read only this pull request, as
+                              owner/repo#123, repo#123 or its URL, with no list;
+                              repeat it for more
         --events              With --watch: print each change as one JSON line
                               (NDJSON), and post nothing; see the docs
     -h, --help                Show this help
@@ -191,6 +201,7 @@ const cli = meow(
       dryRun: { type: 'boolean', shortFlag: 'n', default: false },
       json: { type: 'boolean', default: false },
       events: { type: 'boolean', default: false },
+      pr: { type: 'string', isMultiple: true },
       help: { type: 'boolean', shortFlag: 'h' },
       version: { type: 'boolean', shortFlag: 'v' },
       remove: { type: 'boolean', default: false },
@@ -272,6 +283,11 @@ const sources: WatchSources = {
 // A pipe takes the output in the background. An exit before the end of the write cuts it.
 const write = (text: string) => new Promise((resolve) => process.stdout.write(text, resolve));
 
+if ((cli.flags.pr ?? []).length > 0 && !cli.flags.json) {
+  console.error('--pr reads one pull request for a script: it needs --json.');
+  process.exit(2);
+}
+
 if (cli.flags.events) {
   if (!cli.flags.watch) {
     console.error('--events streams the changes: it needs --watch.');
@@ -295,7 +311,16 @@ if (cli.flags.json) {
     console.error('--json prints the state once: --watch --events streams the changes.');
     process.exit(2);
   }
-  const reports = await readReport(await sources.listPullRequests(), sources, settings, new Date());
+  const named = cli.flags.pr ?? [];
+  const refs = named.map((text) => parsePullRequestRef(text, org));
+  const wrong = named.filter((_, index) => !refs[index]);
+  if (wrong.length > 0) {
+    console.error(`--pr takes owner/repo#123, repo#123 or the URL of a pull request: ${wrong.join(', ')}`);
+    process.exit(2);
+  }
+  // A named pull request skips the search: the read uses the shared cache, as each row of the list does.
+  const prs = named.length > 0 ? refs.filter((ref) => ref !== undefined) : await sources.listPullRequests();
+  const reports = await readReport(prs, sources, settings, new Date());
   await write(`${JSON.stringify(reports, null, 2)}\n`);
   process.exit(0);
 }

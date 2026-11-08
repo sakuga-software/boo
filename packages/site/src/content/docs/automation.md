@@ -80,6 +80,17 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
 
 The keys stay the same from one version to the next. A test fixes them.
 
+## One pull request
+
+`boo --json --pr fruitback#641` reads only that pull request, with no search: `owner/repo#123`,
+`repo#123` in the organization of `--org`, or its URL. Repeat `--pr` for more. The output is the
+same list, with one object for each named pull request, and the read uses the shared cache. A script
+that just got an event reads the whole picture this way, with the same answers as the list.
+
+```sh
+boo --json --pr fruitback#641 | jq '.[0] | {state, checks, policy}'
+```
+
 ## Events
 
 `boo --watch --events` reads the list once a minute and prints each change as one JSON line
