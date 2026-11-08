@@ -45,6 +45,8 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   stale: null,
   findings: summarizeFindings([]),
   threads: null,
+  needsOwner: null,
+  readyForOwner: false,
   ...patch,
 });
 const byKey = (...reports: PullRequestReport[]) => new Map(reports.map((item) => [`acme/web#${item.number}`, item]));
@@ -872,4 +874,14 @@ test('a state write that cannot rename its file leaves no temporary file', async
   await mkdir(join(dir, 'folder', 'inside'), { recursive: true });
   await assert.rejects(writeWatchState(join(dir, 'folder'), state));
   assert.deepEqual((await readdir(dir)).sort(), ['folder', 'state.json']);
+});
+
+test('a pull request that starts to wait only for its owner gives one ready-for-owner event', () => {
+  const needsOwner = { owner: 'mathieu', paths: ['apps/app/drizzle/0042.sql'], partial: false };
+  const waiting = report(1, { needsOwner, readyForOwner: false, state: 'approved' });
+  const ready = report(1, { needsOwner, readyForOwner: true, state: 'approved' });
+  assert.deepEqual(diffReports(byKey(waiting), [ready], AT), [
+    { at: AT, pr: 'acme/web#1', event: 'ready-for-owner', ...needsOwner },
+  ]);
+  assert.deepEqual(diffReports(byKey(ready), [ready], AT), []);
 });

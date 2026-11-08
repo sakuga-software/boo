@@ -9,7 +9,14 @@ import {
   type Verdict,
 } from './decide.js';
 import { findingsOf, summarizeFindings, type FindingsSummary } from './findings.js';
-import { botThreads, policyMisses, type MergePolicy, type OpenThread, type PolicyMiss } from './policy.js';
+import {
+  botThreads,
+  ownerPathsOf,
+  policyMisses,
+  type MergePolicy,
+  type OpenThread,
+  type PolicyMiss,
+} from './policy.js';
 
 export type CheckState = 'pending' | 'success' | 'failure' | 'skipped';
 
@@ -397,6 +404,10 @@ export interface Summary {
   findings: FindingsSummary;
   /** The unresolved bot threads, with no answer and answered. Undefined if the read did not read the threads. */
   threads?: { open: number; answered: number };
+  /** The owner that the changed files need, and these files. Undefined if no file of the pull request is owned. */
+  needsOwner?: { owner: string; paths: string[]; partial: boolean };
+  /** Green, approved, mergeable, and every rule passes but `ownerOnly`: only the owner can merge it now. */
+  readyForOwner: boolean;
 }
 
 /**
@@ -447,6 +458,9 @@ export function summarize(facts: PullRequestFacts): Summary {
   // A rule of the team keeps the pull request from "ready to merge", as a rule of GitHub does.
   const plain = overallOf();
   const overall = plain === 'ready' && policy.length > 0 ? 'approved' : plain;
+  const needsOwner = ownerPathsOf(facts.policy, { files: facts.files, changedFiles: facts.changes?.files });
+  // For the owner, `ownerOnly` misses nothing: the pull request is then "ready to merge", and still waits for that owner.
+  const readyForOwner = plain === 'ready' && Boolean(needsOwner) && policy.every((miss) => miss.rule === 'ownerOnly');
 
   const last = reviewers
     .filter((reviewer) => reviewer.lastReviewAt)
@@ -468,6 +482,8 @@ export function summarize(facts: PullRequestFacts): Summary {
         agents: facts.agents,
       }),
     }),
+    ...(needsOwner && { needsOwner }),
+    readyForOwner,
   };
 }
 
