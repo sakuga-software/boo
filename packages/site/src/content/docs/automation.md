@@ -166,6 +166,20 @@ when it comes, and one more each time its outcome changes:
 }
 ```
 
+A watch that starts again reads every pull request again: with no saved state, its first read gives a
+`snapshot` line for each one, and a script that relays the events sees the old reviews and checks
+again. `--state <file>` keeps the last state of the watch in that file: the last data of each pull
+request, the comments and the review requests that it knows. At the start, the watch reads the file
+and gives only the changes since that state: a review, a check or a comment of the time when no watch
+ran, a pull request that merged then (`left`), and nothing for the rest. `--snapshot` adds one
+`snapshot` line for each pull request at the start, so that a script can rebuild its view. A missing
+file, a broken file or a file of another version of the state gives a start with `snapshot` lines,
+as with no `--state`. The watch writes the file after each read, in one step (a write, then a rename).
+
+```sh
+boo --watch --events --state ~/.cache/boo-watch-state.json
+```
+
 GitHub fails one read now and then. A pull request goes to `error` only after two failed reads in a
 row: until then it keeps its last state, and gives no event. Then its line says `"to":"error"`, with
 the message of GitHub in `error`, and the next read that works says `"from":"error"`. A list that
