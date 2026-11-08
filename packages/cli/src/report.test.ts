@@ -335,3 +335,14 @@ test('a pull request that touches owner paths names the owner and the files, and
   const plain = snapshot({ ...owned, files: ['README.md'], changes: { additions: 1, deletions: 0, files: 1 } });
   assert.equal(buildReport([{ pr: pr(1), snapshot: plain }], new Map(), settings, now, 'alice')[0]!.needsOwner, null);
 });
+
+test('a pull request named on the command line takes its title from the read', () => {
+  const named = { ...pr(1), title: '' };
+  const [first] = buildReport(
+    [{ pr: named, snapshot: snapshot({ title: 'feat: from the read' }) }],
+    new Map(),
+    DEFAULT_SETTINGS,
+    now,
+  );
+  assert.equal(first!.title, 'feat: from the read');
+});
