@@ -17,6 +17,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'check'; check: string; to: 'failing' | 'not failing'; reviewerError?: true; error?: string }
   | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
+  | { event: 'policy'; policy: PullRequestReport['policy']; added: string[]; removed: string[] }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
   | ({ event: 'review-request' } & Omit<RequestState, 'id' | 'commentId'>)
   | ({ event: 'findings' } & PullRequestReport['findings'])
@@ -266,6 +267,13 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     findingsKey(before.findings) !== findingsKey(after.findings)
   )
     events.push({ at, pr, event: 'findings', ...after.findings });
+  // A rule of the merge policy that the pull request starts or stops to miss: a new open bot thread,
+  // a score that comes, a proof that the agent posts. The notes compare as a set: their order is the settings order.
+  const notesBefore = new Set(before.policy.map(({ note }) => note));
+  const notesAfter = new Set(after.policy.map(({ note }) => note));
+  const added = [...notesAfter].filter((note) => !notesBefore.has(note));
+  const removed = [...notesBefore].filter((note) => !notesAfter.has(note));
+  if (added.length + removed.length > 0) events.push({ at, pr, event: 'policy', policy: after.policy, added, removed });
   const restack = after.stack.restack;
   if (restack && restack.at !== before.stack.restack?.at)
     events.push({ at, pr, event: 'restack', oldBase: restack.oldBase, base: after.base, parent: before.stack.parent });
