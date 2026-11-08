@@ -93,9 +93,12 @@ export function findingsIn(text: string): { level: string; title: string; id?: s
  *   answers quotes its title or gives its short ID. A finding of a review counts only the
  *   comments after the review. The description has no time: any comment counts.
  */
-/** True if a comment of this login can answer a bot: the author of the pull request, a person, or an agent of the settings. */
+/**
+ * True if a comment of this login answers a bot: the author of the pull request, or an agent of the
+ * settings. A person who discusses a finding does not answer it for the author.
+ */
 export const answersBots = (login: string, author: string, agents: readonly string[] = []): boolean =>
-  !isBotLogin(login) || sameLogin(login, author) || agents.some((agent) => sameLogin(agent, login));
+  sameLogin(login, author) || agents.some((agent) => sameLogin(agent, login));
 
 /** True if the last comment of a thread answers its first one (see `answersBots`). */
 export function threadAnswered(thread: OpenThread, author: string, agents: readonly string[] = []): boolean {
@@ -105,11 +108,11 @@ export function threadAnswered(thread: OpenThread, author: string, agents: reado
 
 export function findingsOf(facts: FindingFacts): Finding[] {
   const findings: Finding[] = [];
-  // An answer comes from the author, a person, or an agent of the settings: not from a bot that reviews or runs CI.
+  // An answer comes from the author of the pull request or from an agent of the settings, as #78 and #79 ask.
   const answers = (login: string) => answersBots(login, facts.author, facts.agents);
   for (const thread of facts.openThreads ?? []) {
     if (!isBotLogin(thread.author) || sameLogin(thread.author, facts.author) || !thread.body) continue;
-    // A reply of another review bot is no answer: only the author, a person or an agent answers.
+    // A reply of a review bot, a CI bot or another person is no answer: only the author or an agent answers.
     const answered = threadAnswered(thread, facts.author, facts.agents);
     // A bot usually posts one finding per thread, but each badge of the first comment counts.
     for (const finding of findingsIn(thread.body))
@@ -131,13 +134,13 @@ export function findingsOf(facts: FindingFacts): Finding[] {
     const login = review.user?.login;
     if (!login || !isBotLogin(login) || sameLogin(login, facts.author) || review.threadReply) continue;
     const known = lastReviews.get(login);
-    if (!known || review.submitted_at > known.submitted_at) lastReviews.set(login, review);
+    if (!known || Date.parse(review.submitted_at) > Date.parse(known.submitted_at)) lastReviews.set(login, review);
   }
   for (const [bot, review] of lastReviews)
     for (const finding of findingsIn(review.body ?? ''))
       findings.push({ ...finding, place: 'review', bot, answered: quoted(finding, review.submitted_at) });
   const block = blockOf(facts.body);
-  // The block of the description has no author: an answer of any account but a review bot counts.
+  // The block of the description has no time: an answer of any time counts (see the docs).
   for (const finding of findingsIn(block))
     findings.push({ ...finding, place: 'description', bot: '', answered: quoted(finding) });
   return findings;

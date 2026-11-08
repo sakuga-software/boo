@@ -357,7 +357,7 @@ export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comment
 
 /**
  * Counts the unresolved threads that a bot started: `open` has no answer, `answered` ends with a reply
- * of the author, a person or an agent of the settings (see `threadAnswered`). A thread whose last bot comment has the
+ * of the author or of an agent of the settings (see `threadAnswered`). A thread whose last bot comment has the
  * gone marker counts as resolved.
  */
 export function botThreads(

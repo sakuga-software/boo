@@ -138,7 +138,7 @@ test('a quote of the start marker in the text of the description does not move t
   );
 });
 
-test('only the author, a person or a listed agent answers: a CI bot does not', () => {
+test('only the author or a listed agent answers: a CI bot or another person does not', () => {
   const thread = (lastAuthor: string) => ({ author: KENTO, body: `${badge('P2')} **A finding**`, lastAuthor });
   const answered = (lastAuthor: string, agents?: string[]) =>
     findingsOf({ author: 'Mheaus', body: '', reviews: [], comments: [], openThreads: [thread(lastAuthor)], agents })[0]!
@@ -147,7 +147,7 @@ test('only the author, a person or a listed agent answers: a CI bot does not', (
   assert.equal(answered('sakuga-agent[bot]'), false);
   assert.equal(answered('sakuga-agent[bot]', agentLogins(['app/sakuga-agent', '@me'])), true);
   assert.equal(answered('Mheaus'), true);
-  assert.equal(answered('octocat'), true);
+  assert.equal(answered('octocat'), false);
   assert.deepEqual(agentLogins(['@me', 'app/sakuga-agent', 'alice']), ['sakuga-agent[bot]', 'alice']);
 });
 
@@ -175,4 +175,17 @@ test('each badge of a thread counts, and a review answer is compared as a time',
     })[0]!.answered;
   assert.equal(answer('2026-11-08T10:00:00Z'), false);
   assert.equal(answer('2026-11-08T10:00:01Z'), true);
+});
+
+test('a person who quotes a finding to ask for more work does not answer it', () => {
+  const body = `1. ${badge('P1')}&nbsp;**Une erreur avalée dans le client HTTP**`;
+  const answered = (login: string) =>
+    findingsOf({
+      author: 'sakuga-agent[bot]',
+      body,
+      reviews: [],
+      comments: [comment(login, 'Still to fix: Une erreur avalée dans le client HTTP.')],
+    })[0]!.answered;
+  assert.equal(answered('mathieu'), false);
+  assert.equal(answered('sakuga-agent[bot]'), true);
 });

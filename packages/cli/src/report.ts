@@ -177,7 +177,7 @@ export interface PullRequestReport {
   findings: FindingsSummary;
   /**
    * The unresolved threads that a bot started: `open` with no answer, `answered` with a reply of the
-   * author, a person or an agent, that waits for a person to resolve it. Null if the read did not read the threads.
+   * author or of an agent, that waits for a person to resolve it. Null if the read did not read the threads.
    */
   threads: { open: number; answered: number } | null;
 }
