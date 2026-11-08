@@ -158,3 +158,21 @@ test('a short title counts as quoted only with the short ID of the finding', () 
   assert.deepEqual(answered('The cache is now cleared at each read.'), [false, false]);
   assert.deepEqual(answered('Cache (#521b96): fixed.'), [true, false]);
 });
+
+test('each badge of a thread counts, and a review answer is compared as a time', () => {
+  const two = {
+    author: KENTO,
+    body: `${badge('P1')} **First finding of the thread**\n${badge('P2')} **Second finding of the thread**`,
+  };
+  assert.equal(findingsOf({ author: 'me', body: '', reviews: [], comments: [], openThreads: [two] }).length, 2);
+  const reviewed = review(KENTO, `${badge('P2')} **Une erreur avalée dans le client**`, '2026-11-08T10:00:00.500Z');
+  const answer = (at: string) =>
+    findingsOf({
+      author: 'me',
+      body: '',
+      reviews: [reviewed],
+      comments: [comment('me', 'Une erreur avalée dans le client: fixed.', at)],
+    })[0]!.answered;
+  assert.equal(answer('2026-11-08T10:00:00Z'), false);
+  assert.equal(answer('2026-11-08T10:00:01Z'), true);
+});

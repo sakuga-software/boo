@@ -22,7 +22,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
   "mergedBy": null,
   "mergedAt": null,
   "error": null,
-  "checks": { "passed": 8, "failing": ["Migrations"], "running": 0, "skipped": 1, "quota": 0 },
+  "checks": { "passed": 8, "failing": ["Migrations"], "running": 0, "skipped": 1, "quota": 0, "reviewerErrors": [] },
   "reviewers": [
     {
       "login": "greptile-apps[bot]",
@@ -51,8 +51,21 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
     "retries": [{ "bot": "Copilot", "at": "2026-10-24T10:00:00.000Z" }],
     "coderabbit": null
   },
-  "policy": [],
-  "stale": null
+  "policy": [{ "rule": "resolvedBotThreads", "note": "1 answered bot thread to resolve" }],
+  "stale": null,
+  "findings": {
+    "count": 1,
+    "answered": 1,
+    "levels": { "P2": { "count": 1, "answered": 1 } },
+    "places": {
+      "thread": { "count": 1, "answered": 1 },
+      "review": { "count": 0, "answered": 0 },
+      "description": { "count": 0, "answered": 0 }
+    },
+    "unanswered": [],
+    "threadsRead": true
+  },
+  "threads": { "open": 0, "answered": 1 }
 }
 ```
 
