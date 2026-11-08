@@ -607,3 +607,36 @@ test('a red check of a review bot is a reviewer error, after a failing check of 
   );
   assert.equal(summarize(facts({ reviews: [approved], checks: [crashed] })).overall, 'checks failing');
 });
+
+test('a scored review whose summary speaks of a storage quota is a review, not a quota refusal', () => {
+  const KENTO = 'kento-review[bot]';
+  const scored = (commit: string, minutesAgo: number, subject: string) =>
+    review(
+      KENTO,
+      commit,
+      minutesAgo,
+      'COMMENTED',
+      `<!-- sakuga-review:summary -->\n**Score de confiance : 3/5** · ⚠️ Rien de bloquant · ${subject}\n\n<sub>Kentō · Niveau \`lite\`</sub>`,
+    );
+  // The summaries of galeryna#55 on 2026-11-08: the pull request adds a storage quota.
+  const reviews = [
+    scored('old', 60, 'Fusion possible.'),
+    scored('mid', 30, 'Une faille de quota et des fuites de fichiers sont possibles.'),
+    scored('head', 5, 'Le quota sous verrou d’étude est pris sur une clé non liée.'),
+  ];
+  const failure = {
+    user: { login: KENTO },
+    body: '**Kentō · review en échec** au commit `7f77b76df`\n\nRaison : `You have reached your specified API usage limits`',
+    created_at: ago(50),
+    updated_at: ago(50),
+  };
+  const { reviewers, overall } = summarize(facts({ reviews, comments: [failure] }));
+  assert.deepEqual(
+    reviewers.map(({ name, status, reviews: count }) => ({ name, status, reviews: count })),
+    [{ name: 'kento-review', status: 'commented', reviews: 3 }],
+  );
+  assert.equal(overall, 'reviewed');
+  // A real refusal with no score still is one.
+  const refusal = review(KENTO, 'head', 1, 'COMMENTED', 'Kentō: usage limit reached, no review of this commit.');
+  assert.equal(summarize(facts({ reviews: [refusal] })).reviewers[0]!.status, 'quota');
+});
