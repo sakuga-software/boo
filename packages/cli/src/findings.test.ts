@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Comment, Review } from './decide.js';
-import { findingsIn, findingsOf, summarizeFindings } from './findings.js';
+import { agentLogins, findingsIn, findingsOf, summarizeFindings } from './findings.js';
 import { parseMergePolicy, policyMisses } from './policy.js';
 
 const badge = (level: string) =>
@@ -131,4 +131,17 @@ test('a quote of the start marker in the text of the description does not move t
     findingsOf({ author: 'me', body, reviews: [], comments: [] }).map(({ title }) => title),
     findingsIn(BLOCK).map(({ title }) => title),
   );
+});
+
+test('only the author, a person or a listed agent answers: a CI bot does not', () => {
+  const thread = (lastAuthor: string) => ({ author: KENTO, body: `${badge('P2')} **A finding**`, lastAuthor });
+  const answered = (lastAuthor: string, agents?: string[]) =>
+    findingsOf({ author: 'Mheaus', body: '', reviews: [], comments: [], openThreads: [thread(lastAuthor)], agents })[0]!
+      .answered;
+  assert.equal(answered('vercel[bot]'), false);
+  assert.equal(answered('sakuga-agent[bot]'), false);
+  assert.equal(answered('sakuga-agent[bot]', agentLogins(['app/sakuga-agent', '@me'])), true);
+  assert.equal(answered('Mheaus'), true);
+  assert.equal(answered('octocat'), true);
+  assert.deepEqual(agentLogins(['@me', 'app/sakuga-agent', 'alice']), ['sakuga-agent[bot]', 'alice']);
 });

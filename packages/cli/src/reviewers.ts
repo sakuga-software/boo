@@ -72,6 +72,8 @@ export interface PullRequestFacts {
   now: Date;
   /** The CodeRabbit decision. It knows the quota clock of CodeRabbit better than a generic rule. */
   coderabbit?: Decision;
+  /** The logins of the agents of the settings: a reply of an agent answers a finding. */
+  agents?: readonly string[] | undefined;
   /** The names of the checks that a review bot runs: see `reviewerChecks` in the settings. */
   reviewerChecks?: readonly string[] | undefined;
   /** The facts that only the merge policy reads. */
@@ -424,6 +426,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     reviews: facts.reviews,
     comments: facts.comments,
     openThreads: facts.openThreads,
+    agents: facts.agents,
   });
   const policy = policyMisses(facts.policy, {
     head: facts.head,
