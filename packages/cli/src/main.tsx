@@ -2,12 +2,13 @@ import { render } from 'ink';
 import meow from 'meow';
 import { homedir } from 'node:os';
 import { App } from './app.js';
-import { fetchPullRequest, listPullRequests, probePullRequests, viewerLogin } from './github.js';
+import { fetchPullRequest, listPullRequests, openInBrowser, probePullRequests, viewerLogin } from './github.js';
 import { readReport, watchEvents, type WatchSources } from './events.js';
 import { extraFields } from './policy.js';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, parseRepos, resolveRepos, saveSettings, settingsPath } from './settings.js';
 import { detectBackground } from './theme.js';
+import { DEFAULT_RELAY, relayPath, removeWebhooks, setupWebhooks } from './webhooks.js';
 
 const DEFAULT_ORG = 'sakuga-software';
 
@@ -18,6 +19,16 @@ const cli = meow(
 
   Usage
     $ boo [options]
+    $ boo setup-webhooks [relay-url] [--remove]
+
+  Commands
+    setup-webhooks [relay-url]
+                              Connect this machine to a webhook relay
+                              (default: ${DEFAULT_RELAY}): sign in on
+                              GitHub with a code, install the GitHub App of
+                              the relay, and save the session in
+                              ${relayPath().replace(homedir(), '~')}
+    setup-webhooks --remove   Delete the session on the relay and on this machine
 
   Options
     -s, --since <YYYY-MM-DD>  Only the pull requests created on or after this date
@@ -178,9 +189,43 @@ const cli = meow(
       events: { type: 'boolean', default: false },
       help: { type: 'boolean', shortFlag: 'h' },
       version: { type: 'boolean', shortFlag: 'v' },
+      remove: { type: 'boolean', default: false },
     },
   },
 );
+
+const [command, ...rest] = cli.input;
+if (command === 'setup-webhooks') {
+  const path = relayPath();
+  try {
+    if (cli.flags.remove) {
+      const removed = await removeWebhooks({ fetch, log: console.log, path });
+      console.log(removed ? 'Webhooks removed from this machine.' : 'This machine has no webhook relay.');
+    } else {
+      const connection = await setupWebhooks(rest[0], {
+        fetch,
+        open: openInBrowser,
+        log: console.log,
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        now: Date.now,
+        path,
+      });
+      console.log(`Webhooks set up with ${connection.url}, saved in ${path.replace(homedir(), '~')}.`);
+    }
+    process.exit(0);
+  } catch (error) {
+    console.error(`✖ ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+if (command !== undefined) {
+  console.error(`Unknown command "${command}". See boo --help.`);
+  process.exit(2);
+}
+if (cli.flags.remove) {
+  console.error('--remove goes with setup-webhooks.');
+  process.exit(2);
+}
 
 const { since } = cli.flags;
 if (since !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(Date.parse(since)))) {
