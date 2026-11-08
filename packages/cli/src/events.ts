@@ -18,7 +18,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'left'; reason: string; mergedBy?: string | null; mergedAt?: string | null }
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
-  | ({ event: 'review-request' } & Omit<RequestState, 'id'>)
+  | ({ event: 'review-request' } & Omit<RequestState, 'id' | 'commentId'>)
   | ({ event: 'findings' } & PullRequestReport['findings'])
 );
 
@@ -34,7 +34,10 @@ export type RequestOutcome = 'asked' | 'acknowledged' | 'failed' | 'answered' | 
 
 /** A comment that asks a bot for a review, and where it stands. `reason` gives the cause of a failure. */
 export interface RequestState {
+  /** The request: the comment and the bot. One comment can ask two bots. */
   id: string;
+  /** The comment of the request, as `personComments` names it. */
+  commentId: string;
   bot: string;
   author: string;
   createdAt: string;
@@ -118,7 +121,8 @@ export function requestStates(
       return minutes >= settings.reviewRequestTimeoutMinutes ? 'stale' : 'asked';
     })();
     return {
-      id: `comment:${comment.id ?? comment.created_at}`,
+      id: `comment:${comment.id ?? comment.created_at}:${bot}`,
+      commentId: `comment:${comment.id ?? comment.created_at}`,
       bot,
       author: comment.user!.login,
       createdAt: comment.created_at,
@@ -140,7 +144,7 @@ export function requestChanges(
   at: string,
 ): WatchEvent[] {
   const events: WatchEvent[] = [];
-  for (const { id, ...state } of states) {
+  for (const { id, commentId: _comment, ...state } of states) {
     if (known.get(id) === state.outcome) continue;
     known.set(id, state.outcome);
     events.push({ at, pr, event: 'review-request', ...state });
@@ -228,6 +232,10 @@ const sameReview = (a: Reviewer, b: Reviewer) =>
   a.score?.score === b.score?.score &&
   a.score?.total === b.score?.total;
 
+// GitHub can give the threads in another order: the list of the findings with no answer is compared sorted.
+const findingsKey = ({ unanswered, ...counts }: PullRequestReport['findings']) =>
+  JSON.stringify({ ...counts, unanswered: unanswered.map((finding) => JSON.stringify(finding)).sort() });
+
 /** Returns the changes of one pull request between two reads. */
 export function changesOf(before: PullRequestReport, after: PullRequestReport, at: string): WatchEvent[] {
   const pr = `${after.repo}#${after.number}`;
@@ -252,10 +260,10 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     const { login, at: reviewedAt, ...review } = reviewer;
     events.push({ at, pr, event: 'review', reviewer: login, ...review, reviewedAt });
   }
-  // A read with the threads and a read without them count other findings: that is no change of the pull request.
+  // A read without the threads knows less: it gives no event. A read that has the threads again tells what they hold.
   if (
-    before.findings.threadsRead === after.findings.threadsRead &&
-    JSON.stringify(before.findings) !== JSON.stringify(after.findings)
+    !(before.findings.threadsRead && !after.findings.threadsRead) &&
+    findingsKey(before.findings) !== findingsKey(after.findings)
   )
     events.push({ at, pr, event: 'findings', ...after.findings });
   const restack = after.stack.restack;
@@ -511,7 +519,11 @@ export async function watchEvents(
         if (snapshot?.status !== 'open') continue;
         const key = keyOf(pr);
         const requests = requestStates(snapshot, settings, now);
-        const comments = personComments(snapshot, settings.commentEvents, new Set(requests.map(({ id }) => id)));
+        const comments = personComments(
+          snapshot,
+          settings.commentEvents,
+          new Set(requests.map(({ commentId }) => commentId)),
+        );
         const seen = seenComments.get(key);
         if (seen) events.push(...newComments(key, comments, seen, now.toISOString()));
         else seenComments.set(key, new Set(comments.map((comment) => comment.id)));

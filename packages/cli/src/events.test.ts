@@ -122,8 +122,20 @@ test('a change of the findings gives one findings event with the new counts', ()
     [{ at: AT, pr: 'acme/web#1', event: 'findings', ...findings }],
   );
   assert.deepEqual(diffReports(byKey(report(1, { findings })), [report(1, { findings })], AT), []);
+  const two = {
+    ...findings,
+    unanswered: [
+      { level: 'P2', place: 'description' as const, title: 'A', id: null },
+      { level: 'P2', place: 'thread' as const, title: 'B', id: null },
+    ],
+  };
+  const reordered = { ...two, unanswered: [...two.unanswered].reverse() };
+  assert.deepEqual(diffReports(byKey(report(1, { findings: two })), [report(1, { findings: reordered })], AT), []);
   const unread = { ...findings, count: 0, threadsRead: false };
   assert.deepEqual(diffReports(byKey(report(1, { findings })), [report(1, { findings: unread })], AT), []);
+  assert.deepEqual(diffReports(byKey(report(1, { findings: unread })), [report(1, { findings })], AT), [
+    { at: AT, pr: 'acme/web#1', event: 'findings', ...findings },
+  ]);
   const replaced = { ...findings, unanswered: [{ level: 'P2', place: 'description' as const, title: 'B', id: null }] };
   assert.deepEqual(diffReports(byKey(report(1, { findings })), [report(1, { findings: replaced })], AT), [
     { at: AT, pr: 'acme/web#1', event: 'findings', ...replaced },
@@ -547,7 +559,8 @@ test('a review asked by comment is asked, acknowledged, failed, answered or stal
   assert.deepEqual(outcome({ reviews: [kentoReview], comments: [ask(), retry] }, 40), ['stale', 'answered']);
   const [failed] = requestStates({ reviews: [], comments: [ask(['EYES']), failure] }, settings, new Date(at(25)));
   assert.deepEqual(failed, {
-    id: 'comment:1',
+    id: 'comment:1:kento-review',
+    commentId: 'comment:1',
     bot: 'kento-review',
     author: 'Mheaus',
     createdAt: at(22),
@@ -583,7 +596,7 @@ test('a review request gives review-request events when its outcome changes, and
   const read = snapshot({ author: 'me', comments: [bot, ask, remark] });
   const states = requestStates(read, DEFAULT_SETTINGS, new Date('2026-10-24T11:05:00Z'));
   assert.deepEqual(
-    personComments(read, {}, new Set(states.map(({ id }) => id))).map(({ body }) => body),
+    personComments(read, {}, new Set(states.map(({ commentId }) => commentId))).map(({ body }) => body),
     ['Why this?'],
   );
   const known = new Map();
@@ -747,4 +760,30 @@ test('a saved state of another version, or a broken file, is not read', () => {
     comments: {},
     requests: {},
   });
+});
+
+test('one comment that asks two bots gives one review-request event for each bot', () => {
+  const at = '2026-10-24T11:00:00Z';
+  const both = {
+    id: 5,
+    user: { login: 'octocat' },
+    body: '@coderabbitai review\n@greptile-apps review',
+    created_at: at,
+    updated_at: at,
+  };
+  const seen = (login: string) => ({
+    id: login.length,
+    user: { login },
+    body: 'Hello',
+    created_at: '2026-10-24T10:00:00Z',
+    updated_at: '2026-10-24T10:00:00Z',
+  });
+  const read = snapshot({ author: 'me', comments: [seen('coderabbitai[bot]'), seen('greptile-apps[bot]'), both] });
+  const states = requestStates(read, DEFAULT_SETTINGS, new Date('2026-10-24T11:05:00Z'));
+  const events = requestChanges('acme/web#1', states, new Map(), AT);
+  assert.deepEqual(events.map((event) => event.event === 'review-request' && event.bot).sort(), [
+    'coderabbitai[bot]',
+    'greptile-apps[bot]',
+  ]);
+  assert.deepEqual(personComments(read, {}, new Set(states.map(({ commentId }) => commentId))), []);
 });

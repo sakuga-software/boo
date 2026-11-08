@@ -189,3 +189,34 @@ test('a person who quotes a finding to ask for more work does not answer it', ()
   assert.equal(answered('mathieu'), false);
   assert.equal(answered('sakuga-agent[bot]'), true);
 });
+
+test('the bot that speaks again in a thread after the answer opens the finding again', () => {
+  const thread = (lastAuthor: string) => ({
+    author: KENTO,
+    body: `${badge('P1')} **Une redirection non refusée**`,
+    lastAuthor,
+  });
+  const answered = (lastAuthor: string) =>
+    findingsOf({
+      author: 'sakuga-agent[bot]',
+      body: '',
+      reviews: [],
+      comments: [],
+      openThreads: [thread(lastAuthor)],
+    })[0]!.answered;
+  assert.equal(answered('sakuga-agent[bot]'), true);
+  assert.equal(answered(KENTO), false);
+});
+
+test('a thread or a review of a listed agent is no finding of a review bot', () => {
+  const agent = 'sakuga-agent[bot]';
+  const facts = {
+    author: 'mathieu',
+    body: '',
+    reviews: [review(agent, `${badge('P1')} **A badge that the agent quotes in its review**`, '2026-11-08T10:00:00Z')],
+    comments: [],
+    openThreads: [{ author: agent, body: `${badge('P2')} **A badge that the agent quotes in a thread**` }],
+  };
+  assert.equal(findingsOf(facts).length, 2);
+  assert.equal(findingsOf({ ...facts, agents: [agent] }).length, 0);
+});
