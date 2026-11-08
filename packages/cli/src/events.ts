@@ -252,9 +252,8 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     const { login, at: reviewedAt, ...review } = reviewer;
     events.push({ at, pr, event: 'review', reviewer: login, ...review, reviewedAt });
   }
-  const counts = ({ count, answered, levels, places }: PullRequestReport['findings']) =>
-    JSON.stringify({ count, answered, levels, places });
-  if (counts(before.findings) !== counts(after.findings)) events.push({ at, pr, event: 'findings', ...after.findings });
+  if (JSON.stringify(before.findings) !== JSON.stringify(after.findings))
+    events.push({ at, pr, event: 'findings', ...after.findings });
   const restack = after.stack.restack;
   if (restack && restack.at !== before.stack.restack?.at)
     events.push({ at, pr, event: 'restack', oldBase: restack.oldBase, base: after.base, parent: before.stack.parent });

@@ -150,3 +150,11 @@ test('only the author, a person or a listed agent answers: a CI bot does not', (
   assert.equal(answered('octocat'), true);
   assert.deepEqual(agentLogins(['@me', 'app/sakuga-agent', 'alice']), ['sakuga-agent[bot]', 'alice']);
 });
+
+test('a short title counts as quoted only with the short ID of the finding', () => {
+  const body = `1. ${badge('P1')}&nbsp;**Cache** \`#521b96\`\n2. ${badge('P1')}&nbsp;**Clé** \`x.ts:3\``;
+  const answered = (text: string) =>
+    findingsOf({ author: 'me', body, reviews: [], comments: [comment('me', text)] }).map((finding) => finding.answered);
+  assert.deepEqual(answered('The cache is now cleared at each read.'), [false, false]);
+  assert.deepEqual(answered('Cache (#521b96): fixed.'), [true, false]);
+});

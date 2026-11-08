@@ -106,7 +106,7 @@ merges nothing. Each line has `at`, `pr` (`owner/repo#number`) and `event`:
 | `restack`        | GitHub moved the pull request to a new base after its parent merged  | `oldBase`, `base`, `parent`: the pull request that it was stacked on, or `null` if it was not listed                             |
 | `comment`        | A person writes a comment, a review or a line comment                | `author`, `createdAt`, `body` (the first 200 characters), `thread`: `true` for a line comment                                    |
 | `review-request` | A comment asks a bot for a review, or that request has a new outcome | `bot`, `author`, `createdAt`, `body`, `outcome`: `asked`, `acknowledged`, `failed`, `answered` or `stale`; `reason` for `failed` |
-| `findings`       | The counts of the findings change                                    | The keys of `findings` in `--json`                                                                                               |
+| `findings`       | The findings or their answers change                                 | The keys of `findings` in `--json`                                                                                               |
 
 A `comment` event comes from a person, so that the agent of the pull request reads it at once. A
 bot, the author of the pull request (an agent often posts as the author) and the logins of
