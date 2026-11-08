@@ -48,7 +48,7 @@ first login names it in the notes. `commands` lists the other mentions that ask 
 
 - `minScore` reads the score of the last review of any of these logins.
 - `answeredReviewRequests` takes a request to one of them, such as `@sakuga-review review` or
-  `@kento-ai review`, and a review of any of them answers it. With `deepest`, a level after the
+  `@kento-ai review`, and a review of any of them answers it. With `deepest`, a level right after the
   mention also asks for a review: `@kento-review heavy`. Another command, such as
   `@kento-review reject`, does not.
 - `resolvedBotThreads` already counts the threads of every bot login.
