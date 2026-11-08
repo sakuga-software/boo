@@ -441,6 +441,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     viewer: facts.viewer,
     author: facts.author,
     agents: facts.agents,
+    threadsRead: facts.openThreads !== undefined,
     findings,
   });
   // A rule of the team keeps the pull request from "ready to merge", as a rule of GitHub does.
