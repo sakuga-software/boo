@@ -18,7 +18,7 @@ export default defineConfig({
       sidebar: [
         { label: 'Start', items: ['getting-started'] },
         { label: 'Agents', items: ['agents', 'automation', 'merge-policy'] },
-        { label: 'Reference', items: ['the-list', 'reviewers', 'quotas', 'settings', 'keys'] },
+        { label: 'Reference', items: ['the-list', 'reviewers', 'quotas', 'webhooks', 'settings', 'keys'] },
         { label: 'Project', items: ['contributing'] },
       ],
     }),
