@@ -2,6 +2,7 @@ import { activeBots, plannedRetries } from './bots.js';
 import { decide, quotaScope, quotaSignals, type Decision, type QuotaSignal } from './decide.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { confidenceOf, isOnHead, summarize, type Overall, type Summary } from './reviewers.js';
+import { agentLogins, summarizeFindings, type FindingsSummary } from './findings.js';
 import type { MergePolicy, PolicyMiss } from './policy.js';
 import { isWorkingStatus, ownerWorks, type Owner, type SubAgentState } from './sessions.js';
 import type { Settings } from './settings.js';
@@ -44,10 +45,12 @@ export function assess(
     policy,
     viewer,
     reviewerChecks,
+    agents,
   }: {
     policy?: MergePolicy | undefined;
     viewer?: string | undefined;
     reviewerChecks?: readonly string[] | undefined;
+    agents?: readonly string[] | undefined;
   } = {},
 ): Map<string, { decision: Decision; summary: Summary }> {
   const scopeOf = ({ repo, fetched }: { repo: string; fetched: Fetched }) =>
@@ -67,7 +70,7 @@ export function assess(
     const decision = decide({ ...entry.fetched, now, pr: key, quota });
     results.set(key, {
       decision,
-      summary: summarize({ ...entry.fetched, now, coderabbit: decision, policy, viewer, reviewerChecks }),
+      summary: summarize({ ...entry.fetched, now, coderabbit: decision, policy, viewer, reviewerChecks, agents }),
     });
   }
   return results;
@@ -167,6 +170,11 @@ export interface PullRequestReport {
    * at `at`. `until` is the time that the queries work again. Null if the read is of now.
    */
   stale: { at: string; until: string | null } | null;
+  /**
+   * The findings of the review bots (badges P1, P2…), by level and by place, with how many have an
+   * answer. The threads count only if the read reads them: see `resolvedBotThreads` and `answerFindings`.
+   */
+  findings: FindingsSummary;
 }
 
 export type CoderabbitNote =
@@ -226,6 +234,7 @@ export function buildReport(
     policy: settings.mergePolicy,
     viewer,
     reviewerChecks: settings.reviewerChecks,
+    agents: agentLogins(settings.authors),
   });
   const byKey = new Map(inputs.map((input) => [keyOf(input.pr), input]));
   const places = placeStacks(
@@ -319,6 +328,7 @@ export function buildReport(
       },
       policy: summary?.policy ?? [],
       stale: snapshot?.stale ? { at: snapshot.stale.at, until: snapshot.stale.until ?? null } : null,
+      findings: summary?.findings ?? summarizeFindings([]),
     };
   });
 }

@@ -13,6 +13,7 @@ import {
 } from './events.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import type { PullRequestReport } from './report.js';
+import { summarizeFindings } from './findings.js';
 import { DEFAULT_SETTINGS } from './settings.js';
 
 const AT = '2026-10-24T12:00:00.000Z';
@@ -38,6 +39,7 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   notes: { merge: null, retries: [], coderabbit: null },
   policy: [],
   stale: null,
+  findings: summarizeFindings([]),
   ...patch,
 });
 const byKey = (...reports: PullRequestReport[]) => new Map(reports.map((item) => [`acme/web#${item.number}`, item]));
@@ -95,6 +97,44 @@ test('a red check of a review bot gives a check event with reviewerError and the
       reviewerError: true,
       error: 'fatal: Invalid revision range a..b',
     },
+  ]);
+});
+
+test('a change of the findings gives one findings event with the new counts', () => {
+  const findings = {
+    count: 1,
+    answered: 0,
+    levels: { P2: { count: 1, answered: 0 } },
+    places: {
+      thread: { count: 0, answered: 0 },
+      review: { count: 0, answered: 0 },
+      description: { count: 1, answered: 0 },
+    },
+    unanswered: [{ level: 'P2', place: 'description' as const, title: 'A', id: null }],
+    threadsRead: true,
+  };
+  assert.deepEqual(
+    diffReports(byKey(report(1, { findings: summarizeFindings([], true) })), [report(1, { findings })], AT),
+    [{ at: AT, pr: 'acme/web#1', event: 'findings', ...findings }],
+  );
+  assert.deepEqual(diffReports(byKey(report(1, { findings })), [report(1, { findings })], AT), []);
+  const two = {
+    ...findings,
+    unanswered: [
+      { level: 'P2', place: 'description' as const, title: 'A', id: null },
+      { level: 'P2', place: 'thread' as const, title: 'B', id: null },
+    ],
+  };
+  const reordered = { ...two, unanswered: [...two.unanswered].reverse() };
+  assert.deepEqual(diffReports(byKey(report(1, { findings: two })), [report(1, { findings: reordered })], AT), []);
+  const unread = { ...findings, count: 0, threadsRead: false };
+  assert.deepEqual(diffReports(byKey(report(1, { findings })), [report(1, { findings: unread })], AT), []);
+  assert.deepEqual(diffReports(byKey(report(1, { findings: unread })), [report(1, { findings })], AT), [
+    { at: AT, pr: 'acme/web#1', event: 'findings', ...findings },
+  ]);
+  const replaced = { ...findings, unanswered: [{ level: 'P2', place: 'description' as const, title: 'B', id: null }] };
+  assert.deepEqual(diffReports(byKey(report(1, { findings })), [report(1, { findings: replaced })], AT), [
+    { at: AT, pr: 'acme/web#1', event: 'findings', ...replaced },
   ]);
 });
 

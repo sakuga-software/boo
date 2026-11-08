@@ -532,8 +532,12 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
   assert.deepEqual([snapshot.mergedBy, snapshot.mergedAt], ['mergify[bot]', ago(1)]);
   assert.deepEqual(snapshot.restack, { oldBase: 'feat-0', at: ago(3) });
   assert.deepEqual(snapshot.openThreads, [
-    { author: 'sakuga-review[bot]', lastBotComment: 'Gone. <!-- sakuga-review:gone -->' },
-    { author: 'sakuga-review[bot]' },
+    {
+      author: 'sakuga-review[bot]',
+      lastBotComment: 'Gone. <!-- sakuga-review:gone -->',
+      lastAuthor: 'sakuga-review[bot]',
+    },
+    { author: 'sakuga-review[bot]', lastAuthor: 'Mheaus' },
     { author: 'alice' },
   ]);
   assert.deepEqual(

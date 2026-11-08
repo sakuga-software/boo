@@ -8,6 +8,7 @@ import {
   type Review,
   type Verdict,
 } from './decide.js';
+import { findingsOf, summarizeFindings, type FindingsSummary } from './findings.js';
 import { policyMisses, type MergePolicy, type OpenThread, type PolicyMiss } from './policy.js';
 
 export type CheckState = 'pending' | 'success' | 'failure' | 'skipped';
@@ -71,6 +72,8 @@ export interface PullRequestFacts {
   now: Date;
   /** The CodeRabbit decision. It knows the quota clock of CodeRabbit better than a generic rule. */
   coderabbit?: Decision;
+  /** The logins of the agents of the settings: a reply of an agent answers a finding. */
+  agents?: readonly string[] | undefined;
   /** The names of the checks that a review bot runs: see `reviewerChecks` in the settings. */
   reviewerChecks?: readonly string[] | undefined;
   /** The facts that only the merge policy reads. */
@@ -390,6 +393,8 @@ export interface Summary {
   lastReview?: { name: string; at: Date };
   /** The rules of the merge policy that the pull request misses. */
   policy: PolicyMiss[];
+  /** The findings of the review bots, and their answers. */
+  findings: FindingsSummary;
 }
 
 /**
@@ -415,6 +420,14 @@ export function summarize(facts: PullRequestFacts): Summary {
     if (any('quota', 'to retry')) return 'quota';
     return 'awaiting review';
   };
+  const findings = findingsOf({
+    author: facts.author,
+    body: facts.body ?? '',
+    reviews: facts.reviews,
+    comments: facts.comments,
+    openThreads: facts.openThreads,
+    agents: facts.agents,
+  });
   const policy = policyMisses(facts.policy, {
     head: facts.head,
     body: facts.body ?? '',
@@ -424,6 +437,8 @@ export function summarize(facts: PullRequestFacts): Summary {
     files: facts.files,
     changedFiles: facts.changes?.files,
     viewer: facts.viewer,
+    threadsRead: facts.openThreads !== undefined,
+    findings,
   });
   // A rule of the team keeps the pull request from "ready to merge", as a rule of GitHub does.
   const plain = overallOf();
@@ -441,6 +456,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     reviews: reviewers.reduce((total, reviewer) => total + reviewer.reviews, 0),
     ...(last && { lastReview: { name: last.name, at: last.lastReviewAt! } }),
     policy,
+    findings: summarizeFindings(findings, facts.openThreads !== undefined),
   };
 }
 

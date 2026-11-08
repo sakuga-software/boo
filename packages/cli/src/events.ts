@@ -20,6 +20,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'policy'; policy: PullRequestReport['policy']; added: string[]; removed: string[] }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
   | ({ event: 'review-request' } & Omit<RequestState, 'id' | 'commentId'>)
+  | ({ event: 'findings' } & PullRequestReport['findings'])
 );
 
 /**
@@ -232,6 +233,10 @@ const sameReview = (a: Reviewer, b: Reviewer) =>
   a.score?.score === b.score?.score &&
   a.score?.total === b.score?.total;
 
+// GitHub can give the threads in another order: the list of the findings with no answer is compared sorted.
+const findingsKey = ({ unanswered, ...counts }: PullRequestReport['findings']) =>
+  JSON.stringify({ ...counts, unanswered: unanswered.map((finding) => JSON.stringify(finding)).sort() });
+
 /** Returns the changes of one pull request between two reads. */
 export function changesOf(before: PullRequestReport, after: PullRequestReport, at: string): WatchEvent[] {
   const pr = `${after.repo}#${after.number}`;
@@ -256,6 +261,12 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     const { login, at: reviewedAt, ...review } = reviewer;
     events.push({ at, pr, event: 'review', reviewer: login, ...review, reviewedAt });
   }
+  // A read without the threads knows less: it gives no event. A read that has the threads again tells what they hold.
+  if (
+    !(before.findings.threadsRead && !after.findings.threadsRead) &&
+    findingsKey(before.findings) !== findingsKey(after.findings)
+  )
+    events.push({ at, pr, event: 'findings', ...after.findings });
   // A rule of the merge policy that the pull request starts or stops to miss: a new open bot thread,
   // a score that comes, a proof that the agent posts. The notes compare as a set: their order is the settings order.
   const notesBefore = new Set(before.policy.map(({ note }) => note));
