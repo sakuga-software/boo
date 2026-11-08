@@ -105,13 +105,15 @@ export function findingsOf(facts: FindingFacts): Finding[] {
     // A reply of another review bot is no answer: only the author, a person or an agent answers.
     const last = thread.lastAuthor;
     const answered = Boolean(last && !sameLogin(last, thread.author) && answers(last));
-    for (const finding of findingsIn(thread.body).slice(0, 1))
+    // A bot usually posts one finding per thread, but each badge of the first comment counts.
+    for (const finding of findingsIn(thread.body))
       findings.push({ ...finding, place: 'thread', bot: thread.author, answered });
   }
   const quoted = (finding: { title: string; id?: string }, since = '') =>
     facts.comments.some((comment) => {
       if (!comment.user || !answers(comment.user.login)) return false;
-      if (comment.created_at <= since) return false;
+      // GitHub gives times with or without milliseconds: compare them as times, not as texts.
+      if (since && Date.parse(comment.created_at) <= Date.parse(since)) return false;
       const text = plain(comment.body);
       return (
         (plain(finding.title).length >= MIN_QUOTE && text.includes(plain(finding.title))) ||
