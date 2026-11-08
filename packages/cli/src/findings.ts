@@ -111,7 +111,8 @@ export function findingsOf(facts: FindingFacts): Finding[] {
   // An answer comes from the author of the pull request or from an agent of the settings, as #78 and #79 ask.
   const answers = (login: string) => answersBots(login, facts.author, facts.agents);
   for (const thread of facts.openThreads ?? []) {
-    if (!isBotLogin(thread.author) || sameLogin(thread.author, facts.author) || !thread.body) continue;
+    // A thread of the author or of an agent is no finding of a review bot, even with a badge.
+    if (!isBotLogin(thread.author) || answers(thread.author) || !thread.body) continue;
     // A reply of a review bot, a CI bot or another person is no answer: only the author or an agent answers.
     const answered = threadAnswered(thread, facts.author, facts.agents);
     // A bot usually posts one finding per thread, but each badge of the first comment counts.
@@ -132,7 +133,7 @@ export function findingsOf(facts: FindingFacts): Finding[] {
   const lastReviews = new Map<string, Review>();
   for (const review of facts.reviews) {
     const login = review.user?.login;
-    if (!login || !isBotLogin(login) || sameLogin(login, facts.author) || review.threadReply) continue;
+    if (!login || !isBotLogin(login) || answers(login) || review.threadReply) continue;
     const known = lastReviews.get(login);
     if (!known || Date.parse(review.submitted_at) > Date.parse(known.submitted_at)) lastReviews.set(login, review);
   }
