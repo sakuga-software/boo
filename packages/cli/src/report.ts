@@ -2,6 +2,7 @@ import { activeBots, plannedRetries } from './bots.js';
 import { decide, quotaScope, quotaSignals, type Decision, type QuotaSignal } from './decide.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { confidenceOf, isOnHead, summarize, type Overall, type Summary } from './reviewers.js';
+import { summarizeFindings, type FindingsSummary } from './findings.js';
 import type { MergePolicy, PolicyMiss } from './policy.js';
 import { isWorkingStatus, ownerWorks, type Owner, type SubAgentState } from './sessions.js';
 import type { Settings } from './settings.js';
@@ -167,6 +168,11 @@ export interface PullRequestReport {
    * at `at`. `until` is the time that the queries work again. Null if the read is of now.
    */
   stale: { at: string; until: string | null } | null;
+  /**
+   * The findings of the review bots (badges P1, P2…), by level and by place, with how many have an
+   * answer. The threads count only if the read reads them: see `resolvedBotThreads` and `answerFindings`.
+   */
+  findings: FindingsSummary;
 }
 
 export type CoderabbitNote =
@@ -319,6 +325,7 @@ export function buildReport(
       },
       policy: summary?.policy ?? [],
       stale: snapshot?.stale ? { at: snapshot.stale.at, until: snapshot.stale.until ?? null } : null,
+      findings: summary?.findings ?? summarizeFindings([]),
     };
   });
 }

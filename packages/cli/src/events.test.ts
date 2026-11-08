@@ -13,6 +13,7 @@ import {
 } from './events.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import type { PullRequestReport } from './report.js';
+import { summarizeFindings } from './findings.js';
 import { DEFAULT_SETTINGS } from './settings.js';
 
 const AT = '2026-10-24T12:00:00.000Z';
@@ -38,6 +39,7 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   notes: { merge: null, retries: [], coderabbit: null },
   policy: [],
   stale: null,
+  findings: summarizeFindings([]),
   ...patch,
 });
 const byKey = (...reports: PullRequestReport[]) => new Map(reports.map((item) => [`acme/web#${item.number}`, item]));
@@ -96,6 +98,24 @@ test('a red check of a review bot gives a check event with reviewerError and the
       error: 'fatal: Invalid revision range a..b',
     },
   ]);
+});
+
+test('a change of the findings gives one findings event with the new counts', () => {
+  const findings = {
+    count: 1,
+    answered: 0,
+    levels: { P2: { count: 1, answered: 0 } },
+    places: {
+      thread: { count: 0, answered: 0 },
+      review: { count: 0, answered: 0 },
+      description: { count: 1, answered: 0 },
+    },
+    unanswered: [{ level: 'P2', place: 'description' as const, title: 'A', id: null }],
+  };
+  assert.deepEqual(diffReports(byKey(report(1)), [report(1, { findings })], AT), [
+    { at: AT, pr: 'acme/web#1', event: 'findings', ...findings },
+  ]);
+  assert.deepEqual(diffReports(byKey(report(1, { findings })), [report(1, { findings })], AT), []);
 });
 
 test('a new head commit and a new verdict give one event each', () => {

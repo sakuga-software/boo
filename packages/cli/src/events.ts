@@ -19,6 +19,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
   | ({ event: 'review-request' } & Omit<RequestState, 'id'>)
+  | ({ event: 'findings' } & PullRequestReport['findings'])
 );
 
 /**
@@ -251,6 +252,9 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
     const { login, at: reviewedAt, ...review } = reviewer;
     events.push({ at, pr, event: 'review', reviewer: login, ...review, reviewedAt });
   }
+  const counts = ({ count, answered, levels, places }: PullRequestReport['findings']) =>
+    JSON.stringify({ count, answered, levels, places });
+  if (counts(before.findings) !== counts(after.findings)) events.push({ at, pr, event: 'findings', ...after.findings });
   const restack = after.stack.restack;
   if (restack && restack.at !== before.stack.restack?.at)
     events.push({ at, pr, event: 'restack', oldBase: restack.oldBase, base: after.base, parent: before.stack.parent });

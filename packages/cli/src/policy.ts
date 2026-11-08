@@ -1,5 +1,6 @@
 import { displayName, isBotLogin } from './reviewers.js';
 import type { Comment, Review } from './decide.js';
+import type { Finding, FindingPlace } from './findings.js';
 
 /** The rules that a team adds to "ready to merge", from the `mergePolicy` of the settings file. */
 export interface MergePolicy {
@@ -26,6 +27,8 @@ export interface MergePolicy {
   ownerOnly?: { paths: string[]; owner: string };
   /** A review that a comment asks of a bot after its last review must come before the merge. */
   answeredReviewRequests?: boolean;
+  /** Each finding of a review bot with one of these levels, such as "P1", must have an answer: see findings.ts. */
+  answerFindings?: string[];
 }
 
 /**
@@ -37,7 +40,13 @@ export interface ReviewLevels {
   levels: string[];
 }
 
-export type PolicyRule = 'minScore' | 'requireProof' | 'resolvedBotThreads' | 'ownerOnly' | 'answeredReviewRequests';
+export type PolicyRule =
+  | 'minScore'
+  | 'requireProof'
+  | 'resolvedBotThreads'
+  | 'ownerOnly'
+  | 'answeredReviewRequests'
+  | 'answerFindings';
 
 /** A rule that the pull request misses, with the note that the details and the merge refusal show. */
 export interface PolicyMiss {
@@ -51,6 +60,10 @@ export interface OpenThread {
   author: string;
   /** The body of the last comment of the thread, if a bot wrote it. A reply of a person after the bot clears it. */
   lastBotComment?: string;
+  /** The body of the first comment: the finding of a bot. */
+  body?: string;
+  /** The author of the last comment. */
+  lastAuthor?: string;
 }
 
 /** The facts of a pull request that the rules read. */
@@ -66,6 +79,8 @@ export interface PolicyFacts {
   changedFiles?: number | undefined;
   /** The login of the user of boo, if GitHub gave it. */
   viewer?: string | undefined;
+  /** The findings of the review bots. Only the `answerFindings` rule reads them. */
+  findings?: readonly Finding[];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -82,7 +97,7 @@ const compiles = (pattern: string) => {
 
 /** The parts of a pull request that the query reads for the policy: each one costs GraphQL points. */
 export const extraFields = (policy: MergePolicy | undefined) => ({
-  threads: Boolean(policy?.resolvedBotThreads),
+  threads: Boolean(policy?.resolvedBotThreads || policy?.answerFindings),
   files: Boolean(policy?.ownerOnly),
 });
 
@@ -141,6 +156,16 @@ export function parseMergePolicy(value: unknown): MergePolicy | undefined {
     if (paths.length > 0 && ownerOnly.owner.trim()) policy.ownerOnly = { paths, owner: ownerOnly.owner.trim() };
   }
   if (answeredReviewRequests === true) policy.answeredReviewRequests = true;
+  const levels = Array.isArray(value.answerFindings)
+    ? [
+        ...new Set(
+          value.answerFindings
+            .filter((level): level is string => typeof level === 'string' && /^p\d$/i.test(level.trim()))
+            .map((level) => level.trim().toUpperCase()),
+        ),
+      ]
+    : [];
+  if (levels.length > 0) policy.answerFindings = levels;
   return Object.keys(policy).length > 0 ? policy : undefined;
 }
 
@@ -328,7 +353,7 @@ export function unansweredRequests(facts: Pick<PolicyFacts, 'reviews' | 'comment
 export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts): PolicyMiss[] {
   if (!policy) return [];
   const misses: PolicyMiss[] = [];
-  const { minScore, requireProof, resolvedBotThreads, ownerOnly, answeredReviewRequests } = policy;
+  const { minScore, requireProof, resolvedBotThreads, ownerOnly, answeredReviewRequests, answerFindings } = policy;
   if (minScore) {
     const { post, level } = scoreOf(minScore, facts);
     const from = `${level ? `${level} ` : ''}score from ${reviewerLogins(minScore)[0]}`;
@@ -368,5 +393,15 @@ export function policyMisses(policy: MergePolicy | undefined, facts: PolicyFacts
   if (answeredReviewRequests)
     for (const bot of unansweredRequests(facts, reviewerGroup(policy)))
       misses.push({ rule: 'answeredReviewRequests', note: `review asked of ${displayName(bot)}, no answer yet` });
+  if (answerFindings) {
+    const places: FindingPlace[] = ['thread', 'review', 'description'];
+    for (const level of answerFindings)
+      for (const place of places) {
+        const open = (facts.findings ?? []).filter(
+          (finding) => finding.level === level && finding.place === place && !finding.answered,
+        ).length;
+        if (open > 0) misses.push({ rule: 'answerFindings', note: `${open} ${level} not answered (${place})` });
+      }
+  }
   return misses;
 }
