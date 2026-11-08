@@ -507,6 +507,10 @@ test('a review asked by comment is asked, acknowledged, failed, answered or stal
   assert.deepEqual(outcome({ comments: [ask(['EYES', 'CONFUSED'], '@kento-review balanced', 'octocat')] }, 38), [
     'stale',
   ]);
+  const crowd = { ...ask(), reactions: [{ content: 'EYES', logins: ['octocat'], more: true as const }] };
+  assert.deepEqual(outcome({ comments: [crowd] }, 38), ['acknowledged']);
+  const liteFailure = { ...failure, body: KENTO_FAILURE.replace('La review `balanced`', 'La review `lite`') };
+  assert.deepEqual(outcome({ comments: [ask(['EYES']), liteFailure] }), ['acknowledged']);
   const retry = { ...ask(), id: 4, created_at: at(26), updated_at: at(26) };
   assert.deepEqual(outcome({ reviews: [kentoReview], comments: [ask(), retry] }, 40), ['stale', 'answered']);
   const [failed] = requestStates({ reviews: [], comments: [ask(['EYES']), failure] }, settings, new Date(at(25)));

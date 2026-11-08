@@ -62,15 +62,32 @@ export function requestStates(
   settings: Pick<Settings, 'mergePolicy' | 'reviewRequestTimeoutMinutes'>,
   now: Date,
 ): RequestState[] {
-  const requests = reviewRequests(snapshot, reviewerGroup(settings.mergePolicy));
+  const group = reviewerGroup(settings.mergePolicy);
+  const requests = reviewRequests(snapshot, group);
+  const levels = group?.levels ?? [];
   return requests.map(({ comment, bot, member }) => {
     const after = (at: string) => at > comment.created_at;
     // A failure notice answers the last request before it: a notice after the next request of the same bot is not for this one.
     const next = requests.find((other) => other.bot === bot && other.comment.created_at > comment.created_at);
     const beforeNext = (at: string) => !next || at <= next.comment.created_at;
-    // Only a reaction of the bot counts: a 👀 or a 😕 of a person is no answer.
+    // Only a reaction of the bot counts: a 👀 or a 😕 of a person is no answer. The read gives the
+    // first 50 reactors: with more, the bot can be one of the others, so the reaction counts.
     const reacted = (content: string) =>
-      (comment.reactions ?? []).some((reaction) => reaction.content === content && reaction.logins.some(member));
+      (comment.reactions ?? []).some(
+        (reaction) => reaction.content === content && (reaction.logins.some(member) || reaction.more),
+      );
+    // A failure notice that names another level than the request is for another review, such as the review of a push.
+    const levelOf = (text: string) => levels.find((level) => new RegExp(`\\b${level}\\b`, 'i').test(text));
+    const asked = levelOf(comment.body);
+    const forThisReview = (notice: string) => {
+      const named = levelOf(
+        notice
+          .split(/\n\s*\n/)
+          .slice(0, 2)
+          .join('\n'),
+      );
+      return !asked || !named || named.toLowerCase() === asked.toLowerCase();
+    };
     // GitHub gives the times to the second: a review in the same second as the request answers it.
     // A review after the next request to the same bot answers that one, not this one.
     const answered = snapshot.reviews.some(
@@ -87,6 +104,7 @@ export function requestStates(
         member(post.user.login) &&
         after(post.created_at) &&
         beforeNext(post.created_at) &&
+        forThisReview(post.body) &&
         FAILURE.test(post.body.trimStart().split('\n')[0]!),
     );
     const minutes = (now.getTime() - Date.parse(comment.created_at)) / 60_000;
