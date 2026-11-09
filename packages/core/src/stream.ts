@@ -75,6 +75,16 @@ export function parseSse(buffer: string): { events: SseEvent[]; rest: string } {
 
 class SessionExpired extends Error {}
 
+/** The `cursor` of the data of a reset, or undefined if the data is not JSON or has none. */
+function cursorOf(data: string): string | undefined {
+  try {
+    const { cursor } = JSON.parse(data || '{}') as { cursor?: unknown };
+    return typeof cursor === 'string' ? cursor : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface StreamOptions {
   /** The stream: `/events`, the webhooks (the default), or `/state/events`, the changes of the reports. */
   path?: '/events' | '/state/events';
@@ -134,9 +144,10 @@ export function relayStream(
                 if (event.id) lastId = event.id;
                 handlers.change(JSON.parse(event.data) as RelayChange);
               } else if (event.event === 'reset') {
-                // The reset of `/state/events` gives the cursor of now: a reconnect resumes from it.
-                const { cursor } = JSON.parse(event.data || '{}') as { cursor?: unknown };
-                if (typeof cursor === 'string') lastId = cursor;
+                // The reset of `/state/events` gives the cursor of now: a reconnect resumes from it. A
+                // reset with no readable cursor is still a reset.
+                const cursor = cursorOf(event.data);
+                if (cursor) lastId = cursor;
                 handlers.reset();
               } else if (event.event === 'expired') {
                 const { message } = JSON.parse(event.data || '{}') as { message?: string };

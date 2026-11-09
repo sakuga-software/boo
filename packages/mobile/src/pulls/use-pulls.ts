@@ -75,7 +75,10 @@ export function usePulls(
   }, [session, read]);
 
   // The stream opens after the first read, from its cursor, and closes in the background. Back in the
-  // foreground, it opens again from the last cursor: the relay sends the changes since, or a reset.
+  // foreground, it opens again from the cursor of the last read, not from the last event: an event
+  // whose read did not happen before the stop comes again, and gets its read. During one stream, the
+  // reader of core resumes from its last event id, which a read cannot pass: each read gives the
+  // cursor of an event that the stream sent, or will send. Another session starts another stream.
   useEffect(() => {
     const connection = current.current;
     if (!session || !active || !ready || !connection) return;

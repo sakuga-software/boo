@@ -182,3 +182,18 @@ test('the stream of the webhooks is the default, and opens with no last event id
   assert.equal(relay.calls[0]!.url, 'https://relay.test/events');
   assert.equal(relay.calls[0]!.headers['last-event-id'], undefined);
 });
+
+test('a reset whose data is not JSON is still a reset, and keeps the last id', async (t) => {
+  const relay = fakeRelay(
+    t,
+    [
+      { chunks: ['event: ready\ndata: {}\n\nid: b-4\nevent: head\ndata: {}\n\nevent: reset\ndata: not json\n\n'] },
+      { chunks: ['event: ready\ndata: {}\n\n'], hold: true },
+    ],
+    { path: '/state/events', lastEventId: 'b-3' },
+  );
+  await relay.until(() => relay.calls.length === 2, 'second connection');
+  assert.equal(relay.resets(), 1);
+  assert.equal(relay.calls[1]!.headers['last-event-id'], 'b-4');
+  assert.ok(relay.states.every(([, detail]) => !/JSON/.test(detail ?? '')));
+});
