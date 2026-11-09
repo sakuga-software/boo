@@ -8,7 +8,9 @@ import {
   type RelayConnection,
 } from '@sakuga-software/boo-core/relay';
 
-export * from '@sakuga-software/boo-core/relay';
+// The part of this module that runs anywhere is in core. Each name is listed: a name that the CLI
+// also declared would hide the one of core with no error.
+export { DEFAULT_RELAY, relayUrl, SetupError, type RelayConnection } from '@sakuga-software/boo-core/relay';
 
 export const relayPath = (env: NodeJS.ProcessEnv = process.env) =>
   join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'boo', 'relay.json');
