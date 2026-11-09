@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { closeRelaySession, connectRelay, relayUrl, SetupError, type ConnectDeps } from './relay.js';
+import {
+  closeRelaySession,
+  connectRelay,
+  readInstallations,
+  relayUrl,
+  SetupError,
+  type ConnectDeps,
+  type DeviceCodeShown,
+} from './relay.js';
 
 interface Call {
   url: string;
@@ -248,4 +256,47 @@ test('a slow_down with an interval of 0 still waits 5 s more than before', async
   };
   await connectRelay(RELAY, value);
   assert.deepEqual(sleeps.slice(0, 2), [5_000, 10_000]);
+});
+
+test('a host that shows the code gets it before the page opens', async () => {
+  const { fetchFn } = fakeNetwork(routes([granted]));
+  const order: string[] = [];
+  const { value } = deps(fetchFn, {
+    onCode: (code: DeviceCodeShown) => void order.push(`code ${code.userCode} ${code.verificationUri}`),
+    open: async (url) => void order.push(`open ${url}`),
+  });
+  await connectRelay(RELAY, value);
+  assert.deepEqual(order, ['code ABCD-1234 https://github.com/login/device', 'open https://github.com/login/device']);
+});
+
+test('another GitHub gets the device flow, and an http one is refused, except on this machine', async () => {
+  const fake = 'http://localhost:4610';
+  const local = fakeNetwork(
+    Object.fromEntries(
+      Object.entries(routes([granted])).map(([key, value]) => [key.replace('https://github.com', fake), value]),
+    ),
+  );
+  await connectRelay(RELAY, deps(local.fetchFn, { githubUrl: `${fake}/` }).value);
+  assert.deepEqual(
+    local.calls.filter((call) => call.url.startsWith(fake)).map((call) => call.url),
+    [`${fake}/login/device/code`, `${fake}/login/oauth/access_token`],
+  );
+  const { fetchFn, calls } = fakeNetwork(routes([granted]));
+  await assert.rejects(
+    connectRelay(RELAY, deps(fetchFn, { githubUrl: 'http://github.test' }).value),
+    /http:\/\/github\.test is not HTTPS/,
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('the installations are read with the session, and a refusal is an error', async () => {
+  const { calls, fetchFn } = fakeNetwork({ [`GET ${RELAY}/installations`]: [installed] });
+  const found = await readInstallations(connection, { fetch: fetchFn });
+  assert.deepEqual(found.installations, [{ id: 1, account: 'acme' }]);
+  assert.equal(calls[0]!.authorization, 'Bearer s');
+  const refused = fakeNetwork({ [`GET ${RELAY}/installations`]: [{ status: 401, body: { error: 'No session' } }] });
+  await assert.rejects(
+    readInstallations(connection, { fetch: refused.fetchFn }),
+    (error) => error instanceof SetupError && /refused the installations: 401 No session/.test(error.message),
+  );
 });
