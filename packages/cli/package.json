@@ -34,12 +34,12 @@
     "provenance": true
   },
   "scripts": {
-    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc && chmod +x dist/cli.js",
+    "build": "node scripts/build.mjs",
     "prepare": "pnpm build",
     "dev": "tsx src/cli.ts",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json && tsc -p demo/tsconfig.json",
+    "typecheck": "tsc && tsc -p tsconfig.test.json && tsc -p demo/tsconfig.json",
     "test": "tsx --tsconfig tsconfig.test.json --test src/*.test.ts src/*.test.tsx",
-    "test:coverage": "tsx --tsconfig tsconfig.test.json --test --experimental-test-coverage --test-coverage-exclude=\"src/**/*.test.*\" --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=75 src/*.test.ts src/*.test.tsx",
+    "test:coverage": "tsx --tsconfig tsconfig.test.json --test --experimental-test-coverage --test-coverage-exclude=\"src/**/*.test.*\" --test-coverage-exclude=\"../core/**\" --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=75 src/*.test.ts src/*.test.tsx",
     "check:pack": "node scripts/check-pack.mjs",
     "check": "pnpm typecheck && pnpm test:coverage && pnpm check:pack",
     "demo": "tsx --tsconfig demo/tsconfig.json demo/demo.tsx",
@@ -52,8 +52,10 @@
     "react": "^19.3.0"
   },
   "devDependencies": {
+    "@sakuga-software/boo-core": "workspace:*",
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
+    "esbuild": "^0.28.2",
     "ink-testing-library": "^4.0.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"

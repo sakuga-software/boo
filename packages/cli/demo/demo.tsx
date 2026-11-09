@@ -1,10 +1,10 @@
 import { render } from 'ink';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { isCodeRabbit } from '../src/actions.js';
+import { isCodeRabbit } from '@sakuga-software/boo-core/actions';
 import { App, type GitHub, type Sessions } from '../src/app.js';
-import { BOT_LOGIN, REQUEST_BODY, type Comment, type Review } from '../src/decide.js';
+import { BOT_LOGIN, REQUEST_BODY, type Comment, type Review } from '@sakuga-software/boo-core/decide';
 import type { PullRequest, PullRequestSnapshot, PullRequestStatus } from '../src/github.js';
-import type { Check } from '../src/reviewers.js';
+import type { Check } from '@sakuga-software/boo-core/reviewers';
 import { detectBackground } from '../src/theme.js';
 
 const start = Date.now();

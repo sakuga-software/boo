@@ -21,8 +21,8 @@ import {
   type Mode,
   type Request,
   type ReviewerRef,
-} from './actions.js';
-import { botReplied, type Comment, type Decision, type QuotaSource } from './decide.js';
+} from '@sakuga-software/boo-core/actions';
+import { botReplied, type Comment, type Decision, type QuotaSource } from '@sakuga-software/boo-core/decide';
 import {
   activeBots,
   allBots,
@@ -34,7 +34,7 @@ import {
   retriesOn,
   RetryLedger,
   type Retry,
-} from './bots.js';
+} from '@sakuga-software/boo-core/bots';
 import * as github from './github.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { ICON_WIDTH, layoutFor, LABEL_WIDTH, rowHeight, SELECTION_WIDTH, type Layout } from './layout.js';
@@ -46,12 +46,12 @@ import {
   type Reviewer,
   type ReviewerStatus,
   type Summary,
-} from './reviewers.js';
+} from '@sakuga-software/boo-core/reviewers';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
-import { parentFinder, placeStacks, type Placement, type StackItem } from './stacks.js';
-import { agentLogins } from './findings.js';
-import { extraFields } from './policy.js';
-import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from './report.js';
+import { parentFinder, placeStacks, type Placement, type StackItem } from '@sakuga-software/boo-core/stacks';
+import { agentLogins } from '@sakuga-software/boo-core/findings';
+import { extraFields } from '@sakuga-software/boo-core/policy';
+import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from '@sakuga-software/boo-core/report';
 import type { RelayChange, RelaySource, RelayState } from './stream.js';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';

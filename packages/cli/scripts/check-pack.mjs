@@ -44,20 +44,14 @@ if (!tarballName) throw new Error('pnpm pack wrote no tarball.');
 const tarball = path.join(tarballs, tarballName);
 console.log(`${tarballName}, ${Math.round(statSync(tarball).size / 1024)} kB`);
 
-// A file of `dist` that no module of `src` builds is a left-over of an old build, or a test.
+// The build writes one file for each entry point (scripts/build.mjs). Another file is a left-over of an
+// old build, a test, or a chunk that esbuild split out.
 const files = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' })
   .split('\n')
   .filter(Boolean)
   .map((file) => file.replace(/^package\//, ''))
   .sort();
-const expected = [
-  'LICENSE',
-  'README.md',
-  'package.json',
-  ...readdirSync(path.join(root, 'src'))
-    .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
-    .map((file) => `dist/${file.replace(/\.tsx?$/, '.js')}`),
-].sort();
+const expected = ['LICENSE', 'README.md', 'package.json', 'dist/cli.js', 'dist/main.js'].sort();
 const extra = files.filter((file) => !expected.includes(file));
 const missing = expected.filter((file) => !files.includes(file));
 if (extra.length > 0) fail(`the tarball has files that it must not publish: ${extra.join(', ')}`);
@@ -67,6 +61,14 @@ if (extra.length === 0 && missing.length === 0) pass(`the tarball holds the ${fi
 const cli = execFileSync('tar', ['-xOzf', tarball, 'package/dist/cli.js'], { encoding: 'utf8' });
 if (cli.startsWith('#!/usr/bin/env node\n')) pass('dist/cli.js starts with the node shebang');
 else fail('dist/cli.js has no "#!/usr/bin/env node" on its first line');
+
+// npm installs only the dependencies of package.json: the modules of the private core must be in the build.
+const packed = JSON.parse(execFileSync('tar', ['-xOzf', tarball, 'package/package.json'], { encoding: 'utf8' }));
+const main = execFileSync('tar', ['-xOzf', tarball, 'package/dist/main.js'], { encoding: 'utf8' });
+if (Object.keys(packed.dependencies ?? {}).some((name) => name.includes('boo-core')))
+  fail('package.json names @sakuga-software/boo-core in its dependencies: npm cannot install it');
+else if (`${cli}\n${main}`.includes('@sakuga-software/boo-core')) fail('dist imports @sakuga-software/boo-core');
+else pass('dist holds the modules of @sakuga-software/boo-core');
 
 const project = path.join(work, 'project');
 mkdirSync(project);

@@ -16,8 +16,8 @@ import {
   type WatchState,
 } from './events.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
-import type { PullRequestReport } from './report.js';
-import { summarizeFindings } from './findings.js';
+import type { PullRequestReport } from '@sakuga-software/boo-core/report';
+import { summarizeFindings } from '@sakuga-software/boo-core/findings';
 import { DEFAULT_SETTINGS } from './settings.js';
 
 const AT = '2026-10-24T12:00:00.000Z';

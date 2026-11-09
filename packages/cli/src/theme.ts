@@ -1,17 +1,8 @@
-export type Background = 'dark' | 'light' | 'unknown';
+import type { Background } from '@sakuga-software/boo-core/theme';
 
-export interface GhostPalette {
-  line: string;
-  face: string;
-  crown: string;
-}
-
-// Each palette gives at least 4.4:1 on its background. The neutral one gives about 3.8:1 on both.
-export const GHOST_PALETTES: Record<Background, GhostPalette> = {
-  dark: { line: '#A78BFA', face: '#EDE9FE', crown: '#FACC15' },
-  light: { line: '#7C3AED', face: '#4C1D95', crown: '#A16207' },
-  unknown: { line: '#8B5CF6', face: '#8B5CF6', crown: '#A56F03' },
-};
+// The part of this module that runs anywhere is in core. Each name is listed: a name that the CLI
+// also declared would hide the one of core with no error.
+export { GHOST_PALETTES, type Background, type GhostPalette } from '@sakuga-software/boo-core/theme';
 
 /** The query that asks the terminal for its background color (OSC 11). */
 export const BACKGROUND_QUERY = '\u001B]11;?\u0007';

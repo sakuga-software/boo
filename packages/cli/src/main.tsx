@@ -14,7 +14,7 @@ import {
   viewerLogin,
 } from './github.js';
 import { parseWatchState, readReport, watchEvents, writeWatchState, type WatchSources } from './events.js';
-import { extraFields } from './policy.js';
+import { extraFields } from '@sakuga-software/boo-core/policy';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, parseRepos, resolveRepos, saveSettings, settingsPath } from './settings.js';
 import { detectBackground } from './theme.js';

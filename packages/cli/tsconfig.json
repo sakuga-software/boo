@@ -6,8 +6,8 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "jsx": "react-jsx",
-    "outDir": "dist",
-    "rootDir": "src",
+    // esbuild builds dist/ (scripts/build.mjs): tsc only checks the types.
+    "noEmit": true,
     "strict": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
