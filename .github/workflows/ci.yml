@@ -37,6 +37,9 @@ jobs:
           - { name: test (Node 22), script: test, node: '22' }
           # The site: Astro checks the content and the links of the sidebar when it builds.
           - { name: site, script: 'site:build' }
+          # The phone app: expo-doctor checks that each package fits the Expo SDK of the app, and that
+          # the config of the app is valid. Lint, format and typecheck above cover the app too.
+          - { name: mobile, script: 'mobile:doctor' }
 
     steps:
       - name: Checkout code
