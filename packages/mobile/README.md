@@ -1,7 +1,7 @@
 # boo mobile
 
-The phone app of boo. It shows the state of the pull requests that the relay reads. For now it is a
-scaffold: one home screen, and the config to build it.
+The phone app of boo. It shows the state of the pull requests that the relay reads. For now it has
+the sign-in to the relay, and the config to build it.
 
 - Expo SDK 57, [expo-router](https://docs.expo.dev/router/introduction/) with typed routes, and the
   React Compiler (`experiments` in `app.json`).
@@ -22,6 +22,40 @@ pnpm ios     # builds the dev client locally and opens it in the iOS simulator (
 `expo start` writes the types of the routes to `.expo/types/router.d.ts`. `pnpm typecheck` reads
 them when they are there. Without them, `Href` accepts any string, so CI still checks the rest of the
 types.
+
+## Sign in to the relay
+
+The home screen signs in with the device flow of GitHub. The code is the one of the CLI
+(`connectRelay` and `closeRelaySession` in `packages/core/src/relay.ts`):
+
+1. The screen shows a code. **Copy the code and open GitHub** copies it to the clipboard and opens
+   `github.com/login/device` in the in-app browser (expo-web-browser). The person pastes the code
+   there. The app polls GitHub through core meanwhile.
+2. The app sends the GitHub token to the relay (`POST /sessions`) and keeps only the session token
+   that the relay gives back. It goes to `expo-secure-store` (the iOS keychain, Android Keystore),
+   readable on this phone only, after its first unlock.
+3. If the user reads no installation of the App, the screen gives a link to install it, and waits
+   for one. **Later** keeps the session without an installation; the account screen then shows the
+   link again.
+4. **Sign out** deletes the session on the relay (`DELETE /sessions`), then on the phone. A relay
+   that does not answer keeps the session until it expires; the phone forgets it anyway.
+
+### Which relay
+
+`expo.extra.relayUrl` in `app.json` gives the relay. The default is the relay that Sakuga hosts,
+`https://boo-relay.sakuga.dev` (`DEFAULT_RELAY` of core, also used when the key is missing). Two
+variables of the environment change it when Metro starts, through `app.config.js`:
+
+| Variable         | What it changes                                                              |
+| ---------------- | ---------------------------------------------------------------------------- |
+| `BOO_RELAY_URL`  | The relay, for example `http://localhost:4621` for a relay on this computer. |
+| `BOO_GITHUB_URL` | The GitHub of the device flow. Only for a local demo against a fake GitHub.  |
+
+`http://` is accepted only for `localhost`, `127.0.0.1` and `[::1]`: core refuses it elsewhere.
+
+```sh
+BOO_RELAY_URL=http://localhost:4621 pnpm ios
+```
 
 ## Put the dev client on a phone
 
@@ -80,5 +114,7 @@ the `sakuga-software` Expo account does this once:
 
 ## Checks
 
-`pnpm lint`, `pnpm format` and `pnpm typecheck` at the root of the repository cover this package.
-`pnpm mobile:doctor` runs `expo-doctor`, which checks that the packages fit SDK 57. CI runs all four.
+`pnpm lint`, `pnpm format`, `pnpm typecheck` and `pnpm test` at the root of the repository cover this
+package. The tests run the sign-in logic (`src/relay/*.test.ts`) in Node, against a fake relay and a
+fake GitHub; the screen itself is checked in the simulator.
+`pnpm mobile:doctor` runs `expo-doctor`, which checks that the packages fit SDK 57. CI runs all five.
