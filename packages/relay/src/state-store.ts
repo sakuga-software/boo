@@ -139,6 +139,13 @@ export class StateStore {
     ).map((row) => JSON.parse(row.pr) as PullRequest);
   }
 
+  /** The logins that follow the pull request. */
+  followers(pr: Pick<PullRequest, 'repo' | 'number'>): string[] {
+    return (
+      this.db.prepare('SELECT login FROM follows WHERE key = ? ORDER BY login').all(keyOf(pr)) as { login: string }[]
+    ).map((row) => row.login);
+  }
+
   /** True if at least one user follows the pull request. */
   followed(pr: Pick<PullRequest, 'repo' | 'number'>): boolean {
     return this.db.prepare('SELECT 1 FROM follows WHERE key = ? LIMIT 1').get(keyOf(pr)) !== undefined;

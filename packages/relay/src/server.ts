@@ -6,6 +6,7 @@ import type { GitHubApi } from './github.js';
 import { Hub, type RelayEvent, type Subscriber } from './hub.js';
 import type { Session, SessionStore } from './sessions.js';
 import { validSignature } from './signature.js';
+import { readableReports, type Reports } from './reports.js';
 import type { StateStore } from './state-store.js';
 import type { Tracker } from './tracker.js';
 
@@ -23,7 +24,7 @@ export interface RelayOptions {
    * The state of the pull requests (#105). Undefined if the relay has no key of the App: then the
    * relay only relays the webhooks, and `/settings` answers 503.
    */
-  state?: { store: StateStore; tracker: Tracker };
+  state?: { store: StateStore; tracker: Tracker; reports: Reports };
 }
 
 // The settings file of a user is a few kB. A larger body is not a settings file.
@@ -120,7 +121,7 @@ export function createRelay(options: RelayOptions) {
    * with `org` beside it ('' or absent: every account where the App is installed).
    */
   async function onPutSettings(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
-    const { store, tracker } = stateOf();
+    const { store, tracker, reports } = stateOf();
     const body = parseJson<Record<string, unknown>>(await readBody(request, MAX_SETTINGS_BYTES));
     if (typeof body !== 'object' || body === null || Array.isArray(body))
       throw new HttpError(400, 'The settings must be a JSON object');
@@ -137,9 +138,22 @@ export function createRelay(options: RelayOptions) {
       }
     const config = { org, settings };
     store.setConfig(session.user.login, config, (options.now ?? Date.now)());
-    // The list is read after the answer: a search of many authors takes some seconds.
+    // The list is read after the answer: a search of many authors takes some seconds. The reports
+    // follow the new settings at once, and the new list when the search ends.
+    reports.refresh(session.user.login);
     tracker.refreshUser(session.user.login).catch((error: unknown) => console.error(error));
     json(response, 200, config);
+  }
+
+  /**
+   * The reports of the user, with the stable keys of `boo --json`, for the repositories that the user
+   * reads through the App now.
+   */
+  async function onGetState(session: Session, response: ServerResponse): Promise<void> {
+    const { reports } = stateOf();
+    const repos = await access.repos(session);
+    response.setHeader('cache-control', 'no-store');
+    json(response, 200, readableReports(reports.get(session.user.login), repos));
   }
 
   async function onEvents(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
@@ -244,6 +258,8 @@ export function createRelay(options: RelayOptions) {
         return onInstallations(authenticate(request), response);
       case 'GET /events':
         return onEvents(request, response, authenticate(request));
+      case 'GET /state':
+        return onGetState(authenticate(request), response);
       case 'GET /settings':
         return onGetSettings(authenticate(request), response);
       case 'PUT /settings':

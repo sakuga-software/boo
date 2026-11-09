@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { gitHubApi } from './github.js';
 import { installationReader } from './installations.js';
+import { Reports } from './reports.js';
 import { createRelay } from './server.js';
 import { SessionStore } from './sessions.js';
 import { StateStore } from './state-store.js';
@@ -29,16 +30,23 @@ const privateKey = process.env.GITHUB_APP_PRIVATE_KEY?.trim().replaceAll('\\n', 
 const apiUrl = process.env.GITHUB_API_URL?.trim().replace(/\/+$/, '') || 'https://api.github.com';
 const LIST_EVERY_MS = 10 * 60_000;
 const PURGE_EVERY_MS = 60 * 60_000;
-let state: { store: StateStore; tracker: Tracker } | undefined;
+// The states that depend on time (a CodeRabbit wait that ends, a pull request that stalls) change
+// with no webhook: the reports are computed again at this interval.
+const REPORTS_EVERY_MS = 60_000;
+let state: { store: StateStore; tracker: Tracker; reports: Reports } | undefined;
 if (appId && privateKey) {
   const installations = installationReader({ appId, privateKey }, { apiUrl });
   const stateStore = new StateStore(join(dataDir, 'state.db'));
+  const reports = new Reports(stateStore);
   const tracker = new Tracker({
     store: stateStore,
     reader: pullReader(installations, { apiUrl }),
     accounts: async () => [...(await installations.installations()).keys()],
+    onRead: (pr) => reports.refreshFollowers(pr),
+    onList: (login) => reports.refresh(login),
   });
-  state = { store: stateStore, tracker };
+  state = { store: stateStore, tracker, reports };
+  setInterval(() => reports.refreshAll(), REPORTS_EVERY_MS).unref();
   const purge = () => {
     const deleted = stateStore.purge(Date.now());
     if (deleted > 0) console.log(`Deleted ${deleted} pull requests closed or unfollowed for 7 days`);

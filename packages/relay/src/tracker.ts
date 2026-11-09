@@ -20,8 +20,10 @@ export interface TrackerOptions {
   /** A pull request gets one read for all the webhooks of this time. */
   debounceMs?: number;
   now?: () => number;
-  /** Called after each read that saved a pull request: #107 streams the changes. */
+  /** Called after each read that saved a pull request. */
   onRead?: (pr: PullRequest) => void;
+  /** Called after the list of a user changed. */
+  onList?: (login: string) => void;
   log?: (error: unknown) => void;
 }
 
@@ -92,6 +94,7 @@ export class Tracker {
     const prs = [...found.values()];
     this.options.store.setFollows(login, prs, this.now());
     await Promise.all(prs.filter((pr) => !this.options.store.pull(pr)).map((pr) => this.read(pr)));
+    this.options.onList?.(login);
   }
 
   /** Reads the lists of every user. A failed list keeps the last one. */
