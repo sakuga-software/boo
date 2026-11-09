@@ -71,11 +71,19 @@ test('the output keeps the same keys, in the same order', () => {
     'needsOwner',
     'readyForOwner',
     'draftState',
+    'changes',
   ]);
   assert.deepEqual(Object.keys(first!.checks), ['passed', 'failing', 'running', 'skipped', 'quota', 'reviewerErrors']);
   assert.deepEqual(Object.keys(first!.stack), ['parent', 'position', 'size', 'restack']);
   assert.deepEqual(Object.keys(first!.agent), ['kind', 'session', 'subAgent', 'sessionState', 'cloudSession']);
   assert.deepEqual(Object.keys(first!.notes), ['merge', 'retries', 'coderabbit']);
+});
+
+test('the size of the change comes from the read, and is null when the read does not give it', () => {
+  const changes = { additions: 12, deletions: 3, files: 2 };
+  assert.deepEqual(report([{ pr: pr(1), snapshot: snapshot({ changes }) }])[0]!.changes, changes);
+  assert.equal(report([{ pr: pr(1), snapshot: snapshot() }])[0]!.changes, null);
+  assert.equal(report([{ pr: pr(1), error: 'Not read yet' }])[0]!.changes, null);
 });
 
 test('an approved pull request with green checks is ready to merge, as in the human output', () => {

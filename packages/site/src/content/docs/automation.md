@@ -65,7 +65,8 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
     "unanswered": [],
     "threadsRead": true
   },
-  "threads": { "open": 0, "answered": 1 }
+  "threads": { "open": 0, "answered": 1 },
+  "changes": { "additions": 120, "deletions": 14, "files": 6 }
 }
 ```
 
@@ -93,6 +94,7 @@ needs no `COLUMNS` and no clean-up. For a stream of changes, use `--watch --even
 | `threads`                     | The unresolved review threads that a bot started, as `{ "open", "answered" }`: `open` has no answer; `answered` ends with a reply of the author or of an agent of `authors`, and waits for a person to resolve it. A thread that the bot marks gone, with `resolvedBotThreads.goneMarker`, does not count. `null` if the read did not read the threads (`resolvedBotThreads` or `answerFindings`).                                                                                                                                                |
 | `needsOwner`, `readyForOwner` | `needsOwner` is `{ "owner", "paths", "partial" }` when the pull request changes files of [`ownerOnly`](../merge-policy/): the owner, the owned files among the first 100, and `partial: true` if the pull request has more files than the query read. `null` otherwise, or with no `ownerOnly`. `readyForOwner` is `true` when the pull request is green, approved, mergeable, and passes every rule of the policy but `ownerOnly`: only the owner can merge it now.                                                                              |
 | `draftState`                  | For a draft that the list keeps (`"drafts": "show"` or `--drafts`), the state that it would have once ready for review, such as `approved` or `checks failing`; its `state` is `draft`. `null` for any other pull request.                                                                                                                                                                                                                                                                                                                        |
+| `changes`                     | The size of the change: `{ "additions", "deletions", "files" }`, the added and deleted lines and the changed files. `null` if GitHub did not answer.                                                                                                                                                                                                                                                                                                                                                                                              |
 | `policy`                      | The rules of the merge policy that the pull request misses, as `{ "rule", "note" }`: `minScore`, `requireProof`, `resolvedBotThreads`, `ownerOnly`, `answeredReviewRequests`, `answerFindings`. Empty with no policy.                                                                                                                                                                                                                                                                                                                             |
 
 The keys stay the same from one version to the next. A test fixes them.

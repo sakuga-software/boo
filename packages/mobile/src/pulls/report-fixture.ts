@@ -38,6 +38,7 @@ export function report(patch: Partial<PullRequestReport> = {}): PullRequestRepor
     needsOwner: null,
     readyForOwner: false,
     draftState: null,
+    changes: { additions: 120, deletions: 8, files: 4 },
     ...patch,
   };
 }
