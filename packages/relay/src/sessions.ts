@@ -68,6 +68,10 @@ export class SessionStore {
     return this.sessions.has(id);
   }
 
+  get(id: string): Session | undefined {
+    return this.sessions.get(id);
+  }
+
   byToken(token: string): Session | undefined {
     return this.sessions.get(sessionId(token));
   }

@@ -59,6 +59,21 @@ export class StateStore {
         PRIMARY KEY (login, key)
       );
       CREATE INDEX IF NOT EXISTS follows_by_key ON follows (key);
+      CREATE TABLE IF NOT EXISTS devices (
+        token TEXT PRIMARY KEY,
+        session TEXT NOT NULL,
+        login TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS devices_by_login ON devices (login);
+      CREATE INDEX IF NOT EXISTS devices_by_session ON devices (session);
+      CREATE TABLE IF NOT EXISTS push_marks (
+        login TEXT NOT NULL,
+        key TEXT NOT NULL,
+        state TEXT NOT NULL,
+        stalled INTEGER NOT NULL,
+        PRIMARY KEY (login, key)
+      );
     `);
   }
 
@@ -211,9 +226,11 @@ export class StateStore {
         }[]
       ).map((row) => row.key);
       const removeFollows = this.db.prepare('DELETE FROM follows WHERE key = ?');
+      const removeMarks = this.db.prepare('DELETE FROM push_marks WHERE key = ?');
       const removePull = this.db.prepare('DELETE FROM pulls WHERE key = ?');
       for (const key of old) {
         removeFollows.run(key);
+        removeMarks.run(key);
         removePull.run(key);
       }
       this.db.exec('COMMIT');
@@ -223,6 +240,84 @@ export class StateStore {
       throw error;
     }
   }
+
+  /**
+   * Records the push token of the phone of a session. A session is one sign-in of one phone, so the
+   * token replaces the token that the session had: a token that Expo rotates leaves no old row. A
+   * token that another session had moves to this one: a phone that signs in again keeps one row.
+   */
+  setDevice(token: string, device: { session: string; login: string }, now: number): void {
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('DELETE FROM devices WHERE session = ? AND token <> ?').run(device.session, token);
+      this.db
+        .prepare(
+          `INSERT INTO devices (token, session, login, created_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT (token) DO UPDATE SET session = excluded.session, login = excluded.login, created_at = excluded.created_at`,
+        )
+        .run(token, device.session, device.login.toLowerCase(), now);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /** The push tokens of a session. */
+  devicesOfSession(session: string): string[] {
+    return (
+      this.db.prepare('SELECT token FROM devices WHERE session = ? ORDER BY created_at, token').all(session) as {
+        token: string;
+      }[]
+    ).map((row) => row.token);
+  }
+
+  /** The push tokens of every session of `login`, with their session. */
+  devicesOf(login: string): Device[] {
+    return this.db
+      .prepare('SELECT token, session FROM devices WHERE login = ? ORDER BY created_at, token')
+      .all(login.toLowerCase()) as unknown as Device[];
+  }
+
+  /** Deletes the token of a session: the phone stops the notifications, or the session ended. */
+  removeSessionDevices(session: string): void {
+    this.db.prepare('DELETE FROM devices WHERE session = ?').run(session);
+  }
+
+  /** Deletes tokens that Expo does not know any more. */
+  removeTokens(tokens: readonly string[]): void {
+    const remove = this.db.prepare('DELETE FROM devices WHERE token = ?');
+    for (const token of tokens) remove.run(token);
+  }
+
+  /** The state of the pull request in the last push decision for `login`. */
+  pushMark(login: string, pr: Pick<PullRequest, 'repo' | 'number'>): PushMark | undefined {
+    const row = this.db
+      .prepare('SELECT state, stalled FROM push_marks WHERE login = ? AND key = ?')
+      .get(login.toLowerCase(), keyOf(pr)) as { state: string; stalled: number } | undefined;
+    return row && { state: row.state, stalled: row.stalled === 1 };
+  }
+
+  setPushMark(login: string, pr: Pick<PullRequest, 'repo' | 'number'>, mark: PushMark): void {
+    this.db
+      .prepare(
+        `INSERT INTO push_marks (login, key, state, stalled) VALUES (?, ?, ?, ?)
+         ON CONFLICT (login, key) DO UPDATE SET state = excluded.state, stalled = excluded.stalled`,
+      )
+      .run(login.toLowerCase(), keyOf(pr), mark.state, mark.stalled ? 1 : 0);
+  }
+}
+
+/** A push token of a phone, and the session that registered it. */
+export interface Device {
+  token: string;
+  session: string;
+}
+
+/** What the push notifications last saw of a pull request, for one user: the next change compares with it. */
+export interface PushMark {
+  state: string;
+  stalled: boolean;
 }
 
 function toStored(row: { pr: string; snapshot: string | null; error: string | null; read_at: number }): StoredPull {

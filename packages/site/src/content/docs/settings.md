@@ -67,6 +67,15 @@ comment, with no 👀, no 😕 and no review, is `stale` in the events: see
 { "reviewRequestTimeoutMinutes": 15 }
 ```
 
+The key `push` turns off some push notifications of the mobile app. The relay sends one when a pull
+request changes to one of these states: `ready`, `changesRequested`, `checksFailing`, `conflicts`,
+`merged`, and `stalled` when it starts to stall. Each one is on unless the key sets it to `false`. The
+settings live on the relay (`PUT /settings`), so the phone and the CLI edit the same switches.
+
+```json
+{ "push": { "merged": false, "stalled": false } }
+```
+
 ## Review bots
 
 The settings list the review bots of the action bar, with their key, the way the tool asks them, and

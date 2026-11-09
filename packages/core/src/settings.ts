@@ -17,6 +17,21 @@ export const SETTINGS = [
 
 export type SettingKey = (typeof SETTINGS)[number]['key'];
 
+/**
+ * The changes of state that the relay sends to the phones as push notifications (#114). Each one is
+ * on unless the settings turn it off: `"push": { "merged": false }`.
+ */
+export const PUSH_STATES = [
+  { key: 'ready', label: 'Ready to merge' },
+  { key: 'changesRequested', label: 'Changes requested' },
+  { key: 'checksFailing', label: 'Checks failing' },
+  { key: 'conflicts', label: 'Conflicts' },
+  { key: 'merged', label: 'Merged' },
+  { key: 'stalled', label: 'Stalled' },
+] as const;
+
+export type PushState = (typeof PUSH_STATES)[number]['key'];
+
 /** The switches of one review bot. A missing switch keeps the default of the bot. */
 export interface BotSwitches {
   enabled?: boolean;
@@ -61,7 +76,12 @@ export type Settings = Record<SettingKey, boolean> & {
    * is a failure of the bot, not of the change: the state is "reviewer error", not "checks failing".
    */
   reviewerChecks?: string[];
+  /** The push notifications that the user turned on or off, by state. A missing state is on. */
+  push?: Partial<Record<PushState, boolean>>;
 };
+
+/** True if the user gets a push notification when a pull request enters `state`. */
+export const pushOn = (settings: Pick<Settings, 'push'>, state: PushState): boolean => settings.push?.[state] !== false;
 
 export const DEFAULT_AUTHORS: readonly string[] = ['@me'];
 
@@ -194,6 +214,13 @@ export function parseSettings(value: unknown): Settings {
   const reviewerChecks = parseAuthors((value as Record<string, unknown>).reviewerChecks);
   if (reviewerChecks) settings.reviewerChecks = reviewerChecks;
   if ((value as Record<string, unknown>).drafts === 'show') settings.drafts = 'show';
+  const push = (value as Record<string, unknown>).push;
+  if (isRecord(push)) {
+    const switches = Object.fromEntries(
+      PUSH_STATES.filter(({ key }) => typeof push[key] === 'boolean').map(({ key }) => [key, push[key] as boolean]),
+    );
+    if (Object.keys(switches).length > 0) settings.push = switches;
+  }
   const mergePolicy = parseMergePolicy((value as Record<string, unknown>).mergePolicy);
   if (mergePolicy) settings.mergePolicy = mergePolicy;
   const custom = (value as Record<string, unknown>).customBots;
