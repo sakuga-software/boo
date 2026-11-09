@@ -118,7 +118,7 @@ test('the notes give the stale read, the policy, the stall, the stack, the merge
     `CodeRabbit asked at ${time(3)}, no reply yet`,
   ]);
   // A parent that left the list has no state to show.
-  const alone = report({ stack: { parent: 'acme/web#12', position: 2, size: 2, restack: null } });
+  const alone = report({ number: 14, stack: { parent: 'acme/web#12', position: 2, size: 2, restack: null } });
   assert.deepEqual(text(detailSections(alone, [alone], at, now)).notes, ['stacked on web#12: merge it first']);
 });
 
