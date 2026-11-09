@@ -104,3 +104,20 @@ test('a listener that stops gets no more changes', () => {
   reports.refresh('alice');
   assert.deepEqual(seen, ['alice']);
 });
+
+test('a user whose reports fail does not stop the others', () => {
+  const { store, reports } = setup();
+  store.setConfig('bob', { org: 'acme', settings: DEFAULT_SETTINGS }, start);
+  store.setFollows('bob', [pr(1)], start);
+  const refresh = reports.refresh.bind(reports);
+  const done: string[] = [];
+  reports.refresh = (login) => {
+    if (login === 'alice') throw new Error('a broken config');
+    done.push(login);
+    return refresh(login);
+  };
+  const logged: string[] = [];
+  reports.refreshAll((error) => logged.push(String(error)));
+  assert.deepEqual(done, ['bob']);
+  assert.deepEqual(logged, ['Error: a broken config']);
+});

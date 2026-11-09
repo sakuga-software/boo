@@ -70,8 +70,14 @@ export class Reports {
   }
 
   /** Computes the reports of every user again: a timer calls it for the states that depend on time. */
-  refreshAll(): void {
-    for (const login of this.store.logins()) this.refresh(login);
+  refreshAll(log: (error: unknown) => void = (error) => console.error(error)): void {
+    // A user whose reports fail must not stop the others, nor the timer.
+    for (const login of this.store.logins())
+      try {
+        this.refresh(login);
+      } catch (error) {
+        log(error);
+      }
   }
 
   /** Computes again the reports of the users that follow the pull request, after a read. */
