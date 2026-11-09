@@ -171,7 +171,10 @@ const strip = ({ cursor, at, reports }: UserState): UserState => ({ cursor, at, 
 
 /**
  * The `comment` and `review-request` events of the open pull requests, as the watch of the CLI gives
- * them. The first computation of a pull request only records what it knows.
+ * them. The memory is kept for each pull request. The first computation that sees a pull request only
+ * records the comments and the requests that its read holds: they are older than the moment the user
+ * follows it, as in the CLI, where the first read of a pull request gives no comment event. Each later
+ * computation gives an event for each comment and each outcome that the memory does not hold.
  */
 function talkOf(
   pulls: readonly StoredPull[],

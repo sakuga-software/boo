@@ -69,7 +69,9 @@ mobile app) do not each read GitHub. Without the key, the relay only relays the 
   event, with the vocabulary of `boo --watch --events` (`state`, `head`, `review`, `check`, `findings`,
   `policy`, `left`, `comment`, `review-request`…) as the event name, the JSON line of the watch as
   `data`, and the cursor of `GET /state` as `id`. A report that changed with no event of its own (it
-  stalls, its CodeRabbit note changes) gives a `snapshot` event with the whole report. The stream
+  stalls, its CodeRabbit note changes) gives a `snapshot` event with the whole report. As in the watch of
+  the CLI, the comments that a pull request already has when the user starts to follow it give no
+  `comment` event: only the later ones do. The stream
   starts with `event: ready` and the current cursor. A client reads `GET /state`, then opens the stream
   with its cursor in `Last-Event-ID`: it gets the changes after that cursor. If the relay cannot give
   them all (another boot of the relay, or a cursor older than the last 200 changes), it sends

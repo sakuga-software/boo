@@ -174,3 +174,31 @@ test('a new comment of a person gives a comment event, and a merge gives one lef
   );
   assert.equal(left.length, 2, 'the comment, then the merge: the second computation of the merge moves nothing');
 });
+
+test('a pull request that a user starts to follow later gives no event for its old comments, and one for a new comment', () => {
+  const { store, reports, advance } = setup();
+  reports.get('alice');
+  const comment = (id: number, minute: number) => ({
+    id,
+    user: { login: 'bob' },
+    body: `comment ${id}`,
+    created_at: new Date(start + minute * MINUTE).toISOString(),
+    updated_at: new Date(start + minute * MINUTE).toISOString(),
+  });
+  advance(MINUTE);
+  store.savePull(pr(2), { snapshot: snapshot({ comments: [comment(1, 0)] }) }, start + MINUTE);
+  store.setFollows('alice', [pr(1), pr(2)], start + MINUTE);
+  const entered = reports.refresh('alice');
+  advance(MINUTE);
+  store.savePull(pr(2), { snapshot: snapshot({ comments: [comment(1, 0), comment(2, 2)] }) }, start + 2 * MINUTE);
+  reports.refresh('alice');
+  const events = reports.since('alice', entered.cursor.replace(/\d+$/, '0'));
+  assert.ok(Array.isArray(events));
+  assert.deepEqual(
+    events.map(({ event }) => [event.event, event.pr, 'body' in event ? event.body : null]),
+    [
+      ['entered', 'acme/web#2', null],
+      ['comment', 'acme/web#2', 'comment 2'],
+    ],
+  );
+});
