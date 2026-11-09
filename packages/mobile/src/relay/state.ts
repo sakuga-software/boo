@@ -40,3 +40,9 @@ export function afterCheck(
 /** Marks the sign-out on the screen that is there now, not on the one of an older render. */
 export const markSigningOut = (current: RelayState): RelayState =>
   current.status === 'signedIn' ? { ...current, signingOut: true } : current;
+
+/** The state after a sign-out. A state that changed meanwhile (an expired session and its notice) stays. */
+export const afterSignOut = (current: RelayState, connection: RelayConnection): RelayState =>
+  current.status === 'signedIn' && current.connection.session === connection.session
+    ? { status: 'signedOut' }
+    : current;

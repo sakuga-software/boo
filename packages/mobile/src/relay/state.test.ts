@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { afterCheck, EXPIRED_NOTICE, markSigningOut, NO_ANSWER_NOTICE, type RelayState } from './state';
+import { afterCheck, afterSignOut, EXPIRED_NOTICE, markSigningOut, NO_ANSWER_NOTICE, type RelayState } from './state';
 
 const connection = { url: 'https://relay.test', session: 's', login: 'alice' };
 const INSTALL = 'https://github.com/apps/boo-relay/installations/new';
@@ -46,4 +46,10 @@ test('a check during the sign-out keeps the sign-out, and the sign-out marks the
   });
   const signedOut: RelayState = { status: 'signedOut' };
   assert.equal(markSigningOut(signedOut), signedOut);
+});
+
+test('the end of a sign-out keeps a notice that an expired session wrote meanwhile', () => {
+  assert.deepEqual(afterSignOut(markSigningOut(signedIn), connection), { status: 'signedOut' });
+  const expired = afterCheck(markSigningOut(signedIn), connection, { status: 'expired' }, false);
+  assert.deepEqual(afterSignOut(expired, connection), { status: 'signedOut', notice: EXPIRED_NOTICE });
 });

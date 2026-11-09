@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { relayConfig } from './config';
 import { checkSession, CONNECTION_KEY, parseConnection, withAbortReason } from './connection';
 import { startSignIn, type SignIn } from './sign-in';
-import { afterCheck, markSigningOut, type RelayState } from './state';
+import { afterCheck, afterSignOut, markSigningOut, type RelayState } from './state';
 
 export type { RelayState } from './state';
 
@@ -81,13 +81,13 @@ export function useRelay() {
   }, [checkInstallations]);
 
   const signOut = useCallback(async () => {
-    if (state.status !== 'signedIn') return;
+    if (state.status !== 'signedIn' || state.signingOut) return;
     const { connection } = state;
     setState(markSigningOut);
     // A relay that does not answer keeps the session until it expires; the phone forgets it anyway.
     await closeRelaySession(connection, { fetch: relayFetch, log: () => {} });
     await SecureStore.deleteItemAsync(CONNECTION_KEY, STORE).catch(() => {});
-    setState({ status: 'signedOut' });
+    setState((current) => afterSignOut(current, connection));
   }, [state]);
 
   return {
