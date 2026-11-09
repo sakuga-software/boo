@@ -75,15 +75,23 @@ export function parseSse(buffer: string): { events: SseEvent[]; rest: string } {
 
 class SessionExpired extends Error {}
 
-/** The `cursor` of the data of a reset, or undefined if the data is not JSON or has none. */
-function cursorOf(data: string): string | undefined {
+/** The data of an event as an object, or undefined if it is not a JSON object. */
+function objectOf(data: string): Record<string, unknown> | undefined {
   try {
-    const { cursor } = JSON.parse(data || '{}') as { cursor?: unknown };
-    return typeof cursor === 'string' ? cursor : undefined;
+    const value: unknown = JSON.parse(data || '{}');
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
   } catch {
     return undefined;
   }
 }
+
+/** A text field of the data of an event, or undefined. */
+const textOf = (data: string, field: string) => {
+  const value = objectOf(data)?.[field];
+  return typeof value === 'string' ? value : undefined;
+};
 
 export interface StreamOptions {
   /** The stream: `/events`, the webhooks (the default), or `/state/events`, the changes of the reports. */
@@ -142,16 +150,17 @@ export function relayStream(
                 handlers.state('live');
               } else if (event.event === 'change') {
                 if (event.id) lastId = event.id;
-                handlers.change(JSON.parse(event.data) as RelayChange);
+                // A change that is not a JSON object cannot be read: it is skipped, and the stream goes on.
+                const change = objectOf(event.data);
+                if (change) handlers.change(change as unknown as RelayChange);
               } else if (event.event === 'reset') {
                 // The reset of `/state/events` gives the cursor of now: a reconnect resumes from it. A
                 // reset with no readable cursor is still a reset.
-                const cursor = cursorOf(event.data);
+                const cursor = textOf(event.data, 'cursor');
                 if (cursor) lastId = cursor;
                 handlers.reset();
               } else if (event.event === 'expired') {
-                const { message } = JSON.parse(event.data || '{}') as { message?: string };
-                throw new SessionExpired(message ?? 'the session ended');
+                throw new SessionExpired(textOf(event.data, 'message') ?? 'the session ended');
               } else {
                 if (event.id) lastId = event.id;
                 handlers.event?.(event);

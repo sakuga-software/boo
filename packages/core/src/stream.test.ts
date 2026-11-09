@@ -197,3 +197,23 @@ test('a reset whose data is not JSON is still a reset, and keeps the last id', a
   assert.equal(relay.calls[1]!.headers['last-event-id'], 'b-4');
   assert.ok(relay.states.every(([, detail]) => !/JSON/.test(detail ?? '')));
 });
+
+test('a change that is not a JSON object is skipped, and an expired event with no readable message still ends', async (t) => {
+  const relay = fakeRelay(t, [
+    {
+      chunks: [
+        'event: ready\ndata: {}\n\nid: b-1\nevent: change\ndata: not json\n\n',
+        change('b-2', 2),
+        'event: expired\ndata: <html>\n\n',
+      ],
+      hold: true,
+    },
+  ]);
+  await relay.until(() => relay.states.some(([state]) => state === 'expired'), 'expired state');
+  assert.deepEqual(
+    relay.changes.map((item) => item.number),
+    [2],
+  );
+  assert.match(relay.states.at(-1)![1]!, /^the session ended: run boo setup-webhooks again/);
+  assert.ok(relay.states.every(([state]) => state !== 'poll'));
+});
