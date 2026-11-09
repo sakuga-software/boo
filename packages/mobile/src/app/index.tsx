@@ -90,11 +90,12 @@ export default function Home() {
         <Text style={muted}>Signed in as</Text>
         <Text style={[styles.login, text]}>{state.connection.login}</Text>
         <Text style={[styles.small, text]}>Relay: {state.connection.url}</Text>
+        {state.notice ? <Text style={[styles.notice, text]}>{state.notice}</Text> : null}
         {state.installUrl ? (
           <>
             <Text style={muted}>The boo App is not installed on any account that you can read.</Text>
             {button('Install the App on GitHub', () => relay.install(state.installUrl!))}
-            {button('Check again', () => void relay.checkInstallations(state.connection), 'secondary')}
+            {button('Check again', () => void relay.checkAgain(state.connection), 'secondary')}
           </>
         ) : null}
         {button(

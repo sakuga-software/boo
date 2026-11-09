@@ -6,19 +6,10 @@ import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { relayConfig } from './config';
 import { checkSession, CONNECTION_KEY, parseConnection, withAbortReason } from './connection';
-import { startSignIn, type SignIn, type SignInStep } from './sign-in';
+import { startSignIn, type SignIn } from './sign-in';
+import { afterCheck, markSigningOut, type RelayState } from './state';
 
-export type RelayState =
-  | { status: 'loading' }
-  | { status: 'signedOut'; notice?: string }
-  | { status: 'signingIn'; step: SignInStep }
-  | {
-      status: 'signedIn';
-      connection: RelayConnection;
-      /** Set when the user reads no installation of the App: the page that installs it. */
-      installUrl?: string;
-      signingOut?: boolean;
-    };
+export type { RelayState } from './state';
 
 // Only this phone reads the session token, and only after its first unlock: no backup and no other
 // device gets it. The first unlock, not each one, so that a later refresh in the background can read it.
@@ -39,23 +30,11 @@ export function useRelay() {
   const [state, setState] = useState<RelayState>({ status: 'loading' });
   const signIn = useRef<SignIn | undefined>(undefined);
 
-  const checkInstallations = useCallback(async (connection: RelayConnection) => {
+  const checkInstallations = useCallback(async (connection: RelayConnection, asked = false) => {
     const check = await checkSession(connection, relayFetch);
-    if (check.status === 'expired') {
-      // The relay no longer knows the session: the phone forgets it too.
-      await SecureStore.deleteItemAsync(CONNECTION_KEY, STORE).catch(() => {});
-      setState((current) =>
-        current.status === 'signedIn' && current.connection.session === connection.session
-          ? { status: 'signedOut', notice: 'The relay ended the session. Sign in again.' }
-          : current,
-      );
-    } else if (check.status === 'read')
-      // Another error (no network) keeps the session and the screen as they are.
-      setState((current) =>
-        current.status === 'signedIn' && current.connection.session === connection.session
-          ? { status: 'signedIn', connection, ...(check.installUrl && { installUrl: check.installUrl }) }
-          : current,
-      );
+    // The relay no longer knows the session: the phone forgets it too.
+    if (check.status === 'expired') await SecureStore.deleteItemAsync(CONNECTION_KEY, STORE).catch(() => {});
+    setState((current) => afterCheck(current, connection, check, asked));
   }, []);
 
   useEffect(() => {
@@ -104,7 +83,7 @@ export function useRelay() {
   const signOut = useCallback(async () => {
     if (state.status !== 'signedIn') return;
     const { connection } = state;
-    setState({ ...state, signingOut: true });
+    setState(markSigningOut);
     // A relay that does not answer keeps the session until it expires; the phone forgets it anyway.
     await closeRelaySession(connection, { fetch: relayFetch, log: () => {} });
     await SecureStore.deleteItemAsync(CONNECTION_KEY, STORE).catch(() => {});
@@ -124,6 +103,6 @@ export function useRelay() {
     },
     retry: () => setState({ status: 'signedOut' }),
     install: (url: string) => openBrowser(url),
-    checkInstallations,
+    checkAgain: (connection: RelayConnection) => checkInstallations(connection, true),
   };
 }
