@@ -44,16 +44,16 @@ import {
   type Confidence,
   type Overall,
   type Reviewer,
-  type ReviewerStatus,
   type Summary,
 } from '@sakuga-software/boo-core/reviewers';
 import { DEFAULT_SETTINGS, parseAuthors, SETTINGS, type SettingKey, type Settings } from './settings.js';
 import { parentFinder, placeStacks, type Placement, type StackItem } from '@sakuga-software/boo-core/stacks';
 import { agentLogins } from '@sakuga-software/boo-core/findings';
 import { extraFields } from '@sakuga-software/boo-core/policy';
-import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from '@sakuga-software/boo-core/report';
+import { assess, keyOf, MERGE_STATE_WARNINGS, OVERALL_LABELS, stallOf } from '@sakuga-software/boo-core/report';
 import type { RelayChange, RelaySource, RelayState } from '@sakuga-software/boo-core/stream';
 import { planSync, type LeftStatus } from './sync.js';
+import { ERROR_MARK, LEFT_MARKS, OVERALL_MARKS, REVIEWER_MARKS, type Mark } from '@sakuga-software/boo-core/theme';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
 import {
@@ -1665,26 +1665,24 @@ const spinner = (color: string) => (
   </Text>
 );
 
-const OVERALL_VIEWS: Record<Overall, Omit<View, 'icon'> & { icon: () => ReactNode }> = {
-  ready: { icon: () => <Text color="green">✔</Text>, label: 'ready to merge', color: 'green' },
-  approved: { icon: () => <Text color="green">✔</Text>, label: 'approved', color: 'green' },
-  'changes requested': { icon: () => <Text color="red">✎</Text>, label: 'changes requested', color: 'red' },
-  'checks failing': { icon: () => <Text color="red">✖</Text>, label: 'checks failing', color: 'red' },
-  'reviewer error': { icon: () => <Text color="yellow">⚠</Text>, label: 'reviewer error', color: 'yellow' },
-  conflicts: { icon: () => <Text color="red">⚠</Text>, label: 'conflicts', color: 'red' },
-  reviewing: { icon: () => spinner('cyan'), label: 'reviewing', color: 'cyan' },
-  reviewed: { icon: () => <Text color="cyan">●</Text>, label: 'reviewed', color: 'cyan' },
-  quota: { icon: () => <Text color="yellow">◷</Text>, label: 'quota', color: 'yellow' },
-  'awaiting review': { icon: () => <Text color="gray">○</Text>, label: 'awaiting review', color: 'gray' },
-};
+// The marks and the tones come from core: the mobile app shows the same ones.
+const markOf = ({ mark, tone }: Mark) => <Text color={tone}>{mark}</Text>;
+
+const OVERALL_VIEWS = Object.fromEntries(
+  (Object.keys(OVERALL_MARKS) as Overall[]).map((overall) => {
+    const { tone } = OVERALL_MARKS[overall];
+    const icon = overall === 'reviewing' ? () => spinner(tone) : () => markOf(OVERALL_MARKS[overall]);
+    return [overall, { icon, label: OVERALL_LABELS[overall], color: tone }];
+  }),
+) as Record<Overall, Omit<View, 'icon'> & { icon: () => ReactNode }>;
 
 const LEFT_VIEWS: Record<LeftStatus, View> = {
-  merged: { icon: <Text color="magenta">◆</Text>, label: 'merged', color: 'magenta' },
-  closed: { icon: <Text color="red">○</Text>, label: 'closed', color: 'red' },
+  merged: { icon: markOf(LEFT_MARKS.merged), label: 'merged', color: LEFT_MARKS.merged.tone },
+  closed: { icon: markOf(LEFT_MARKS.closed), label: 'closed', color: LEFT_MARKS.closed.tone },
   draft: {
-    icon: <Text color="gray">◌</Text>,
+    icon: markOf(LEFT_MARKS.draft),
     label: 'draft',
-    color: 'gray',
+    color: LEFT_MARKS.draft.tone,
     notes: ['watched again when it is ready for review'],
   },
 };
@@ -1762,7 +1760,7 @@ function describe(row: Row, context: DescribeContext): View {
     };
   }
   if (row.left) return LEFT_VIEWS[row.left];
-  if (row.error) return { icon: <Text color="red">✖</Text>, label: 'error', color: 'red', notes: [row.error] };
+  if (row.error) return { icon: markOf(ERROR_MARK), label: 'error', color: ERROR_MARK.tone, notes: [row.error] };
   if (!row.summary)
     return { icon: spinner('gray'), label: 'checking', color: 'gray', ...(stack && { notes: [stack] }) };
   const { icon, ...view } = OVERALL_VIEWS[row.summary.overall];
@@ -1984,13 +1982,13 @@ function reviewerLines(summary: Summary, confidence: Map<string, Confidence>, la
   if (!layout.marks) return lines;
   const width = Math.min(24, Math.max(0, ...summary.reviewers.map((reviewer) => reviewer.name.length)));
   for (const reviewer of summary.reviewers) {
-    const chip = CHIPS[reviewer.status];
+    const chip = REVIEWER_MARKS[reviewer.status];
     const score = confidence.get(reviewer.login);
     lines.push(
       <Text wrap="truncate-end">
-        <Text color={chip.color}>{chip.icon}</Text> {reviewer.name.padEnd(width)}
+        <Text color={chip.tone}>{chip.mark}</Text> {reviewer.name.padEnd(width)}
         {'  '}
-        <Text color={chip.color}>{reviewerState(reviewer)}</Text>
+        <Text color={chip.tone}>{reviewerState(reviewer)}</Text>
         {score && (
           <>
             <Text dimColor> · confidence </Text>
@@ -2109,19 +2107,6 @@ function sessionWarning(session: LocalSession): string | undefined {
     return `${session.name} waits for ${session.waitingFor ?? 'an answer'}: it reads the message after that.`;
   return undefined;
 }
-
-const CHIPS: Record<ReviewerStatus, { icon: string; color: string }> = {
-  approved: { icon: '✔', color: 'green' },
-  'changes requested': { icon: '✎', color: 'red' },
-  commented: { icon: '●', color: 'cyan' },
-  reviewing: { icon: '⟳', color: 'cyan' },
-  quota: { icon: '◷', color: 'yellow' },
-  'to retry': { icon: '↻', color: 'blue' },
-  requested: { icon: '○', color: 'magenta' },
-  stale: { icon: '◌', color: 'gray' },
-  skipped: { icon: '⊘', color: 'gray' },
-  paused: { icon: '‖', color: 'gray' },
-};
 
 function ChecksBadge({ summary, short }: { summary: Summary; short: boolean }) {
   const { checks } = summary;
