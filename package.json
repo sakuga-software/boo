@@ -1,14 +1,14 @@
 {
   "name": "boo-workspace",
   "private": true,
-  "description": "The workspace of boo: the CLI in packages/cli, the site in packages/site.",
+  "description": "The workspace of boo: the CLI in packages/cli, the relay in packages/relay, the phone app in packages/mobile, the site in packages/site.",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "prepare": "husky && pnpm --filter @sakuga-software/boo build",
     "build": "pnpm --filter @sakuga-software/boo build",
     "dev": "pnpm --filter @sakuga-software/boo dev",
-    "typecheck": "pnpm --filter @sakuga-software/boo --filter @sakuga-software/boo-relay typecheck",
+    "typecheck": "pnpm --filter @sakuga-software/boo --filter @sakuga-software/boo-relay --filter @sakuga-software/boo-mobile typecheck",
     "lint": "oxlint --deny-warnings .",
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
@@ -18,7 +18,8 @@
     "check": "pnpm lint && pnpm format && pnpm typecheck && pnpm test:coverage && pnpm check:pack",
     "demo": "pnpm --filter @sakuga-software/boo demo",
     "site:dev": "pnpm --filter @sakuga-software/boo-site dev",
-    "site:build": "pnpm --filter @sakuga-software/boo-site build"
+    "site:build": "pnpm --filter @sakuga-software/boo-site build",
+    "mobile:doctor": "pnpm --filter @sakuga-software/boo-mobile run doctor"
   },
   "devDependencies": {
     "husky": "^9.1.7",
