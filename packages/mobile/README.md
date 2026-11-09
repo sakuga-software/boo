@@ -138,9 +138,15 @@ the `sakuga-software` Expo account does this once:
 2. Run `npx eas-cli update:configure`. It writes `https://u.expo.dev/<project id>` to `updates.url`.
 3. Run `npx eas-cli credentials -p ios` and choose the Apple team that signs `dev.sakuga.boo`.
    Under **Push Notifications**, let EAS make an APNs key (or upload one): the push notifications
-   need it. For Android, upload the FCM V1 service account key of a Firebase project
-   (`npx eas-cli credentials -p android` → **Google Service Account** → **Push Notifications**).
-4. Commit the change of `app.json`.
+   need it.
+4. **Android:** in a Firebase project, add an Android app `dev.sakuga.boo`.
+   - Upload the FCM V1 service account key of the project to EAS (`npx eas-cli credentials -p android`
+     → **Google Service Account** → **Push Notifications**): Expo sends with it.
+   - Download its `google-services.json`, and add it to EAS as an environment variable of type
+     **file**, named `GOOGLE_SERVICES_JSON`, for each environment (`npx eas-cli env:create`).
+     `app.config.js` gives it to `android.googleServicesFile`: the phone needs it to get a push token.
+     The file stays out of the repository.
+5. Commit the change of `app.json`.
 
 ## The pull requests
 
