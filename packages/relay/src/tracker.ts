@@ -166,7 +166,12 @@ export class Tracker {
       this.log(error);
       this.options.store.savePull(pr, { error: error instanceof Error ? error.message : String(error) }, this.now());
     }
-    this.options.onRead?.(pr);
+    // A listener that fails must not fail the read: a read from a timer has nobody to catch it.
+    try {
+      this.options.onRead?.(pr);
+    } catch (error) {
+      this.log(error);
+    }
   }
 }
 

@@ -233,12 +233,13 @@ test('the reader searches and reads with the token of the installation of the ow
   await assert.rejects(reader.search('other', 'x'), /not installed on other/);
 });
 
-test('the reports follow a new list even when a first read fails', async () => {
+test('a listener of the reads that fails is logged: the list, its reads and the reports go on', async () => {
   const store = new StateStore(':memory:');
   const reader = fakeReader();
   reader.results.set('acme', [pr(1)]);
   reader.heads.set('acme/web#1', 'a1');
   const lists: string[] = [];
+  const logged: string[] = [];
   const tracker = new Tracker({
     store,
     reader,
@@ -247,13 +248,44 @@ test('the reports follow a new list even when a first read fails', async () => {
       throw new Error('a listener that fails');
     },
     onList: (login) => lists.push(login),
-    log: () => {},
+    log: (error) => logged.push(String(error)),
   });
   store.setConfig('alice', { org: 'acme', settings: settings() }, 0);
-  await assert.rejects(tracker.refreshUser('alice'), /a listener that fails/);
+  await tracker.refreshUser('alice');
   assert.deepEqual(lists, ['alice']);
+  assert.deepEqual(logged, ['Error: a listener that fails']);
   assert.deepEqual(
     store.pullsOf('alice').map((stored) => stored.pr.number),
     [1],
   );
+});
+
+test('a read from a webhook whose listener fails gives no unhandled rejection', async (t) => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => void unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  t.after(() => process.off('unhandledRejection', onUnhandled));
+  const store = new StateStore(':memory:');
+  const reader = fakeReader();
+  reader.heads.set('acme/web#1', 'a1');
+  // A pull request that the store knows, so that a webhook schedules its read.
+  store.savePull(pr(1), { error: 'not read yet' }, 0);
+  const logged: string[] = [];
+  const tracker = new Tracker({
+    store,
+    reader,
+    accounts: async () => ['acme'],
+    debounceMs: 5,
+    onRead: () => {
+      throw new Error('a listener that fails');
+    },
+    log: (error) => logged.push(String(error)),
+  });
+  tracker.onChange({ type: 'check_run', repo: 'acme/web', number: 1 });
+  await wait(40);
+  await tracker.idle();
+  await wait(10);
+  assert.deepEqual(unhandled, []);
+  assert.deepEqual(logged, ['Error: a listener that fails']);
+  assert.equal(store.pull(pr(1))?.snapshot?.head, 'a1');
 });
