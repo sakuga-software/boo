@@ -11,11 +11,12 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useColorScheme,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRelayContext } from '../relay/relay-context';
+import { Button } from '../ui/button';
+import { usePalette } from '../ui/use-palette';
 import { configOf, formOf, unchanged, type SettingsForm } from '../settings/form';
 import { checkRelayUrl } from '../settings/relay-url';
 import { readSettings, writeSettings, type WatchConfig } from '../settings/remote';
@@ -28,13 +29,13 @@ type Remote =
 // The settings: the relay of this phone, and what the relay follows for the user (D6: on the relay,
 // the last write wins).
 export default function SettingsScreen() {
-  const dark = useColorScheme() === 'dark';
-  const palette = dark ? colors.dark : colors.light;
+  const palette = usePalette();
   const relay = useRelayContext();
   const router = useRouter();
   const { state } = relay;
   const connection = state.status === 'signedIn' ? state.connection : undefined;
   const text = { color: palette.text };
+  const leave = () => (router.canGoBack() ? router.back() : router.replace('/'));
 
   // What the person typed in the relay field. `undefined`: the relay of the app.
   const [relayEdit, setRelayEdit] = useState<string>();
@@ -65,21 +66,7 @@ export default function SettingsScreen() {
   }, [connection, readKey, recheck]);
 
   const button = (label: string, onPress: () => void, kind: 'primary' | 'secondary' = 'primary', disabled = false) => (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.button,
-        kind === 'primary'
-          ? { backgroundColor: palette.accent }
-          : { borderColor: palette.border, borderWidth: StyleSheet.hairlineWidth },
-        (pressed || disabled) && styles.pressed,
-      ]}
-    >
-      <Text style={[styles.buttonText, { color: kind === 'primary' ? '#ffffff' : palette.text }]}>{label}</Text>
-    </Pressable>
+    <Button label={label} onPress={onPress} kind={kind} palette={palette} disabled={disabled} />
   );
 
   const field = (
@@ -100,13 +87,13 @@ export default function SettingsScreen() {
         onChangeText={onChange}
         multiline={options.multiline}
         placeholder={options.placeholder}
-        placeholderTextColor={palette.placeholder}
+        placeholderTextColor={palette.muted}
         keyboardType={options.keyboardType}
         editable={options.editable ?? true}
         style={[
           styles.input,
           options.multiline && styles.multiline,
-          { color: palette.text, borderColor: palette.border, backgroundColor: palette.field },
+          { color: palette.text, borderColor: palette.border, backgroundColor: palette.surface },
         ]}
       />
       <Text style={[styles.hint, text]}>{hint}</Text>
@@ -120,8 +107,8 @@ export default function SettingsScreen() {
     setRelayProblem(problem);
     if (problem) return;
     setRelayEdit(undefined);
-    // The home screen has the sign-in on the new relay.
-    router.back();
+    // The home screen has the sign-in on the new relay (the account screen sends a signed-out person there).
+    leave();
   };
 
   const applyRelay = (input: string) => {
@@ -203,7 +190,7 @@ export default function SettingsScreen() {
           'One per line, as owner/name, or name in the organization. Empty: every repository.',
           { multiline: true, placeholder: 'Every repository', editable: !remote.saving },
         )}
-        {remote.error ? <Text style={[styles.notice, { color: palette.danger }]}>{remote.error}</Text> : null}
+        {remote.error ? <Text style={[styles.notice, { color: palette.tones.red }]}>{remote.error}</Text> : null}
         {remote.message ? <Text style={[styles.notice, text]}>{remote.message}</Text> : null}
         {button(
           remote.saving ? 'Saving…' : 'Save',
@@ -223,8 +210,8 @@ export default function SettingsScreen() {
     <SafeAreaView style={[styles.screen, { backgroundColor: palette.background }]}>
       <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.header}>
-          <Pressable accessibilityRole="button" onPress={() => router.back()} hitSlop={12}>
-            <Text style={[styles.back, { color: palette.accent }]}>‹ Back</Text>
+          <Pressable accessibilityRole="button" onPress={leave} hitSlop={12}>
+            <Text style={[styles.back, { color: palette.tones.blue }]}>‹ Back</Text>
           </Pressable>
           <Text style={[styles.title, text]}>Settings</Text>
         </View>
@@ -240,7 +227,7 @@ export default function SettingsScreen() {
             'Your GitHub authorization goes to this relay, which reads your pull requests: use only a relay that you trust.',
             { keyboardType: 'url', editable: !moving },
           )}
-          {relayProblem ? <Text style={[styles.notice, { color: palette.danger }]}>{relayProblem}</Text> : null}
+          {relayProblem ? <Text style={[styles.notice, { color: palette.tones.red }]}>{relayProblem}</Text> : null}
           {button(moving ? 'Checking the relay…' : 'Use this relay', () => applyRelay(relayInput), 'primary', moving)}
           {otherRelay
             ? button('Use the default relay', () => applyRelay(relay.defaultRelayUrl), 'secondary', moving)
@@ -253,27 +240,6 @@ export default function SettingsScreen() {
     </SafeAreaView>
   );
 }
-
-const colors = {
-  light: {
-    background: '#ffffff',
-    text: '#1f2328',
-    accent: '#1f883d',
-    border: '#d1d9e0',
-    field: '#f6f8fa',
-    placeholder: '#818b98',
-    danger: '#d1242f',
-  },
-  dark: {
-    background: '#0d1117',
-    text: '#e6edf3',
-    accent: '#238636',
-    border: '#3d444d',
-    field: '#151b23',
-    placeholder: '#656c76',
-    danger: '#f85149',
-  },
-};
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
@@ -296,7 +262,4 @@ const styles = StyleSheet.create({
   hint: { fontSize: 13, opacity: 0.6 },
   muted: { fontSize: 15, opacity: 0.7 },
   notice: { fontSize: 15 },
-  button: { minHeight: 48, borderRadius: 10, paddingHorizontal: 20, justifyContent: 'center' },
-  buttonText: { fontSize: 16, fontWeight: '600', textAlign: 'center' },
-  pressed: { opacity: 0.6 },
 });

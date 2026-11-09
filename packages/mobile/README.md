@@ -1,7 +1,7 @@
 # boo mobile
 
 The phone app of boo. It shows the state of the pull requests that the relay reads. For now it has
-the sign-in to the relay, the settings, and the config to build it.
+the sign-in to the relay, the list of the pull requests, the settings, and the config to build it.
 
 - Expo SDK 57, [expo-router](https://docs.expo.dev/router/introduction/) with typed routes, and the
   React Compiler (`experiments` in `app.json`).
@@ -59,7 +59,7 @@ BOO_RELAY_URL=http://localhost:4621 pnpm ios
 
 ## Settings
 
-**Settings**, on the home screen, edits two things.
+**Settings**, on the home screen when signed out and on the account screen when signed in, edits two things.
 
 - **The relay of this phone.** The field takes a URL, as `boo setup-webhooks` does: `https://` when the
   scheme is missing, no trailing slash, `http://` only on this machine. **Use this relay** first asks the

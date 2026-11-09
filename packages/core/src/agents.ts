@@ -37,6 +37,9 @@ const RULES: readonly Rule[] = [
   },
 ];
 
+/** The name of an agent from its id, as `agent.kind` of a report gives it. An unknown id gives itself. */
+export const agentName = (id: string): string => RULES.find(({ agent }) => agent.id === id)?.agent.name ?? id;
+
 const CLOUD_SESSION = /https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/;
 
 /** Returns the agent that the pull request names, or undefined if a person writes it alone. */

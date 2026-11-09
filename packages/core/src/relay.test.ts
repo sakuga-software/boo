@@ -300,3 +300,40 @@ test('the installations are read with the session, and a refusal is an error', a
     (error) => error instanceof SetupError && /refused the installations: 401 No session/.test(error.message),
   );
 });
+
+test('a setup that fails after the relay opened the session deletes the session, and keeps the first error', async () => {
+  const deleted = (calls: Call[]) => calls.filter((call) => call.method === 'DELETE');
+  // The first read of the installations fails.
+  const first = fakeNetwork({
+    ...routes([granted], [{ status: 500, body: { error: 'database is locked' } }]),
+    [`DELETE ${RELAY}/sessions`]: [{ body: {} }],
+  });
+  await assert.rejects(
+    connectRelay(RELAY, deps(first.fetchFn).value),
+    (error) => error instanceof SetupError && /refused the installations: 500 database is locked/.test(error.message),
+  );
+  assert.deepEqual(deleted(first.calls), [
+    { url: `${RELAY}/sessions`, method: 'DELETE', authorization: 'Bearer sess' },
+  ]);
+
+  // A read in the wait for an installation fails, and the relay does not answer the removal either.
+  const none: Answer = {
+    body: { installations: [], installUrl: 'https://github.com/apps/boo-relay/installations/new' },
+  };
+  const later = fakeNetwork({
+    ...routes([granted], [none, { status: 502, body: {} }]),
+    [`DELETE ${RELAY}/sessions`]: [{ status: 503, body: {} }],
+  });
+  const { value, lines } = deps(later.fetchFn);
+  await assert.rejects(connectRelay(RELAY, value), /refused the installations: 502/);
+  assert.equal(deleted(later.calls).length, 1);
+  assert.ok(lines.some((line) => /refused the removal \(503\)/.test(line)));
+
+  // With no session, nothing is deleted.
+  const refused = fakeNetwork({
+    ...routes([granted]),
+    [`POST ${RELAY}/sessions`]: [{ status: 401, body: { error: 'not this App' } }],
+  });
+  await assert.rejects(connectRelay(RELAY, deps(refused.fetchFn).value), /refused the session/);
+  assert.deepEqual(deleted(refused.calls), []);
+});
