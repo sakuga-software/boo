@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { gitHubApi } from './github.js';
 import { installationReader } from './installations.js';
+import { EXPO_URL, expoPush } from './push.js';
 import { Reports } from './reports.js';
 import { createRelay } from './server.js';
 import { SessionStore } from './sessions.js';
@@ -52,19 +53,36 @@ if (appId && privateKey) {
     if (deleted > 0) console.log(`Deleted ${deleted} pull requests closed or unfollowed for 7 days`);
   };
   purge();
-  void tracker.refreshAll();
-  setInterval(() => void tracker.refreshAll(), LIST_EVERY_MS).unref();
   setInterval(purge, PURGE_EVERY_MS).unref();
 } else console.log('No GITHUB_APP_ID or GITHUB_APP_PRIVATE_KEY: the relay keeps no state of the pull requests.');
 
-const { handle } = createRelay({
+// #114: the push notifications go through the Expo push service. EXPO_ACCESS_TOKEN is needed only if
+// the Expo project turns on the enhanced security of push.
+const expoAccessToken = process.env.EXPO_ACCESS_TOKEN?.trim();
+const expo = expoPush({
+  url: process.env.EXPO_PUSH_URL?.trim() || EXPO_URL,
+  ...(expoAccessToken && { accessToken: expoAccessToken }),
+});
+const windowSetting = Number(process.env.RELAY_PUSH_WINDOW_MS);
+const pushWindowMs = windowSetting > 0 ? windowSetting : undefined;
+
+const { handle, push } = createRelay({
   gitHub: gitHubApi({ clientId, clientSecret: required('GITHUB_APP_CLIENT_SECRET') }, fetch, Date.now, apiUrl),
   store,
   webhookSecret: required('GITHUB_WEBHOOK_SECRET'),
   clientId,
   appSlug: required('GITHUB_APP_SLUG'),
-  ...(state && { state }),
+  ...(state && { state, push: { expo, ...(pushWindowMs && { windowMs: pushWindowMs }) } }),
 });
+
+// The reads start after `createRelay`: the push notifications must see the first computation of the
+// reports, to compare it with the last state that they saw before the stop.
+if (state) {
+  const { tracker } = state;
+  // The first lists read every pull request again: a change during the stop gave no webhook.
+  void tracker.refreshAll({ readAll: true });
+  setInterval(() => void tracker.refreshAll(), LIST_EVERY_MS).unref();
+}
 
 const port = Number(process.env.PORT || 3000);
 const server = createServer(handle);
@@ -75,6 +93,7 @@ server.listen(port, () => console.log(`boo-relay listens on port ${port}`));
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.once(signal, () => {
+    push?.stop();
     state?.tracker.stop();
     state?.store.close();
     server.closeAllConnections();

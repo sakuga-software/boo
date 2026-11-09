@@ -24,6 +24,8 @@ are the ones of the webhook. The access filter below decides who gets these fiel
 | `GET /state/events`  | `boo`, app   | The stream of the changes of these reports, in the vocabulary of `boo --watch --events`, `id` = the cursor.         |
 | `GET /settings`      | `boo`, app   | The watch config of the user: `{ "org", "settings" }`. With no config, the defaults.                                |
 | `PUT /settings`      | `boo`, app   | Replaces the watch config of the user (the last write wins), and reads its list of pull requests again.             |
+| `POST /devices`      | app          | Records the Expo push token of the phone of the session: `{ "token": "ExponentPushToken[…]" }`.                     |
+| `DELETE /devices`    | app          | Deletes the push token of the session: the phone gets no more push notifications.                                   |
 | `GET /healthz`       | the host     | `{ "ok": true, "streams": <count> }`.                                                                               |
 
 A stream gets a change only for a repository that its user can read through the installations of the
@@ -48,7 +50,10 @@ mobile app) do not each read GitHub. Without the key, the relay only relays the 
   session: every client of the user sees the last write.
 - **The list.** The relay searches the open pull requests of each author, in each installation of the
   App that the config names. It reads the lists again every 10 minutes, after `PUT /settings`, and
-  after a `pull_request` webhook that can add one (opened, reopened, ready for review…).
+  after a `pull_request` webhook that can add one (opened, reopened, ready for review…). A pull request
+  that leaves the search gets one more read before it leaves the list, so a merge with no webhook still
+  shows. At its start, the relay reads every pull request of the lists again: a change during the stop
+  gave no webhook.
 - **The reads.** A pull request gets a first GraphQL read when a user starts to follow it, then one
   read 2 seconds after each burst of webhooks that name it, or its head commit. A pull request is read
   once for all the users that follow it. The reads use the installation tokens of the App: they count
@@ -79,6 +84,43 @@ mobile app) do not each read GitHub. Without the key, the relay only relays the 
   stream gets only the repositories that the user reads, and a reset after a time with no valid access.
 - **The retention.** The relay deletes a pull request, with its text, 7 days after it is merged or
   closed, or 7 days after nobody follows it any more. The check runs at start and every hour.
+
+## Push notifications
+
+With the state of the pull requests, the relay sends a push notification to the phones of a user when
+one of their pull requests changes to one of these states: ready to merge, changes requested, checks
+failing, conflicts, merged, or when it starts to stall.
+
+- **The phones.** The mobile app sends its Expo push token with `POST /devices` and its session token.
+  A session keeps one token: a new token replaces the old one, and a token that another session had
+  moves to this one. `DELETE /devices` and `DELETE /sessions` delete the token of the session. The
+  tokens are in `state.db`, with the hash of their session, never with the session token.
+- **The switches.** The key `push` of the settings turns a state off: `{ "push": { "merged": false } }`.
+  A state that the key does not name is on. The settings live on the relay (D6), so the phone and the
+  CLI edit the same switches.
+- **What changed.** `diffReports` of core decides, through the events of the stream of the reports: a
+  `state` or `left` event, or a pull request that starts to stall. A pull request that enters the list,
+  or enters it again, gives no notification: its state then is the start of the next change. A pull
+  request that leaves the list during the window gives nothing.
+- **No spam.** The changes of a user wait 30 seconds (`RELAY_PUSH_WINDOW_MS`), then go out together:
+  one notification for each pull request with its last state, or one notification that counts them
+  if there are more than three. A pull request that goes back to its state of before the window gives
+  nothing.
+- **No duplicate.** `state.db` keeps, for each user and each pull request, the last state that the
+  notifications saw. A change gives a notification only if it differs from it. After a restart, the
+  relay compares the first reports with these states: it sends nothing twice, and a change during the
+  stop gives its notification once.
+- **The access.** A phone gets a pull request only if its session reads the repository through the
+  App, as on `GET /state`. A session that expired loses its phone. Just before each request to Expo,
+  the relay checks that each token still belongs to the session whose access it read: a phone that
+  signs out, or signs in as another user, meanwhile gets nothing.
+- **No second try.** The state of a change is recorded before the send. A change that the relay cannot
+  deliver (GitHub cannot give the access of the session, Expo does not answer) is not sent again: a
+  second try could ring twice, and the next change rings as usual.
+- **Expo.** The relay posts to the Expo push service with `fetch`, in chunks of 100. It deletes a
+  token at once when its ticket answers `DeviceNotRegistered`, and 15 minutes later when its receipt
+  does. No second try: a request that ran out of time can still be delivered.
+- **A tap** opens `boo://pull/<owner>/<repo>/<number>`, the screen of the pull request in the app.
 
 ## Limits
 
@@ -135,6 +177,9 @@ request the installation, and an owner approves it.
 | `GITHUB_API_URL`           | `https://api.github.com` by default.                                                                                                       |
 | `RELAY_DATA_DIR`           | The folder of `sessions.json` and `state.db`. `/data` in the image. Keep it on a volume.                                                   |
 | `PORT`                     | `3000` by default.                                                                                                                         |
+| `EXPO_ACCESS_TOKEN`        | Optional. An access token of Expo, if the Expo project turns on the enhanced security of push notifications.                               |
+| `EXPO_PUSH_URL`            | `https://exp.host` by default. A test points it to a fake Expo push service.                                                               |
+| `RELAY_PUSH_WINDOW_MS`     | The time that the changes of a user wait before their push notifications go out. `30000` by default.                                       |
 
 With Docker, from the root of the repository:
 

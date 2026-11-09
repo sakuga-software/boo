@@ -6,6 +6,7 @@ import { changesAccess, changesOf } from './events.js';
 import type { GitHubApi } from './github.js';
 import { Hub, type RelayEvent, type Subscriber } from './hub.js';
 import type { Session, SessionStore } from './sessions.js';
+import { PUSH_TOKEN, PushNotifier, type PushOptions } from './push.js';
 import { validSignature } from './signature.js';
 import { readableReports, type Reports } from './reports.js';
 import type { StateStore } from './state-store.js';
@@ -26,11 +27,16 @@ export interface RelayOptions {
    * relay only relays the webhooks, and `/settings` answers 503.
    */
   state?: { store: StateStore; tracker: Tracker; reports: Reports };
+  /** #114: the push notifications, sent through Expo. They need `state`. */
+  push?: Pick<PushOptions, 'expo' | 'windowMs' | 'receiptsAfterMs' | 'log' | 'error'>;
 }
 
 // The settings file of a user is a few kB. A larger body is not a settings file.
 const MAX_SETTINGS_BYTES = 256 * 1024;
 const ORG = /^[a-z\d](?:[a-z\d-]{0,38})$/i;
+
+// A push token is some tens of bytes.
+const MAX_DEVICE_BYTES = 4 * 1024;
 
 // GitHub caps a webhook payload at 25 MB.
 const MAX_BODY_BYTES = 26 * 1024 * 1024;
@@ -49,6 +55,16 @@ export function createRelay(options: RelayOptions) {
   const hub = new Hub(10_000, () => new Date((options.now ?? Date.now)()));
   const access = new Access(store, gitHub, options.accessTtlMs, options.now);
   const streams = new Map<ServerResponse, { session: Session; stop: () => void }>();
+  const push =
+    options.state && options.push
+      ? new PushNotifier({
+          ...options.push,
+          store: options.state.store,
+          reports: options.state.reports,
+          sessions: store,
+          access,
+        })
+      : undefined;
 
   /** Reads the access of the stream again if it is stale. A session that expired ends the stream. */
   function checkAccess(response: ServerResponse, session: Session): void {
@@ -144,6 +160,22 @@ export function createRelay(options: RelayOptions) {
     reports.refresh(session.user.login);
     tracker.refreshUser(session.user.login).catch((error: unknown) => console.error(error));
     json(response, 200, config);
+  }
+
+  /**
+   * #114: records the Expo push token of the phone of the session. The phone then gets a push
+   * notification when a pull request of its user changes to a state that the settings turn on.
+   */
+  async function onPostDevice(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
+    const { store: state } = stateOf();
+    const body = parseJson<{ token?: unknown }>(await readBody(request, MAX_DEVICE_BYTES));
+    const token = typeof body === 'object' && body !== null ? body.token : undefined;
+    if (typeof token !== 'string' || !PUSH_TOKEN.test(token))
+      throw new HttpError(400, 'token must be an Expo push token: ExponentPushToken[…]');
+    // A DELETE of the session can come during the read of the body.
+    if (!store.has(session.id)) throw new HttpError(401, 'The session was deleted');
+    state.setDevice(token, { session: session.id, login: session.user.login }, (options.now ?? Date.now)());
+    json(response, 200, { token });
   }
 
   /**
@@ -335,6 +367,7 @@ export function createRelay(options: RelayOptions) {
         for (const [stream, open] of streams)
           if (open.session.id === session.id) endStream(stream, 'expired', 'The session was deleted');
         access.forget(session.id);
+        options.state?.store.removeSessionDevices(session.id);
         await store.delete(session.id);
         response.writeHead(204).end();
         return;
@@ -351,6 +384,14 @@ export function createRelay(options: RelayOptions) {
         return onGetSettings(authenticate(request), response);
       case 'PUT /settings':
         return onPutSettings(request, response, authenticate(request));
+      case 'POST /devices':
+        return onPostDevice(request, response, authenticate(request));
+      case 'DELETE /devices': {
+        const session = authenticate(request);
+        stateOf().store.removeSessionDevices(session.id);
+        response.writeHead(204).end();
+        return;
+      }
       default:
         throw new HttpError(404, `No route for ${route}`);
     }
@@ -366,7 +407,7 @@ export function createRelay(options: RelayOptions) {
     });
   }
 
-  return { handle, hub };
+  return { handle, hub, push };
 }
 
 function statusOf(error: unknown): number {

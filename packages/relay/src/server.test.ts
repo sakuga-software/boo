@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { GitHubError, type GitHubApi, type Tokens } from './github.js';
-import { createRelay } from './server.js';
+import { expoPush } from './push.js';
+import { createRelay, type RelayOptions } from './server.js';
 import { SessionStore } from './sessions.js';
 import { Reports } from './reports.js';
 import { StateStore } from './state-store.js';
@@ -67,6 +68,7 @@ async function startRelay(
     heartbeatMs?: number;
     now?: () => number;
     state?: { store: StateStore; tracker: Tracker; reports: Reports };
+    push?: RelayOptions['push'];
   } = {},
 ) {
   const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'relay-')), 'sessions.json'), 'key');
@@ -637,7 +639,7 @@ test('a failure of GitHub gives a 500 with no detail', async (t) => {
 });
 
 /** A relay with a state, whose tracker lists nothing and records the changes that it gets. */
-async function startStatefulRelay(t: TestContext) {
+async function startStatefulRelay(t: TestContext, push?: RelayOptions['push']) {
   const store = new StateStore(':memory:');
   const refreshed: string[] = [];
   const changes: string[] = [];
@@ -649,7 +651,7 @@ async function startStatefulRelay(t: TestContext) {
   tracker.refreshUser = async (login) => void refreshed.push(login);
   tracker.onChange = (change) => void changes.push(`${change.type} ${change.repo}#${change.number}`);
   const reports = new Reports(store);
-  const relay = await startRelay(t, fakeGitHub(), { state: { store, tracker, reports } });
+  const relay = await startRelay(t, fakeGitHub(), { state: { store, tracker, reports }, ...(push && { push }) });
   return { ...relay, store, reports, refreshed, changes };
 }
 
@@ -700,6 +702,135 @@ test('a relay with no key of the App keeps no state: the settings answer 503', a
   const response = await put(base, session, { org: 'acme' });
   assert.equal(response.status, 503);
   assert.match(((await response.json()) as { error: string }).error, /GITHUB_APP_PRIVATE_KEY/);
+});
+
+const device = (base: string, session: string | undefined, body: unknown, method = 'POST') =>
+  fetch(`${base}/devices`, {
+    method,
+    headers: session ? { authorization: `Bearer ${session}` } : {},
+    ...(body !== undefined && { body: typeof body === 'string' ? body : JSON.stringify(body) }),
+  });
+
+test('a phone records its push token for its session, and one session keeps one token', async (t) => {
+  const { base, store } = await startStatefulRelay(t);
+  assert.equal((await device(base, undefined, { token: 'ExponentPushToken[a]' })).status, 401);
+  const alice = await login(base, 'ghu_alice');
+  const response = await device(base, alice, { token: 'ExponentPushToken[a]' });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { token: 'ExponentPushToken[a]' });
+  // Expo rotates the token: the new one replaces the old one.
+  assert.equal((await device(base, alice, { token: 'ExpoPushToken[b]' })).status, 200);
+  assert.deepEqual(
+    store.devicesOf('alice').map(({ token }) => token),
+    ['ExpoPushToken[b]'],
+  );
+  // The same phone signs in as bob: the token moves to the session of bob.
+  const bob = await login(base, 'ghu_bob');
+  assert.equal((await device(base, bob, { token: 'ExpoPushToken[b]' })).status, 200);
+  assert.deepEqual(store.devicesOf('alice'), []);
+  assert.deepEqual(
+    store.devicesOf('bob').map(({ token }) => token),
+    ['ExpoPushToken[b]'],
+  );
+});
+
+test('a push token must be an Expo push token', async (t) => {
+  const { base } = await startStatefulRelay(t);
+  const session = await login(base, 'ghu_alice');
+  for (const body of [
+    {},
+    { token: 3 },
+    { token: 'abc' },
+    { token: 'ExponentPushToken[]' },
+    { token: 'ExponentPushToken[a b]' },
+    '[1]',
+    'null',
+  ])
+    assert.equal((await device(base, session, body)).status, 400, JSON.stringify(body));
+  assert.equal((await device(base, session, '{')).status, 400);
+  assert.equal((await device(base, session, 'x'.repeat(8 * 1024))).status, 413);
+});
+
+test('DELETE /devices and DELETE /sessions stop the push notifications of the session', async (t) => {
+  const { base, store } = await startStatefulRelay(t);
+  const first = await login(base, 'ghu_alice');
+  const second = await login(base, 'ghu_alice');
+  await device(base, first, { token: 'ExponentPushToken[a]' });
+  await device(base, second, { token: 'ExponentPushToken[b]' });
+  assert.equal((await device(base, undefined, undefined, 'DELETE')).status, 401);
+  assert.equal((await device(base, first, undefined, 'DELETE')).status, 204);
+  assert.deepEqual(
+    store.devicesOf('alice').map(({ token }) => token),
+    ['ExponentPushToken[b]'],
+  );
+  assert.equal((await device(base, first, undefined, 'DELETE')).status, 204, 'a second DELETE is not an error');
+  const signOut = await fetch(`${base}/sessions`, { method: 'DELETE', headers: { authorization: `Bearer ${second}` } });
+  assert.equal(signOut.status, 204);
+  assert.deepEqual(store.devicesOf('alice'), []);
+});
+
+test('a relay with no state takes no push token', async (t) => {
+  const { base } = await startRelay(t);
+  const session = await login(base, 'ghu_alice');
+  assert.equal((await device(base, session, { token: 'ExponentPushToken[a]' })).status, 503);
+  assert.equal((await device(base, session, undefined, 'DELETE')).status, 503);
+  const signOut = await fetch(`${base}/sessions`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${session}` },
+  });
+  assert.equal(signOut.status, 204);
+});
+
+test('a change of state reaches the phone through the Expo push service, for the repositories of its user', async (t) => {
+  // A fake Expo push service on this machine: no notification leaves it.
+  const received: { to: string; title: string; data: { url: string } }[] = [];
+  const expo = createServer((request, response) => {
+    let body = '';
+    request.on('data', (chunk: Buffer) => (body += chunk.toString()));
+    request.on('end', () => {
+      const messages = JSON.parse(body) as typeof received;
+      received.push(...messages);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ data: messages.map((_, index) => ({ status: 'ok', id: `t${index}` })) }));
+    });
+  });
+  await new Promise<void>((resolve) => expo.listen(0, '127.0.0.1', resolve));
+  t.after(() => expo.close());
+  const url = `http://127.0.0.1:${(expo.address() as AddressInfo).port}`;
+  const logs: string[] = [];
+  const { base, store, reports, relay, gitHub } = await startStatefulRelay(t, {
+    expo: expoPush({ url }),
+    windowMs: 10,
+    receiptsAfterMs: 60_000,
+    log: (line) => logs.push(line),
+  });
+  // GitHub gives the names with their case: the relay compares them in lower case (#67f7d4).
+  gitHub.repos.set('ghu_alice', ['ACME/Web']);
+  const session = await login(base, 'ghu_alice');
+  await device(base, session, { token: 'ExponentPushToken[alice]' });
+  await put(base, session, { org: 'acme', authors: ['@me'] });
+  const pull = (repo: string, number: number) => ({
+    repo,
+    number,
+    title: `PR ${number}`,
+    url: `https://github.com/${repo}/pull/${number}`,
+  });
+  const green = { ...snapshotOf('a1'), checks: [{ name: 'ci', state: 'success' as const }] };
+  store.savePull(pull('Acme/web', 1), { snapshot: green }, Date.now());
+  store.savePull(pull('acme/secret', 2), { snapshot: green }, Date.now());
+  store.setFollows('alice', [pull('Acme/web', 1), pull('acme/secret', 2)], Date.now());
+  reports.refresh('alice');
+  store.savePull(pull('Acme/web', 1), { snapshot: snapshotOf('a2') }, Date.now());
+  store.savePull(pull('acme/secret', 2), { snapshot: snapshotOf('a2') }, Date.now());
+  reports.refresh('alice');
+  await relay.push?.flush('alice');
+  // alice reads acme/web only: acme/secret#2 gives her no push.
+  assert.deepEqual(
+    received.map(({ to, title, data }) => ({ to, title, url: data.url })),
+    [{ to: 'ExponentPushToken[alice]', title: 'Checks failing: Acme/web#1', url: 'boo://pull/Acme/web/1' }],
+  );
+  assert.deepEqual(logs, ['Push: 1 of 1 notifications accepted by Expo for alice']);
+  relay.push?.stop();
 });
 
 test('each change of a webhook goes to the tracker', async (t) => {
