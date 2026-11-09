@@ -15,7 +15,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "appleTeamId": "669547726G"
     },
     "android": {
       "package": "dev.sakuga.boo",
@@ -44,11 +45,11 @@
       "relayUrl": "https://boo-relay.sakuga.dev",
       "router": {},
       "eas": {
-        "projectId": "00000000-0000-0000-0000-000000000000"
+        "projectId": "c99df17f-1fdf-424f-b5bf-731bd1b0d36d"
       }
     },
     "updates": {
-      "url": "https://u.expo.dev/00000000-0000-0000-0000-000000000000"
+      "url": "https://u.expo.dev/c99df17f-1fdf-424f-b5bf-731bd1b0d36d"
     }
   }
 }
