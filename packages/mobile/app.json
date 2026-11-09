@@ -24,12 +24,23 @@
     "web": {
       "output": "single"
     },
-    "plugins": ["expo-router", "expo-status-bar"],
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
+      "expo-web-browser"
+    ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
     "extra": {
+      "relayUrl": "https://boo-relay.sakuga.dev",
       "router": {},
       "eas": {
         "projectId": "00000000-0000-0000-0000-000000000000"

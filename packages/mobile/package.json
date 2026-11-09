@@ -10,17 +10,23 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit",
-    "doctor": "expo-doctor"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "doctor": "expo-doctor",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test:coverage": "tsx --test --experimental-test-coverage --test-coverage-exclude=\"src/**/*.test.*\" --test-coverage-exclude=\"../core/**\" --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=75 \"src/**/*.test.ts\""
   },
   "dependencies": {
+    "@sakuga-software/boo-core": "workspace:*",
     "expo": "~57.0.32",
+    "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.23",
     "expo-dev-client": "~57.0.21",
     "expo-linking": "~57.0.13",
     "expo-router": "~57.0.30",
+    "expo-secure-store": "~57.0.4",
     "expo-status-bar": "~57.0.1",
     "expo-updates": "~57.0.27",
+    "expo-web-browser": "~57.0.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
@@ -29,8 +35,10 @@
     "react-native-web": "^0.21.4"
   },
   "devDependencies": {
+    "@types/node": "^26.6.2",
     "@types/react": "^19.2.18",
     "expo-doctor": "^1.21.6",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   }
 }
