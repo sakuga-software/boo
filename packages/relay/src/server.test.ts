@@ -686,6 +686,9 @@ test('the settings need a session, a JSON object and a valid org', async (t) => 
   assert.equal((await put(base, session, '{')).status, 400);
   assert.equal((await put(base, session, { org: 'not an org' })).status, 400);
   assert.equal((await put(base, session, { org: 3 })).status, 400);
+  const noOwner = await put(base, session, { repos: ['web'] });
+  assert.equal(noOwner.status, 400);
+  assert.match(((await noOwner.json()) as { error: string }).error, /needs org/);
   assert.equal((await put(base, session, 'x'.repeat(300 * 1024))).status, 413);
 });
 

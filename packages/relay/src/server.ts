@@ -128,7 +128,13 @@ export function createRelay(options: RelayOptions) {
     if (typeof org !== 'string' || (org && !ORG.test(org)))
       throw new HttpError(400, 'org must be the login of an organization or of an account');
     const settings = parseSettings(body);
-    if (settings.repos) settings.repos = resolveRepos(settings.repos, org);
+    if (settings.repos)
+      try {
+        settings.repos = resolveRepos(settings.repos, org);
+      } catch {
+        // The message of core names --org, an option of the CLI: the relay names its own field.
+        throw new HttpError(400, 'A repository with no owner needs org: write "owner/name", or set org');
+      }
     const config = { org, settings };
     store.setConfig(session.user.login, config, (options.now ?? Date.now)());
     // The list is read after the answer: a search of many authors takes some seconds.
