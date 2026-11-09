@@ -158,7 +158,7 @@ const INSTALL_POLL_MS = 5_000;
  * 1. Gets a user token of the App of the relay with the device flow.
  * 2. Opens a session on the relay. Only the session token stays on the client.
  * 3. If the user reads no installation of the App, opens the install page and waits for one.
- * The caller keeps the connection that it returns.
+ * The caller keeps the connection that it returns. If a step after 2 fails, the session is deleted on the relay.
  */
 export async function connectRelay(input: string | undefined, setup: ConnectDeps): Promise<RelayConnection> {
   const deps = { ...setup, fetch: timed(setup.fetch, setup.timeoutMs ?? TIMEOUT_MS) };
@@ -199,24 +199,31 @@ export async function connectRelay(input: string | undefined, setup: ConnectDeps
     'The relay refused the session',
   );
   deps.log(`Signed in as ${login}`);
+  const connection = { url, session, login };
 
-  const installations = () => readInstallations({ url, session, login }, setup);
-  let found = await installations();
-  if (found.installations.length === 0) {
-    deps.log(`Install the App on your organizations or your account: ${found.installUrl}`);
-    deps.log('An owner of an organization installs it; a member can only request it.');
-    await deps.open(found.installUrl).catch(() => {});
-    const end = deps.now() + INSTALL_WAIT_MS;
-    while (found.installations.length === 0 && deps.now() < end) {
-      await deps.sleep(INSTALL_POLL_MS);
-      found = await installations();
+  try {
+    const installations = () => readInstallations(connection, setup);
+    let found = await installations();
+    if (found.installations.length === 0) {
+      deps.log(`Install the App on your organizations or your account: ${found.installUrl}`);
+      deps.log('An owner of an organization installs it; a member can only request it.');
+      await deps.open(found.installUrl).catch(() => {});
+      const end = deps.now() + INSTALL_WAIT_MS;
+      while (found.installations.length === 0 && deps.now() < end) {
+        await deps.sleep(INSTALL_POLL_MS);
+        found = await installations();
+      }
+      if (found.installations.length === 0)
+        deps.log('No installation yet. The setup is saved: the watch gets changes after the App is installed.');
     }
-    if (found.installations.length === 0)
-      deps.log('No installation yet. The setup is saved: the watch gets changes after the App is installed.');
+    for (const installation of found.installations) deps.log(`Installed on ${installation.account}`);
+  } catch (error) {
+    // The caller gets no connection, so nothing else can delete this session: delete it here.
+    await closeRelaySession(connection, setup);
+    throw error;
   }
-  for (const installation of found.installations) deps.log(`Installed on ${installation.account}`);
 
-  return { url, session, login };
+  return connection;
 }
 
 /** Reads the installations of the App that the user of the session reads. */
