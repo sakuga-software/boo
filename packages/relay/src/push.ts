@@ -295,14 +295,24 @@ export class PushNotifier {
         .filter((event) => event.event === 'state' || event.event === 'left' || event.event === 'snapshot')
         .map((event) => event.pr),
     );
+    // A pull request that the user no longer follows (new settings, closed with no read) gives nothing,
+    // even if it changed earlier in the window.
+    for (const event of events) if (event.event === 'left' && event.reason === 'unlisted') this.cancel(login, event.pr);
     const previous = new Map(before.reports.map((report) => [prOf(report), report]));
     for (const report of after.reports) {
       const old = previous.get(prOf(report));
-      if (!old) {
-        // A pull request that enters the list starts with its mark: its state is not a change.
-        if (!store.pushMark(login, report)) store.setPushMark(login, report, markOf(report));
-      } else if (named.has(prOf(report)) || old.stalled !== report.stalled) this.add(login, report, markOf(old));
+      // A pull request that enters the list, or enters it again, starts from its state now: it is not
+      // a change, and a mark of the time before it left must not hide the next change.
+      if (!old) store.setPushMark(login, report, markOf(report));
+      else if (named.has(prOf(report)) || old.stalled !== report.stalled) this.add(login, report, markOf(old));
     }
+  }
+
+  private cancel(login: string, pr: string): void {
+    const window = this.pending.get(login);
+    if (!window?.prs.delete(pr) || window.prs.size > 0) return;
+    clearTimeout(window.timer);
+    this.pending.delete(login);
   }
 
   private add(login: string, report: PullRequestReport, before: PushMark | undefined): void {
@@ -345,7 +355,7 @@ export class PushNotifier {
     const bySession = new Map<string, string[]>();
     for (const { token, session } of store.devicesOf(login))
       bySession.set(session, [...(bySession.get(session) ?? []), token]);
-    const messages: ExpoMessage[] = [];
+    const outgoing: { session: string; message: ExpoMessage }[] = [];
     for (const [id, tokens] of bySession) {
       const session = sessions.get(id);
       if (!session) {
@@ -354,26 +364,43 @@ export class PushNotifier {
       }
       let repos: Set<string>;
       try {
+        // In lower case, as `report.repo` below.
         repos = await access.repos(session);
       } catch (error) {
         // With no list of the repositories, the phone could get a pull request that its user cannot read.
+        // The change is not sent again later: see the README (a second try could ring twice).
         if (error instanceof SessionExpired) store.removeSessionDevices(id);
         else this.error(error);
         continue;
       }
       const readable = notes.filter(({ report }) => repos.has(report.repo.toLowerCase()));
-      if (readable.length > 0) for (const token of tokens) messages.push(...messagesOf(readable, token));
+      if (readable.length > 0)
+        for (const token of tokens)
+          for (const message of messagesOf(readable, token)) outgoing.push({ session: id, message });
     }
-    if (messages.length === 0) return;
-    const result = await expo.send(messages);
-    this.log(`Push: ${result.accepted} of ${messages.length} notifications accepted by Expo for ${login}`);
-    for (const error of result.errors) this.log(`Push: ${error}`);
-    this.drop(result.unregistered);
-    if (result.tickets.size > 0) {
+    const total = { sent: 0, accepted: 0, tickets: new Map<string, string>() };
+    for (let start = 0; start < outgoing.length; start += CHUNK_SIZE) {
+      // The reads of the access and the earlier chunks take time: a phone can sign out, or sign in as
+      // another user, meanwhile. Each token must still belong to the session that read the access.
+      const chunk = outgoing
+        .slice(start, start + CHUNK_SIZE)
+        .filter(({ session, message }) => store.sessionOfDevice(message.to) === session && sessions.get(session))
+        .map(({ message }) => message);
+      if (chunk.length === 0) continue;
+      const result = await expo.send(chunk);
+      total.sent += chunk.length;
+      total.accepted += result.accepted;
+      for (const [id, token] of result.tickets) total.tickets.set(id, token);
+      for (const error of result.errors) this.log(`Push: ${error}`);
+      this.drop(result.unregistered);
+    }
+    if (total.sent === 0) return;
+    this.log(`Push: ${total.accepted} of ${total.sent} notifications accepted by Expo for ${login}`);
+    if (total.tickets.size > 0) {
       const timer = setTimeout(() => {
         this.timers.delete(timer);
         const run = expo
-          .receipts(result.tickets)
+          .receipts(total.tickets)
           .then(({ unregistered, errors }) => {
             for (const error of errors) this.log(`Push: ${error}`);
             this.drop(unregistered);

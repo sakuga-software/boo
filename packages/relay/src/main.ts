@@ -79,7 +79,8 @@ const { handle, push } = createRelay({
 // reports, to compare it with the last state that they saw before the stop.
 if (state) {
   const { tracker } = state;
-  void tracker.refreshAll();
+  // The first lists read every pull request again: a change during the stop gave no webhook.
+  void tracker.refreshAll({ readAll: true });
   setInterval(() => void tracker.refreshAll(), LIST_EVERY_MS).unref();
 }
 

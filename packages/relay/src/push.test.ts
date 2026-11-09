@@ -105,7 +105,12 @@ function setup({
   store.setConfig('alice', { org: 'acme', settings: { ...DEFAULT_SETTINGS, ...settings } }, clock);
   const reports = new Reports(store, () => clock);
   const sessions = new Map([['s1', session('s1')]]);
-  const access = { failure: undefined as Error | undefined, repos: new Set(repos) };
+  const access = {
+    failure: undefined as Error | undefined,
+    repos: new Set(repos),
+    /** Runs during the read of the access, as a request of the phone would. */
+    during: undefined as (() => void) | undefined,
+  };
   const fake = fakeExpo(answer);
   const logs: string[] = [];
   const errors: unknown[] = [];
@@ -115,6 +120,8 @@ function setup({
     sessions: { get: (id) => sessions.get(id) },
     access: {
       repos: async () => {
+        await Promise.resolve();
+        access.during?.();
         if (access.failure) throw access.failure;
         return access.repos;
       },
@@ -369,10 +376,10 @@ test('a push that fails does not stop the computation of the reports', () => {
   const { reports, store, errors, follow } = setup();
   follow(1);
   reports.get('alice');
-  store.pushMark = () => {
+  store.setPushMark = () => {
     throw new Error('disk full');
   };
-  // A pull request that enters the list reads its mark at once.
+  // A pull request that enters the list writes its mark at once.
   follow(1, 2);
   assert.equal(reports.refresh('alice').reports.length, 2);
   assert.deepEqual(
@@ -507,4 +514,67 @@ test('expoPush reads the receipts and gives the tokens that are not registered',
   });
   assert.deepEqual(await failing.receipts(tickets), { unregistered: [], errors: ['Expo answered 500'] });
   assert.deepEqual(await failing.receipts(tickets), { unregistered: [], errors: ['Expo failed: offline'] });
+});
+
+test('a phone that signs out, or signs in as another user, during the read of the access gets nothing', async () => {
+  const { reports, read, follow, flush, sent, access, store, sessions } = setup();
+  follow(1);
+  reports.get('alice');
+  // The phone of alice signs in as bob while the relay reads the access of alice.
+  access.during = () => store.setDevice(TOKEN, { session: 'bob-1', login: 'bob' }, start);
+  read(1, { checks: red });
+  await flush();
+  assert.equal(sent.length, 0);
+  // The phone of alice signs out while the relay reads the access.
+  store.setDevice(TOKEN, { session: 's1', login: 'alice' }, start);
+  access.during = () => {
+    sessions.delete('s1');
+    store.removeSessionDevices('s1');
+  };
+  read(1, { mergeState: 'dirty', checks: red });
+  await flush();
+  assert.equal(sent.length, 0);
+});
+
+test('a pull request that leaves the list during the window gives nothing', async () => {
+  const { reports, store, read, follow, flush, sent, notifier } = setup();
+  follow(1, 2);
+  reports.get('alice');
+  read(1, { checks: red });
+  // New settings: alice no longer follows #1.
+  store.setFollows('alice', [pr(2)], start);
+  reports.refresh('alice');
+  await flush();
+  assert.equal(sent.length, 0);
+  // The window of alice is closed: no timer waits.
+  await notifier.flush('alice');
+  assert.equal(sent.length, 0);
+});
+
+test('a pull request that enters the list again starts from its state then, not from its old mark', async () => {
+  const { reports, store, read, follow, flush, sent } = setup();
+  follow(1, 2);
+  reports.get('alice');
+  read(1, { mergeState: 'dirty' });
+  await flush();
+  assert.deepEqual(
+    sent.map(({ title }) => title),
+    ['Conflicts: acme/web#1'],
+  );
+  // #1 leaves the list, its checks fail meanwhile, and it comes back.
+  store.setFollows('alice', [pr(2)], start);
+  reports.refresh('alice');
+  store.savePull(pr(1), { snapshot: snapshot({ checks: red }) }, start);
+  follow(1, 2);
+  store.savePull(pr(1), { snapshot: snapshot({ checks: red }) }, start);
+  reports.refresh('alice');
+  await flush();
+  assert.equal(sent.length, 1, 'entering the list again is not a change');
+  // Back to conflicts: a change from the state of the entry.
+  read(1, { mergeState: 'dirty' });
+  await flush();
+  assert.deepEqual(
+    sent.map(({ title }) => title),
+    ['Conflicts: acme/web#1', 'Conflicts: acme/web#1'],
+  );
 });

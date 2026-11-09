@@ -798,12 +798,14 @@ test('a change of state reaches the phone through the Expo push service, for the
   t.after(() => expo.close());
   const url = `http://127.0.0.1:${(expo.address() as AddressInfo).port}`;
   const logs: string[] = [];
-  const { base, store, reports, relay } = await startStatefulRelay(t, {
+  const { base, store, reports, relay, gitHub } = await startStatefulRelay(t, {
     expo: expoPush({ url }),
     windowMs: 10,
     receiptsAfterMs: 60_000,
     log: (line) => logs.push(line),
   });
+  // GitHub gives the names with their case: the relay compares them in lower case (#67f7d4).
+  gitHub.repos.set('ghu_alice', ['ACME/Web']);
   const session = await login(base, 'ghu_alice');
   await device(base, session, { token: 'ExponentPushToken[alice]' });
   await put(base, session, { org: 'acme', authors: ['@me'] });
@@ -814,18 +816,18 @@ test('a change of state reaches the phone through the Expo push service, for the
     url: `https://github.com/${repo}/pull/${number}`,
   });
   const green = { ...snapshotOf('a1'), checks: [{ name: 'ci', state: 'success' as const }] };
-  store.savePull(pull('acme/web', 1), { snapshot: green }, Date.now());
+  store.savePull(pull('Acme/web', 1), { snapshot: green }, Date.now());
   store.savePull(pull('acme/secret', 2), { snapshot: green }, Date.now());
-  store.setFollows('alice', [pull('acme/web', 1), pull('acme/secret', 2)], Date.now());
+  store.setFollows('alice', [pull('Acme/web', 1), pull('acme/secret', 2)], Date.now());
   reports.refresh('alice');
-  store.savePull(pull('acme/web', 1), { snapshot: snapshotOf('a2') }, Date.now());
+  store.savePull(pull('Acme/web', 1), { snapshot: snapshotOf('a2') }, Date.now());
   store.savePull(pull('acme/secret', 2), { snapshot: snapshotOf('a2') }, Date.now());
   reports.refresh('alice');
   await relay.push?.flush('alice');
   // alice reads acme/web only: acme/secret#2 gives her no push.
   assert.deepEqual(
     received.map(({ to, title, data }) => ({ to, title, url: data.url })),
-    [{ to: 'ExponentPushToken[alice]', title: 'Checks failing: acme/web#1', url: 'boo://pull/acme/web/1' }],
+    [{ to: 'ExponentPushToken[alice]', title: 'Checks failing: Acme/web#1', url: 'boo://pull/Acme/web/1' }],
   );
   assert.deepEqual(logs, ['Push: 1 of 1 notifications accepted by Expo for alice']);
   relay.push?.stop();

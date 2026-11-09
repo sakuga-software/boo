@@ -82,19 +82,32 @@ export class Tracker {
     this.log = options.log ?? ((error) => console.error(error));
   }
 
-  /** Reads the list of `login` again, then reads the pull requests that have no read yet. */
-  async refreshUser(login: string): Promise<void> {
-    const config = this.options.store.config(login);
+  /**
+   * Reads the list of `login` again, then reads the pull requests that have no read yet. With `readAll`
+   * (at the start of the relay), it reads every pull request of the list: a change during the stop
+   * gave no webhook.
+   */
+  async refreshUser(login: string, { readAll = false }: { readAll?: boolean } = {}): Promise<void> {
+    const { store } = this.options;
+    const config = store.config(login);
     if (!config) return;
     const accounts = await this.options.accounts();
     const found = new Map<string, PullRequest>();
     for (const { owner, query } of searchesOf(login, config, accounts))
       for (const pr of await this.options.reader.search(owner, query))
         found.set(`${pr.repo.toLowerCase()}#${pr.number}`, pr);
+    // A pull request that leaves the search gets one more read while the user still follows it: a merge
+    // or a close with no webhook (during a stop of the relay, or a lost delivery) shows in the reports,
+    // and in the push notifications, before the pull request leaves the list.
+    const left = store
+      .pullsOf(login)
+      .map(({ pr }) => pr)
+      .filter((pr) => !found.has(`${pr.repo.toLowerCase()}#${pr.number}`));
+    await Promise.all(left.map((pr) => this.read(pr)));
     const prs = [...found.values()];
-    this.options.store.setFollows(login, prs, this.now());
+    store.setFollows(login, prs, this.now());
     try {
-      await Promise.all(prs.filter((pr) => !this.options.store.pull(pr)).map((pr) => this.read(pr)));
+      await Promise.all(prs.filter((pr) => readAll || !store.pull(pr)).map((pr) => this.read(pr)));
     } finally {
       // The list is written: the reports follow it, even if a first read failed.
       this.options.onList?.(login);
@@ -102,8 +115,8 @@ export class Tracker {
   }
 
   /** Reads the lists of every user. A failed list keeps the last one. */
-  async refreshAll(): Promise<void> {
-    for (const login of this.options.store.logins()) await this.refreshUser(login).catch(this.log);
+  async refreshAll(options: { readAll?: boolean } = {}): Promise<void> {
+    for (const login of this.options.store.logins()) await this.refreshUser(login, options).catch(this.log);
   }
 
   /** Takes a change of a webhook: the pull requests that it names get a read after the debounce. */

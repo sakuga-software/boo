@@ -50,7 +50,10 @@ mobile app) do not each read GitHub. Without the key, the relay only relays the 
   session: every client of the user sees the last write.
 - **The list.** The relay searches the open pull requests of each author, in each installation of the
   App that the config names. It reads the lists again every 10 minutes, after `PUT /settings`, and
-  after a `pull_request` webhook that can add one (opened, reopened, ready for review…).
+  after a `pull_request` webhook that can add one (opened, reopened, ready for review…). A pull request
+  that leaves the search gets one more read before it leaves the list, so a merge with no webhook still
+  shows. At its start, the relay reads every pull request of the lists again: a change during the stop
+  gave no webhook.
 - **The reads.** A pull request gets a first GraphQL read when a user starts to follow it, then one
   read 2 seconds after each burst of webhooks that name it, or its head commit. A pull request is read
   once for all the users that follow it. The reads use the installation tokens of the App: they count
@@ -96,8 +99,9 @@ failing, conflicts, merged, or when it starts to stall.
   A state that the key does not name is on. The settings live on the relay (D6), so the phone and the
   CLI edit the same switches.
 - **What changed.** `diffReports` of core decides, through the events of the stream of the reports: a
-  `state` or `left` event, or a pull request that starts to stall. A pull request that enters the list
-  gives no notification: its state is not a change.
+  `state` or `left` event, or a pull request that starts to stall. A pull request that enters the list,
+  or enters it again, gives no notification: its state then is the start of the next change. A pull
+  request that leaves the list during the window gives nothing.
 - **No spam.** The changes of a user wait 30 seconds (`RELAY_PUSH_WINDOW_MS`), then go out together:
   one notification for each pull request with its last state, or one notification that counts them
   if there are more than three. A pull request that goes back to its state of before the window gives
@@ -107,7 +111,12 @@ failing, conflicts, merged, or when it starts to stall.
   relay compares the first reports with these states: it sends nothing twice, and a change during the
   stop gives its notification once.
 - **The access.** A phone gets a pull request only if its session reads the repository through the
-  App, as on `GET /state`. A session that expired loses its phone.
+  App, as on `GET /state`. A session that expired loses its phone. Just before each request to Expo,
+  the relay checks that each token still belongs to the session whose access it read: a phone that
+  signs out, or signs in as another user, meanwhile gets nothing.
+- **No second try.** The state of a change is recorded before the send. A change that the relay cannot
+  deliver (GitHub cannot give the access of the session, Expo does not answer) is not sent again: a
+  second try could ring twice, and the next change rings as usual.
 - **Expo.** The relay posts to the Expo push service with `fetch`, in chunks of 100. It deletes a
   token at once when its ticket answers `DeviceNotRegistered`, and 15 minutes later when its receipt
   does. No second try: a request that ran out of time can still be delivered.

@@ -289,3 +289,52 @@ test('a read from a webhook whose listener fails gives no unhandled rejection', 
   assert.deepEqual(logged, ['Error: a listener that fails']);
   assert.equal(store.pull(pr(1))?.snapshot?.head, 'a1');
 });
+
+test('a pull request that leaves the search gets one more read before it leaves the list', async () => {
+  const { store, reader, tracker, reads } = setup();
+  reader.results.set('acme', [pr(1), pr(2)]);
+  reader.heads.set('acme/web#1', 'a1');
+  reader.heads.set('acme/web#2', 'a2');
+  store.setConfig('alice', { org: 'acme', settings: settings() }, 0);
+  await tracker.refreshUser('alice');
+  reads.length = 0;
+  // #2 is merged with no webhook: the open search no longer gives it.
+  reader.results.set('acme', [pr(1)]);
+  reader.heads.set('acme/web#2', 'a3');
+  const followedAtRead: string[][] = [];
+  const watched = new Tracker({
+    store,
+    reader,
+    accounts: async () => ['acme'],
+    onRead: () => followedAtRead.push(store.pullsOf('alice').map(({ pr: read }) => `${read.repo}#${read.number}`)),
+    log: () => {},
+  });
+  await watched.refreshUser('alice');
+  assert.deepEqual(reader.reads.slice(-1), ['acme/web#2']);
+  // The read comes while alice still follows #2, so her reports see its last state.
+  assert.deepEqual(followedAtRead, [['acme/web#1', 'acme/web#2']]);
+  assert.equal(store.pull(pr(2))?.snapshot?.head, 'a3');
+  assert.deepEqual(
+    store.pullsOf('alice').map(({ pr: kept }) => kept.number),
+    [1],
+  );
+  // The next list does not read it again.
+  reader.reads.length = 0;
+  await watched.refreshUser('alice');
+  assert.deepEqual(reader.reads, []);
+});
+
+test('the first lists after a start read every pull request again, the later ones only the new ones', async () => {
+  const { store, reader, tracker } = setup();
+  reader.results.set('acme', [pr(1)]);
+  reader.heads.set('acme/web#1', 'a1');
+  store.setConfig('alice', { org: 'acme', settings: settings() }, 0);
+  await tracker.refreshAll();
+  reader.reads.length = 0;
+  reader.heads.set('acme/web#1', 'a2');
+  await tracker.refreshAll();
+  assert.deepEqual(reader.reads, []);
+  await tracker.refreshAll({ readAll: true });
+  assert.deepEqual(reader.reads, ['acme/web#1']);
+  assert.equal(store.pull(pr(1))?.snapshot?.head, 'a2');
+});

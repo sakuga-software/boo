@@ -279,6 +279,13 @@ export class StateStore {
       .all(login.toLowerCase()) as unknown as Device[];
   }
 
+  /** The session that has the token now, if any. */
+  sessionOfDevice(token: string): string | undefined {
+    return (
+      this.db.prepare('SELECT session FROM devices WHERE token = ?').get(token) as { session: string } | undefined
+    )?.session;
+  }
+
   /** Deletes the token of a session: the phone stops the notifications, or the session ended. */
   removeSessionDevices(session: string): void {
     this.db.prepare('DELETE FROM devices WHERE session = ?').run(session);
