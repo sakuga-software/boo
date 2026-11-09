@@ -9,6 +9,8 @@ import { test, type TestContext } from 'node:test';
 import { GitHubError, type GitHubApi, type Tokens } from './github.js';
 import { createRelay } from './server.js';
 import { SessionStore } from './sessions.js';
+import { StateStore } from './state-store.js';
+import { Tracker } from './tracker.js';
 
 const SECRET = 'webhook secret';
 
@@ -59,7 +61,12 @@ function fakeGitHub(): FakeGitHub {
 async function startRelay(
   t: TestContext,
   gitHub = fakeGitHub(),
-  extra: { accessTtlMs?: number; heartbeatMs?: number; now?: () => number } = {},
+  extra: {
+    accessTtlMs?: number;
+    heartbeatMs?: number;
+    now?: () => number;
+    state?: { store: StateStore; tracker: Tracker };
+  } = {},
 ) {
   const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'relay-')), 'sessions.json'), 'key');
   const relay = createRelay({
@@ -626,4 +633,78 @@ test('a failure of GitHub gives a 500 with no detail', async (t) => {
   });
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: 'The relay failed' });
+});
+
+/** A relay with a state, whose tracker lists nothing and records the changes that it gets. */
+async function startStatefulRelay(t: TestContext) {
+  const store = new StateStore(':memory:');
+  const refreshed: string[] = [];
+  const changes: string[] = [];
+  const tracker = new Tracker({
+    store,
+    reader: { search: async () => [], graphql: () => async () => undefined },
+    accounts: async () => ['acme'],
+  });
+  tracker.refreshUser = async (login) => void refreshed.push(login);
+  tracker.onChange = (change) => void changes.push(`${change.type} ${change.repo}#${change.number}`);
+  const relay = await startRelay(t, fakeGitHub(), { state: { store, tracker } });
+  return { ...relay, store, refreshed, changes };
+}
+
+const put = (base: string, session: string, body: unknown) =>
+  fetch(`${base}/settings`, {
+    method: 'PUT',
+    headers: { authorization: `Bearer ${session}` },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+
+test('a user writes its settings, reads them back, and its list is read again', async (t) => {
+  const { base, store, refreshed } = await startStatefulRelay(t);
+  const session = await login(base, 'ghu_alice');
+  const empty = await fetch(`${base}/settings`, { headers: { authorization: `Bearer ${session}` } });
+  assert.deepEqual(((await empty.json()) as { settings: { authors: string[] } }).settings.authors, ['@me']);
+
+  const response = await put(base, session, { org: 'acme', authors: ['@me', 'bob'], repos: ['web'], unknown: 1 });
+  assert.equal(response.status, 200);
+  const config = (await response.json()) as { org: string; settings: Record<string, unknown> };
+  assert.equal(config.org, 'acme');
+  assert.deepEqual(config.settings.authors, ['@me', 'bob']);
+  assert.deepEqual(config.settings.repos, ['acme/web']);
+  assert.equal('unknown' in config.settings, false);
+  assert.deepEqual(store.config('alice'), config);
+  assert.deepEqual(refreshed, ['alice']);
+
+  const read = await fetch(`${base}/settings`, { headers: { authorization: `Bearer ${session}` } });
+  assert.deepEqual(await read.json(), config);
+});
+
+test('the settings need a session, a JSON object and a valid org', async (t) => {
+  const { base } = await startStatefulRelay(t);
+  assert.equal((await fetch(`${base}/settings`, { method: 'PUT', body: '{}' })).status, 401);
+  const session = await login(base, 'ghu_alice');
+  assert.equal((await put(base, session, '[1]')).status, 400);
+  assert.equal((await put(base, session, '{')).status, 400);
+  assert.equal((await put(base, session, { org: 'not an org' })).status, 400);
+  assert.equal((await put(base, session, { org: 3 })).status, 400);
+  assert.equal((await put(base, session, 'x'.repeat(300 * 1024))).status, 413);
+});
+
+test('a relay with no key of the App keeps no state: the settings answer 503', async (t) => {
+  const { base } = await startRelay(t);
+  const session = await login(base, 'ghu_alice');
+  const response = await put(base, session, { org: 'acme' });
+  assert.equal(response.status, 503);
+  assert.match(((await response.json()) as { error: string }).error, /GITHUB_APP_PRIVATE_KEY/);
+});
+
+test('each change of a webhook goes to the tracker', async (t) => {
+  const { base, changes } = await startStatefulRelay(t);
+  const response = await deliver(base, 'pull_request', {
+    action: 'synchronize',
+    number: 4,
+    repository: { full_name: 'acme/web' },
+    pull_request: { number: 4, state: 'open' },
+  });
+  assert.equal(response.status, 202);
+  assert.deepEqual(changes, ['pull_request acme/web#4']);
 });

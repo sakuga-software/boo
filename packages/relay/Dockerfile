@@ -16,13 +16,17 @@ RUN ln -s /opt/pnpm/pnpm /usr/local/bin/pnpm
 ENV HUSKY=0
 WORKDIR /app
 COPY --link package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY --link packages/core/package.json ./packages/core/
 COPY --link packages/relay/package.json ./packages/relay/
+# `...` installs the relay and the workspace packages that it needs: core. esbuild runs from its
+# package of the platform, with no install script.
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --ignore-scripts --filter @sakuga-software/boo-relay
+    pnpm install --frozen-lockfile --ignore-scripts --filter @sakuga-software/boo-relay...
+COPY --link packages/core ./packages/core
 COPY --link packages/relay ./packages/relay
 RUN pnpm --filter @sakuga-software/boo-relay run build
 
-# The relay has no runtime dependency: the image carries only Node and the build.
+# The relay has no runtime dependency: the image carries only Node and the build, which holds core.
 FROM node:${NODE_VERSION}-slim
 ENV NODE_ENV=production \
     PORT=3000 \

@@ -1,10 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { parseSettings, resolveRepos } from '@sakuga-software/boo-core/settings';
 import { Access, SessionExpired } from './access.js';
 import { changesAccess, changesOf } from './events.js';
 import type { GitHubApi } from './github.js';
 import { Hub, type RelayEvent, type Subscriber } from './hub.js';
 import type { Session, SessionStore } from './sessions.js';
 import { validSignature } from './signature.js';
+import type { StateStore } from './state-store.js';
+import type { Tracker } from './tracker.js';
 
 export interface RelayOptions {
   gitHub: GitHubApi;
@@ -16,7 +19,16 @@ export interface RelayOptions {
   accessTtlMs?: number;
   heartbeatMs?: number;
   now?: () => number;
+  /**
+   * The state of the pull requests (#105). Undefined if the relay has no key of the App: then the
+   * relay only relays the webhooks, and `/settings` answers 503.
+   */
+  state?: { store: StateStore; tracker: Tracker };
 }
+
+// The settings file of a user is a few kB. A larger body is not a settings file.
+const MAX_SETTINGS_BYTES = 256 * 1024;
+const ORG = /^[a-z\d](?:[a-z\d-]{0,38})$/i;
 
 // GitHub caps a webhook payload at 25 MB.
 const MAX_BODY_BYTES = 26 * 1024 * 1024;
@@ -64,7 +76,10 @@ export function createRelay(options: RelayOptions) {
       refreshStreams();
     }
     const changes = changesOf(type, payload);
-    for (const change of changes) hub.publish(change);
+    for (const change of changes) {
+      hub.publish(change);
+      options.state?.tracker.onChange(change);
+    }
     json(response, 202, { relayed: changes.length });
   }
 
@@ -87,6 +102,38 @@ export function createRelay(options: RelayOptions) {
   async function onInstallations(session: Session, response: ServerResponse): Promise<void> {
     const installations = await access.withToken(session, (token) => gitHub.installations(token));
     json(response, 200, { installations, installUrl: installUrl(appSlug) });
+  }
+
+  function stateOf(): NonNullable<RelayOptions['state']> {
+    if (!options.state)
+      throw new HttpError(503, 'This relay keeps no state: it needs GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY');
+    return options.state;
+  }
+
+  function onGetSettings(session: Session, response: ServerResponse): void {
+    const config = stateOf().store.config(session.user.login);
+    json(response, 200, config ?? { org: '', settings: parseSettings(undefined) });
+  }
+
+  /**
+   * D6: the settings live on the relay, and the last write wins. The body is the settings file of boo,
+   * with `org` beside it ('' or absent: every account where the App is installed).
+   */
+  async function onPutSettings(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
+    const { store, tracker } = stateOf();
+    const body = parseJson<Record<string, unknown>>(await readBody(request, MAX_SETTINGS_BYTES));
+    if (typeof body !== 'object' || body === null || Array.isArray(body))
+      throw new HttpError(400, 'The settings must be a JSON object');
+    const org = body.org === undefined || body.org === '' ? '' : body.org;
+    if (typeof org !== 'string' || (org && !ORG.test(org)))
+      throw new HttpError(400, 'org must be the login of an organization or of an account');
+    const settings = parseSettings(body);
+    if (settings.repos) settings.repos = resolveRepos(settings.repos, org);
+    const config = { org, settings };
+    store.setConfig(session.user.login, config, (options.now ?? Date.now)());
+    // The list is read after the answer: a search of many authors takes some seconds.
+    tracker.refreshUser(session.user.login).catch((error: unknown) => console.error(error));
+    json(response, 200, config);
   }
 
   async function onEvents(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
@@ -191,6 +238,10 @@ export function createRelay(options: RelayOptions) {
         return onInstallations(authenticate(request), response);
       case 'GET /events':
         return onEvents(request, response, authenticate(request));
+      case 'GET /settings':
+        return onGetSettings(authenticate(request), response);
+      case 'PUT /settings':
+        return onPutSettings(request, response, authenticate(request));
       default:
         throw new HttpError(404, `No route for ${route}`);
     }
@@ -234,12 +285,12 @@ function parseJson<T>(body: Buffer): T {
   }
 }
 
-async function readBody(request: IncomingMessage): Promise<Buffer> {
+async function readBody(request: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request as AsyncIterable<Buffer>) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, 'The body is too large');
+    if (size > maxBytes) throw new HttpError(413, 'The body is too large');
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
