@@ -75,7 +75,10 @@ export function scoreTone({ score, total }: { score: number; total: number }): T
 
 function reviewersSection({ reviewers }: PullRequestReport, now: Date): Line[] {
   const onHead = reviewers.filter((reviewer) => reviewer.onHead).length;
-  const last = reviewers.filter((reviewer) => reviewer.at).toSorted((a, b) => Date.parse(b.at!) - Date.parse(a.at!))[0];
+  // Hermes, the engine of the app, has no `toSorted`: the newest review comes from a loop.
+  let last: (typeof reviewers)[number] | undefined;
+  for (const reviewer of reviewers)
+    if (reviewer.at && (!last || Date.parse(reviewer.at) > Date.parse(last.at!))) last = reviewer;
   let lastText = reviewers.length === 0 ? 'no reviewer yet' : 'no review yet';
   if (last) lastText = `last ${displayName(last.login)} ${formatAgo(now, new Date(last.at!))}`;
   const header = [reviewers.length > 0 && `${onHead}/${reviewers.length} on head`, lastText].filter(Boolean);
