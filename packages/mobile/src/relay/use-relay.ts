@@ -4,9 +4,11 @@ import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { parseStoredRelay, probeRelay, RELAY_URL_KEY } from '../settings/relay-url';
 import { relayConfig } from './config';
 import { checkSession, CONNECTION_KEY, parseConnection, withAbortReason } from './connection';
 import { startSignIn, type SignIn } from './sign-in';
+import { signOutOnce } from './sign-out';
 import { afterCheck, afterSignOut, markSigningOut, type RelayState } from './state';
 
 export type { RelayState } from './state';
@@ -20,6 +22,12 @@ const STORE: SecureStore.SecureStoreOptions = {
 const config = relayConfig(Constants.expoConfig?.extra);
 const relayFetch = withAbortReason(fetch);
 
+// One sign-out at a time for a session, whatever the count of taps (#55f5ef).
+const endSession = signOutOnce({
+  fetch: relayFetch,
+  forget: () => SecureStore.deleteItemAsync(CONNECTION_KEY, STORE),
+});
+
 const openBrowser = (url: string) => {
   // The promise ends when the person closes the browser. The sign-in does not wait for it.
   WebBrowser.openBrowserAsync(url).catch(() => {});
@@ -28,7 +36,10 @@ const openBrowser = (url: string) => {
 /** The connection to the relay: the stored session, the sign-in with the device flow, and the sign-out. */
 export function useRelay() {
   const [state, setState] = useState<RelayState>({ status: 'loading' });
+  // The relay that the person chose in the settings, or the one of `app.json`.
+  const [relayUrl, setRelayUrl] = useState(config.relayUrl);
   const signIn = useRef<SignIn | undefined>(undefined);
+  const changing = useRef(false);
 
   const checkInstallations = useCallback(async (connection: RelayConnection, asked = false) => {
     const check = await checkSession(connection, relayFetch);
@@ -43,6 +54,8 @@ export function useRelay() {
         setState({ status: 'signedOut', notice: 'The sign-in needs the iOS or Android app.' });
         return;
       }
+      const chosen = parseStoredRelay(await SecureStore.getItemAsync(RELAY_URL_KEY, STORE).catch(() => null));
+      if (chosen) setRelayUrl(chosen);
       const connection = parseConnection(await SecureStore.getItemAsync(CONNECTION_KEY, STORE).catch(() => null));
       if (!connection) return setState({ status: 'signedOut' });
       setState({ status: 'signedIn', connection });
@@ -53,6 +66,7 @@ export function useRelay() {
   const start = useCallback(() => {
     const run = startSignIn({
       ...config,
+      relayUrl,
       fetch: relayFetch,
       openBrowser,
       copy: async (text) => void (await Clipboard.setStringAsync(text)),
@@ -78,23 +92,59 @@ export function useRelay() {
         // The step `failed` shows the error.
         if (signIn.current === run) signIn.current = undefined;
       });
-  }, [checkInstallations]);
+  }, [checkInstallations, relayUrl]);
 
   const signOut = useCallback(async () => {
     if (state.status !== 'signedIn' || state.signingOut) return;
     const { connection } = state;
     setState(markSigningOut);
-    // A relay that does not answer keeps the session until it expires; the phone forgets it anyway.
-    await closeRelaySession(connection, { fetch: relayFetch, log: () => {} });
-    await SecureStore.deleteItemAsync(CONNECTION_KEY, STORE).catch(() => {});
+    await endSession(connection);
     setState((current) => afterSignOut(current, connection));
   }, [state]);
 
+  /**
+   * Moves the app to another relay, or back to the one of `app.json` with `undefined`. The new relay must
+   * answer as a boo relay first. Then the app signs out of the current relay: its session belongs to that
+   * relay only. The person signs in again on the new one. Returns the problem, or `undefined`.
+   */
+  const changeRelay = useCallback(
+    async (url: string | undefined): Promise<string | undefined> => {
+      if (state.status !== 'signedIn' && state.status !== 'signedOut') return 'Wait for the sign-in to end.';
+      if (state.status === 'signedIn' && state.signingOut) return 'Wait for the sign-out to end.';
+      // As for the sign-out: a second tap can come before the render that disables the button.
+      if (changing.current) return 'The relay is already changing.';
+      changing.current = true;
+      try {
+        const next = url ?? config.relayUrl;
+        const problem = await probeRelay(next, relayFetch);
+        if (problem) return problem;
+        if (state.status === 'signedIn') {
+          setState(markSigningOut);
+          await endSession(state.connection);
+        }
+        try {
+          if (url === undefined) await SecureStore.deleteItemAsync(RELAY_URL_KEY, STORE);
+          else await SecureStore.setItemAsync(RELAY_URL_KEY, url, STORE);
+        } catch {
+          // The app uses the relay until it restarts.
+        }
+        setRelayUrl(next);
+        setState({ status: 'signedOut', notice: `The relay is now ${next}. Sign in again.` });
+        return undefined;
+      } finally {
+        changing.current = false;
+      }
+    },
+    [state],
+  );
+
   return {
     state,
-    relayUrl: config.relayUrl,
+    relayUrl,
+    defaultRelayUrl: config.relayUrl,
     start,
     signOut,
+    changeRelay,
     openGitHub: () => signIn.current?.openGitHub(),
     openInstall: () => signIn.current?.openInstall(),
     later: () => signIn.current?.later(),
@@ -104,5 +154,7 @@ export function useRelay() {
     retry: () => setState({ status: 'signedOut' }),
     install: (url: string) => openBrowser(url),
     checkAgain: (connection: RelayConnection) => checkInstallations(connection, true),
+    /** The same check with no notice, for a screen that got a 401 from the relay. Its identity stays across renders. */
+    recheck: checkInstallations,
   };
 }

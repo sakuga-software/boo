@@ -1,13 +1,15 @@
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRelay } from '../relay/use-relay';
+import { useRouter } from 'expo-router';
+import { useRelayContext } from '../relay/relay-context';
 
 // The home screen: the sign-in to the relay, then the account. The list of the pull requests comes later.
 export default function Home() {
   const dark = useColorScheme() === 'dark';
   const palette = dark ? colors.dark : colors.light;
-  const relay = useRelay();
+  const relay = useRelayContext();
+  const router = useRouter();
   const { state } = relay;
   const text = { color: palette.text };
   const muted = [styles.muted, text];
@@ -38,6 +40,7 @@ export default function Home() {
         {state.notice ? <Text style={[styles.notice, text]}>{state.notice}</Text> : null}
         {button('Sign in with GitHub', relay.start)}
         <Text style={[styles.small, text]}>Relay: {relay.relayUrl}</Text>
+        {button('Settings', () => router.push('/settings'), 'secondary')}
       </>
     );
   else if (state.status === 'signingIn') {
@@ -104,6 +107,7 @@ export default function Home() {
           'secondary',
           state.signingOut,
         )}
+        {button('Settings', () => router.push('/settings'), 'secondary', state.signingOut)}
       </>
     );
 
