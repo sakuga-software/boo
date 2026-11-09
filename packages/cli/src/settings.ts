@@ -3,7 +3,22 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseSettings, type Settings } from '@sakuga-software/boo-core/settings';
 
-export * from '@sakuga-software/boo-core/settings';
+// The part of this module that runs anywhere is in core. Each name is listed: a name that the CLI
+// also declared would hide the one of core with no error.
+export {
+  DEFAULT_AUTHORS,
+  DEFAULT_SETTINGS,
+  parseAuthors,
+  parseCustomBot,
+  parseRepos,
+  parseSettings,
+  resolveRepos,
+  SETTINGS,
+  type BotSwitches,
+  type CustomBot,
+  type SettingKey,
+  type Settings,
+} from '@sakuga-software/boo-core/settings';
 
 export const settingsPath = (env: NodeJS.ProcessEnv = process.env) =>
   join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'boo', 'settings.json');

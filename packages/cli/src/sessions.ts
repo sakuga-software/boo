@@ -5,7 +5,16 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { LocalSession, Owner, SubAgent, SubAgentState } from '@sakuga-software/boo-core/sessions';
 
-export * from '@sakuga-software/boo-core/sessions';
+// The part of this module that runs anywhere is in core. Each name is listed: a name that the CLI
+// also declared would hide the one of core with no error.
+export {
+  isWorkingStatus,
+  ownerWorks,
+  type LocalSession,
+  type Owner,
+  type SubAgent,
+  type SubAgentState,
+} from '@sakuga-software/boo-core/sessions';
 
 export const claudeHome = (env: NodeJS.ProcessEnv = process.env) => env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 

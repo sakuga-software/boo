@@ -1,6 +1,8 @@
 import type { Background } from '@sakuga-software/boo-core/theme';
 
-export * from '@sakuga-software/boo-core/theme';
+// The part of this module that runs anywhere is in core. Each name is listed: a name that the CLI
+// also declared would hide the one of core with no error.
+export { GHOST_PALETTES, type Background, type GhostPalette } from '@sakuga-software/boo-core/theme';
 
 /** The query that asks the terminal for its background color (OSC 11). */
 export const BACKGROUND_QUERY = '\u001B]11;?\u0007';

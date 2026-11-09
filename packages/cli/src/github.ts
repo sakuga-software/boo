@@ -15,7 +15,18 @@ import {
 import type { Check } from '@sakuga-software/boo-core/reviewers';
 import { cachedRead, cacheDir, DiskCache, type ReadCache } from './cache.js';
 
-export * from '@sakuga-software/boo-core/github';
+// The part of this module that runs anywhere is in core. Each name is listed: a name that the CLI
+// also declared would hide the one of core with no error.
+export {
+  loginOf,
+  probeQuery,
+  toSnapshot,
+  withUnfinishedRuns,
+  type ExtraFields,
+  type PullRequest,
+  type PullRequestSnapshot,
+  type PullRequestStatus,
+} from '@sakuga-software/boo-core/github';
 
 const execFileAsync = promisify(execFile);
 

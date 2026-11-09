@@ -19,7 +19,24 @@ import type { PullRequest, PullRequestSnapshot } from './github.js';
 import type { Owner } from './sessions.js';
 import type { Settings } from './settings.js';
 
-export * from '@sakuga-software/boo-core/events';
+// The part of this module that runs anywhere is in core. Each name is listed: a name that the CLI
+// also declared would hide the one of core with no error.
+export {
+  changesOf,
+  diffReports,
+  holdErrors,
+  newComments,
+  parseWatchState,
+  personComments,
+  requestChanges,
+  requestStates,
+  STATE_VERSION,
+  type PersonComment,
+  type RequestOutcome,
+  type RequestState,
+  type WatchEvent,
+  type WatchState,
+} from '@sakuga-software/boo-core/events';
 
 export interface WatchSources {
   listPullRequests(): Promise<PullRequest[]>;
