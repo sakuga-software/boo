@@ -199,3 +199,37 @@ test('another GitHub gets the device flow, and a clipboard that fails still open
   await signIn.done;
   assert.ok(calls.includes(`POST ${fake}/login/device/code`));
 });
+
+test('a failed read of the installations during the install step keeps the wait, and later still gives the session', async () => {
+  const { fetchFn, calls } = network([granted], [none]);
+  let reads = 0;
+  const flaky = (async (input: string, init?: RequestInit) => {
+    if (input === `${RELAY}/installations` && ++reads > 1) {
+      if (reads === 2) throw new Error('offline');
+      return new Response(JSON.stringify({ error: 'boom' }), { status: 502 });
+    }
+    return fetchFn(input, init);
+  }) as typeof fetch;
+  const { signIn, steps, clock } = setup(flaky);
+  await clock.tick();
+  await clock.tick();
+  await clock.tick();
+  assert.equal(reads, 3);
+  assert.deepEqual(steps.at(-1), { step: 'install', installUrl: INSTALL });
+  signIn.later();
+  assert.deepEqual(await signIn.done, { url: RELAY, session: 'sess', login: 'alice' });
+  assert.ok(!calls.includes(`DELETE ${RELAY}/sessions`));
+});
+
+test('a failed read of the installations before the install step still fails the sign-in', async () => {
+  const { fetchFn } = network([granted]);
+  const failing = (async (input: string, init?: RequestInit) => {
+    if (input === `${RELAY}/installations`) throw new Error('offline');
+    return fetchFn(input, init);
+  }) as typeof fetch;
+  const { signIn, steps, clock } = setup(failing);
+  const failed = assert.rejects(signIn.done, /offline/);
+  await clock.tick();
+  await failed;
+  assert.equal(steps.at(-1)!.step, 'failed');
+});

@@ -1,4 +1,4 @@
-import { closeRelaySession, connectRelay, type RelayConnection } from '@sakuga-software/boo-core/relay';
+import { closeRelaySession, connectRelay, relayUrl, type RelayConnection } from '@sakuga-software/boo-core/relay';
 
 /** What the sign-in screen shows. */
 export type SignInStep =
@@ -78,11 +78,28 @@ export function startSignIn(deps: SignInDeps): SignIn {
 
   const wakeAll = () => [...wakes].forEach((wake) => wake());
 
+  // In the install step the relay holds a session that only `connectRelay` can give back. A read of the
+  // installations that fails there (no network, a relay error) counts as "no installation yet": the
+  // wait goes on, and `later` still gives the session, instead of an error that would leave the session
+  // on the relay with no phone that holds it. A 401 is checked again after the sign-in (`checkSession`).
+  const installations = `${relayUrl(deps.relayUrl)}/installations`;
+  const fetchFn = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    if (step.step !== 'install' || String(input) !== installations) return deps.fetch(input, init);
+    const none = { installations: [], installUrl: step.installUrl };
+    const empty = () => new Response(JSON.stringify(none), { status: 200 });
+    try {
+      const response = await deps.fetch(input, init);
+      return response.ok ? response : empty();
+    } catch {
+      return empty();
+    }
+  }) as typeof fetch;
+
   const done = (async () => {
     show(step);
     try {
       const connection = await connectRelay(deps.relayUrl, {
-        fetch: deps.fetch,
+        fetch: fetchFn,
         log: () => {},
         sleep,
         now: () => (stopWait() ? Number.POSITIVE_INFINITY : now()),
