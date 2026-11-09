@@ -1,0 +1,20 @@
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# The native folders: `expo prebuild` makes them from app.json.
+/ios
+/android
+
+# Signing files and EAS credentials
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+credentials.json
+
+# Metro
+.metro-health-check*

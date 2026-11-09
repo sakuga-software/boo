@@ -1,0 +1,36 @@
+{
+  "name": "@sakuga-software/boo-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The phone app of boo: the state of the pull requests, read from the relay.",
+  "license": "MIT",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "doctor": "expo-doctor"
+  },
+  "dependencies": {
+    "expo": "~57.0.32",
+    "expo-constants": "~57.0.23",
+    "expo-dev-client": "~57.0.21",
+    "expo-linking": "~57.0.13",
+    "expo-router": "~57.0.30",
+    "expo-status-bar": "~57.0.1",
+    "expo-updates": "~57.0.27",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.2",
+    "react-native-web": "^0.21.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "expo-doctor": "^1.21.6",
+    "typescript": "^6.0.3"
+  }
+}
