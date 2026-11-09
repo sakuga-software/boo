@@ -1,4 +1,4 @@
-import type { RelayConnection } from './webhooks.js';
+import type { RelayConnection } from './relay.js';
 
 /** A change that the relay sends: the pull request that changed, or the head commit if GitHub gave no number. */
 export interface RelayChange {
@@ -80,12 +80,13 @@ export function relayStream(connection: RelayConnection, deps: StreamDeps): Rela
 
       async function readOnce(): Promise<void> {
         const idle = new AbortController();
-        let timer: NodeJS.Timeout | undefined;
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const touch = () => {
           clearTimeout(timer);
           timer = setTimeout(() => idle.abort(new Error('no byte from the relay')), idleMs);
         };
         touch();
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         try {
           const response = await deps.fetch(`${connection.url}/events`, {
             redirect: 'error',
@@ -100,7 +101,11 @@ export function relayStream(connection: RelayConnection, deps: StreamDeps): Rela
           if (!response.ok || !response.body) throw new Error(`the relay answered ${response.status}`);
           const decoder = new TextDecoder();
           let buffer = '';
-          for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+          // A reader, not `for await`: the body of expo/fetch is a ReadableStream that cannot be iterated.
+          reader = response.body.getReader();
+          while (true) {
+            const { done, value: chunk } = await reader.read();
+            if (done) break;
             touch();
             buffer += decoder.decode(chunk, { stream: true });
             const { events, rest } = parseSse(buffer);
@@ -122,6 +127,8 @@ export function relayStream(connection: RelayConnection, deps: StreamDeps): Rela
           throw new Error('the relay closed the stream');
         } finally {
           clearTimeout(timer);
+          // An error or an `expired` event leaves the body open: cancel it, so that the connection closes.
+          reader?.cancel().catch(() => {});
         }
       }
 

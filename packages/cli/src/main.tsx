@@ -18,7 +18,7 @@ import { extraFields } from '@sakuga-software/boo-core/policy';
 import { LinkIndex, readOwners } from './sessions.js';
 import { loadSettings, parseAuthors, parseRepos, resolveRepos, saveSettings, settingsPath } from './settings.js';
 import { detectBackground } from './theme.js';
-import { relayStream } from './stream.js';
+import { relayStream } from '@sakuga-software/boo-core/stream';
 import { DEFAULT_RELAY, loadRelay, relayPath, removeWebhooks, setupWebhooks } from './webhooks.js';
 
 const DEFAULT_ORG = 'sakuga-software';

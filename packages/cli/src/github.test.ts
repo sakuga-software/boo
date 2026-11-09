@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DiskCache } from './cache.js';
 import {
+  claimPost,
   concurrencyLimit,
   fingerprintOf,
   firstErrorLine,
@@ -21,6 +22,8 @@ import {
   QuotaError,
   quotaMessage,
   readKey,
+  readRateLimit,
+  releasePost,
   readOrLast,
   searchScope,
   UNCHANGED_MAX_AGE_MS,
@@ -345,4 +348,16 @@ test('the quota error tells the time of the reset, and a secondary limit', () =>
   const secondary = quotaMessage('2026-11-09T10:30:00Z', true);
   assert.match(secondary, /^GitHub refuses the GraphQL queries of this account until \S+/);
   assert.match(secondary, /: secondary rate limit, too many queries in a short time$/);
+});
+
+test('the account of the token gets its own cache: no points known yet, and one claim of a post at a time', async () => {
+  // The cache of the account is made once for the process, from these two variables.
+  process.env.GH_TOKEN = 'token-of-the-test';
+  process.env.XDG_CACHE_HOME = await mkdtemp(join(tmpdir(), 'boo-account-'));
+  assert.equal(await readRateLimit(), undefined);
+  const pr = { repo: 'acme/web', number: 1, title: '', url: '' };
+  assert.equal(await claimPost(pr, 'coderabbit'), true);
+  assert.equal(await claimPost(pr, 'coderabbit'), false);
+  await releasePost(pr, 'coderabbit');
+  assert.equal(await claimPost(pr, 'coderabbit'), true);
 });

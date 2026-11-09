@@ -52,7 +52,7 @@ import { parentFinder, placeStacks, type Placement, type StackItem } from '@saku
 import { agentLogins } from '@sakuga-software/boo-core/findings';
 import { extraFields } from '@sakuga-software/boo-core/policy';
 import { assess, keyOf, MERGE_STATE_WARNINGS, stallOf } from '@sakuga-software/boo-core/report';
-import type { RelayChange, RelaySource, RelayState } from './stream.js';
+import type { RelayChange, RelaySource, RelayState } from '@sakuga-software/boo-core/stream';
 import { planSync, type LeftStatus } from './sync.js';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
+  claudeHome,
   inboxFrames,
   LinkIndex,
   parseLinks,
@@ -301,4 +302,16 @@ test('a send ends after the write, even if the session keeps its side of the con
   assert.ok(Date.now() - started < 2_000);
   for (const connection of connections) connection.destroy();
   server.close();
+});
+
+test('a record of this process is alive, one of a process that does not exist is not', () => {
+  const record = { pid: process.pid, sessionId: 'abcdef123456', messagingSocketPath: '/tmp/s.sock' };
+  assert.equal(parseSession(record)?.pid, process.pid);
+  // The largest pid of Linux and macOS is far below this one.
+  assert.equal(parseSession({ ...record, pid: 2 ** 30 }), undefined);
+});
+
+test('CLAUDE_CONFIG_DIR moves the folder of Claude Code', () => {
+  assert.equal(claudeHome({ CLAUDE_CONFIG_DIR: '/x/claude' }), '/x/claude');
+  assert.match(claudeHome({}), /\.claude$/);
 });
