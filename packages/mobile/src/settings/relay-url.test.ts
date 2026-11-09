@@ -20,7 +20,10 @@ test('a stored relay is used only if it passes the check', () => {
   assert.equal(parseStoredRelay(null), undefined);
 });
 
-test('the probe accepts a boo relay and names the problem of anything else', async () => {
+test('the probe accepts a boo relay and names the problem of anything else', async (t) => {
+  // The timer of AbortSignal.timeout does not hold the event loop, and the fake holds nothing: Node 22 can end the test first.
+  const hold = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(hold));
   const answer = (status: number, body: string) => {
     const calls: RequestInit[] = [];
     const fetchFn = (async (_url: string, init: RequestInit = {}) => {

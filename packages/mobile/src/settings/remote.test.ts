@@ -64,7 +64,10 @@ test('a 401 is an expired session; another refusal, a wrong answer or no answer 
   });
 });
 
-test('a relay that never answers stops the call after the timeout', async () => {
+test('a relay that never answers stops the call after the timeout', async (t) => {
+  // The timer of AbortSignal.timeout does not hold the event loop, and the fake holds nothing: Node 22 can end the test first.
+  const hold = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(hold));
   const quiet = ((_url: string, init: RequestInit = {}) =>
     new Promise<Response>((_resolve, reject) => {
       init.signal!.addEventListener('abort', () => reject(new Error('cancelled')));
