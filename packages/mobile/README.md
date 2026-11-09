@@ -1,7 +1,7 @@
 # boo mobile
 
-The phone app of boo. It shows the state of the pull requests that the relay reads. For now it has
-the sign-in to the relay, the list of the pull requests, the settings, and the config to build it.
+The phone app of boo. It shows the state of the pull requests that the relay reads: the sign-in to
+the relay, the list of the pull requests, the details of each one, and the settings.
 
 - Expo SDK 57, [expo-router](https://docs.expo.dev/router/introduction/) with typed routes, and the
   React Compiler (`experiments` in `app.json`).
@@ -138,9 +138,29 @@ the `sakuga-software` Expo account does this once:
 3. Run `npx eas-cli credentials -p ios` and choose the Apple team that signs `dev.sakuga.boo`.
 4. Commit the change of `app.json`.
 
+## The pull requests
+
+Once signed in, the home screen lists the reports of `GET /state`, with the session token. A row
+says what a row of `boo` says in the terminal: the state, `repo#n`, the title, the place in the
+stack, the agent, `zZ stalled`, the checks and the mark of each reviewer. The words come from the
+report, and the marks and their tones from `packages/core/src/theme.ts`, which the CLI reads too.
+
+- The app reads the list when the session starts, on each return to the app, and when you pull the
+  list down. A read that fails keeps the older list, and a banner gives the error and the time of
+  that list.
+- A tap on a row opens its details: the size of the change, the agent, the reviewers with their
+  scores and times, the checks with the names of the ones that fail, and the notes (merge policy,
+  stall, stack, merge state, retries, CodeRabbit quota, stale read). **Open on GitHub** opens the
+  pull request.
+- A 401 on `/state` checks the session again (`GET /installations`): a session that the relay no
+  longer knows signs out.
+- The login in the header opens the account: the relay, the install link of the App, and the
+  sign-out.
+
 ## Checks
 
 `pnpm lint`, `pnpm format`, `pnpm typecheck` and `pnpm test` at the root of the repository cover this
-package. The tests run the sign-in logic (`src/relay/*.test.ts`) in Node, against a fake relay and a
-fake GitHub; the screen itself is checked in the simulator.
+package. The tests run the sign-in logic (`src/relay/*.test.ts`) and the logic of the list and of the details
+(`src/pulls/*.test.ts`) in Node, against a fake relay and a fake GitHub; the screens themselves are
+checked in the simulator.
 `pnpm mobile:doctor` runs `expo-doctor`, which checks that the packages fit SDK 57. CI runs all five.

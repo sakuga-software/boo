@@ -192,6 +192,8 @@ export interface PullRequestReport {
    * for review, such as "approved" or "checks failing". Null for any other pull request.
    */
   draftState: string | null;
+  /** The size of the change: the added and the deleted lines, and the changed files. Null if the read did not give it. */
+  changes: { additions: number; deletions: number; files: number } | null;
 }
 
 export type CoderabbitNote =
@@ -359,6 +361,7 @@ export function buildReport(
         null,
       readyForOwner: summary?.readyForOwner ?? false,
       draftState: summary && snapshot?.status === 'draft' ? OVERALL_LABELS[summary.overall] : null,
+      changes: snapshot?.changes ?? null,
     };
   });
 }

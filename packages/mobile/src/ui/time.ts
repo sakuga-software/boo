@@ -11,3 +11,9 @@ export function formatAgo(now: Date, at: Date): string {
   const hours = Math.round(minutes / 60);
   return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 }
+
+/** A duration, as `formatDuration` of the terminal out of watch mode: `12 min`, `1 h 5 min`. */
+export function formatDuration(ms: number): string {
+  const minutes = Math.ceil(Math.max(0, Math.round(ms / 1000)) / 60);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
+}
