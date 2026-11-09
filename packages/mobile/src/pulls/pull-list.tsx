@@ -18,6 +18,8 @@ export function PullList() {
   const { pulls, live, refresh } = usePullsContext();
   const badge = liveBadge(live);
   const view = listView(pulls);
+  let updated = pulls.loading ? 'Reading the relay…' : '';
+  if ('at' in view) updated = `Updated at ${formatTime(view.at)}`;
   const signedIn = relay.state.status === 'signedIn' ? relay.state : undefined;
   const muted = { color: palette.muted };
   const refreshControl = <RefreshControl refreshing={pulls.refreshing} onRefresh={refresh} tintColor={palette.muted} />;
@@ -33,7 +35,7 @@ export function PullList() {
               style={[styles.badge, { color: palette.tones[badge.tone] }]}
             >{`${badge.text} · `}</Text>
           ) : null}
-          {'at' in view ? `Updated at ${formatTime(view.at)}` : 'Reading the relay…'}
+          {updated}
         </Text>
       </View>
       <Pressable
