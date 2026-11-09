@@ -197,6 +197,17 @@ export function createRelay(options: RelayOptions) {
     };
     const unsubscribe = reports.onChange((user, _before, after, events) => {
       if (user !== login || response.writableEnded) return;
+      if (!access.kept(session.id)) {
+        dropped = true;
+        return;
+      }
+      // The changes of the time with no valid access are lost: the reset comes before any new event.
+      // GET /state holds the changes of this cursor too, so its events are not sent.
+      if (dropped) {
+        dropped = false;
+        response.write(`event: reset\ndata: ${JSON.stringify({ cursor: after.cursor })}\n\n`);
+        return;
+      }
       for (const event of events) send(after.cursor, event);
     });
     const heartbeat = setInterval(() => {

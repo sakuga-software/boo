@@ -840,3 +840,52 @@ test('GET /state/events streams the changes of the reports with the cursor, resu
     assert.equal(gap.events.find((event) => event.event === 'reset')?.data.cursor, cursor);
   }
 });
+
+test('after a time with no valid access, the reset comes before any new event', async (t) => {
+  const gitHub = fakeGitHub();
+  const store = new StateStore(':memory:');
+  const tracker = new Tracker({
+    store,
+    reader: { search: async () => [], graphql: () => async () => undefined },
+    accounts: async () => [],
+  });
+  tracker.refreshUser = async () => {};
+  const reports = new Reports(store);
+  // A long heartbeat: only the change of the reports can send the reset.
+  const { base } = await startRelay(t, gitHub, { state: { store, tracker, reports }, heartbeatMs: 60_000 });
+  const pull = { repo: 'acme/web', number: 1, title: 'PR 1', url: 'https://github.com/acme/web/pull/1' };
+  store.savePull(pull, { snapshot: snapshotOf('a1') }, Date.now());
+  store.setFollows('alice', [pull], Date.now());
+  const session = await login(base, 'ghu_alice');
+  assert.equal((await put(base, session, { org: 'acme' })).status, 200);
+  const { cursor } = (await (
+    await fetch(`${base}/state`, { headers: { authorization: `Bearer ${session}` } })
+  ).json()) as {
+    cursor: string;
+  };
+  const live = await stream(t, base, session, cursor, '/state/events');
+  await live.until(() => live.events.some((event) => event.event === 'ready'), 'ready event');
+
+  // An access webhook: the new read of the repositories waits, so the access is not valid.
+  let release = () => {};
+  const repositories = gitHub.repositories;
+  gitHub.repositories = (token) =>
+    new Promise((resolve) => {
+      release = () => resolve(repositories(token));
+    });
+  assert.equal((await deliver(base, 'member', { action: 'added', repository: { full_name: 'acme/web' } })).status, 202);
+  store.savePull(pull, { snapshot: { ...snapshotOf('a2') } }, Date.now());
+  reports.refresh('alice');
+  // The access is valid again, then the next change comes.
+  gitHub.repositories = repositories;
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  store.savePull(pull, { snapshot: { ...snapshotOf('a3') } }, Date.now());
+  reports.refresh('alice');
+  await live.until(() => live.events.some((event) => event.event === 'reset'), 'reset event');
+  assert.deepEqual(
+    live.events.map((event) => event.event),
+    ['ready', 'reset'],
+  );
+  assert.equal(live.events[1]?.data.cursor, reports.get('alice').cursor);
+});
