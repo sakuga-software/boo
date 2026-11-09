@@ -160,3 +160,15 @@ test('a merged pull request, an error, a draft and a relay with no size of the c
     'draft: approved once ready for review',
   ]);
 });
+
+test('the header of the reviewers names the newest review, whatever the order of the reviewers', () => {
+  const base = report().reviewers[0]!;
+  const item = report({
+    reviewers: [
+      { ...base, login: 'alice', at: iso(50) },
+      { ...base, login: 'bob', at: iso(5) },
+      { ...base, login: 'carol', at: null, onHead: false },
+    ],
+  });
+  assert.equal(text(detailSections(item, [], at, now)).reviewers![0], '2/3 on head · last bob 5 min ago');
+});

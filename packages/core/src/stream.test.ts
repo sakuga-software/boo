@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { parseSse, relayStream, type RelayChange, type RelayState } from './stream.js';
+import {
+  parseSse,
+  relayStream,
+  type RelayChange,
+  type RelayState,
+  type SseEvent,
+  type StreamOptions,
+} from './stream.js';
 
 const connection = { url: 'https://relay.test', session: 'sess', login: 'alice' };
 
@@ -12,10 +19,14 @@ test('the parser cuts events, keeps the rest, joins data lines and skips comment
 });
 
 /** A fake relay: each call of fetch takes the next script, sends its chunks, then ends or stays open. */
-function fakeRelay(t: TestContext, scripts: ({ status?: number; chunks: string[]; hold?: boolean } | Error)[]) {
-  const calls: { headers: Record<string, string> }[] = [];
-  const fetchFn = (async (_input: string, init: RequestInit = {}) => {
-    calls.push({ headers: init.headers as Record<string, string> });
+function fakeRelay(
+  t: TestContext,
+  scripts: ({ status?: number; chunks: string[]; hold?: boolean } | Error)[],
+  options?: StreamOptions,
+) {
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const fetchFn = (async (input: string, init: RequestInit = {}) => {
+    calls.push({ url: input, headers: init.headers as Record<string, string> });
     const script = scripts.shift() ?? { chunks: [], hold: true };
     if (script instanceof Error) throw script;
     const encoder = new TextEncoder();
@@ -32,16 +43,22 @@ function fakeRelay(t: TestContext, scripts: ({ status?: number; chunks: string[]
   t.after(() => abort.abort());
   const changes: RelayChange[] = [];
   const states: [RelayState, string | undefined][] = [];
+  const events: SseEvent[] = [];
   let resets = 0;
   const sleeps: number[] = [];
-  const source = relayStream(connection, {
-    fetch: fetchFn,
-    sleep: async (ms) => void sleeps.push(ms),
-    idleMs: 50,
-  });
+  const source = relayStream(
+    connection,
+    {
+      fetch: fetchFn,
+      sleep: async (ms) => void sleeps.push(ms),
+      idleMs: 50,
+    },
+    options,
+  );
   source.subscribe(
     {
       change: (change) => void changes.push(change),
+      event: (event) => void events.push(event),
       reset: () => void resets++,
       state: (state, detail) => void states.push([state, detail]),
     },
@@ -52,7 +69,7 @@ function fakeRelay(t: TestContext, scripts: ({ status?: number; chunks: string[]
     while (Date.now() < end && !check()) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.ok(check(), `No ${what}. States: ${JSON.stringify(states)}`);
   };
-  return { calls, changes, states, sleeps, resets: () => resets, until, abort };
+  return { calls, changes, events, states, sleeps, resets: () => resets, until, abort };
 }
 
 const change = (id: string, number: number) =>
@@ -127,4 +144,76 @@ test('a relay that answers an error status, or closes the stream, gets a reconne
   await relay.until(() => relay.states.at(-1)?.[0] === 'live', 'live state');
   assert.ok(relay.states.some(([, detail]) => /answered 502/.test(detail ?? '')));
   assert.ok(relay.states.some(([, detail]) => /closed the stream/.test(detail ?? '')));
+});
+
+test('the stream of the reports starts from a cursor, gives its named events, and resumes from the last id or reset', async (t) => {
+  const relay = fakeRelay(
+    t,
+    [
+      {
+        chunks: [
+          'event: ready\ndata: {"login":"alice","cursor":"b-3"}\n\n',
+          'id: b-4\nevent: head\ndata: {"pr":"acme/web#1","event":"head"}\n\n',
+          'id: b-5\nevent: snapshot\ndata: {"pr":"acme/web#1","event":"snapshot"}\n\n',
+        ],
+      },
+      { chunks: ['event: ready\ndata: {}\n\nevent: reset\ndata: {"cursor":"c-9"}\n\n'] },
+      { chunks: ['event: ready\ndata: {}\n\n'], hold: true },
+    ],
+    { path: '/state/events', lastEventId: 'b-3' },
+  );
+  await relay.until(() => relay.calls.length === 3, 'third connection');
+  assert.equal(relay.calls[0]!.url, 'https://relay.test/state/events');
+  assert.deepEqual(
+    relay.calls.map((call) => call.headers['last-event-id']),
+    ['b-3', 'b-5', 'c-9'],
+  );
+  assert.deepEqual(
+    relay.events.map(({ id, event }) => `${id} ${event}`),
+    ['b-4 head', 'b-5 snapshot'],
+  );
+  assert.equal(relay.resets(), 1);
+  assert.deepEqual(relay.changes, []);
+});
+
+test('the stream of the webhooks is the default, and opens with no last event id', async (t) => {
+  const relay = fakeRelay(t, [{ chunks: ['event: ready\ndata: {}\n\nevent: reset\ndata: {}\n\n'], hold: true }]);
+  await relay.until(() => relay.resets() === 1, 'reset');
+  assert.equal(relay.calls[0]!.url, 'https://relay.test/events');
+  assert.equal(relay.calls[0]!.headers['last-event-id'], undefined);
+});
+
+test('a reset whose data is not JSON is still a reset, and keeps the last id', async (t) => {
+  const relay = fakeRelay(
+    t,
+    [
+      { chunks: ['event: ready\ndata: {}\n\nid: b-4\nevent: head\ndata: {}\n\nevent: reset\ndata: not json\n\n'] },
+      { chunks: ['event: ready\ndata: {}\n\n'], hold: true },
+    ],
+    { path: '/state/events', lastEventId: 'b-3' },
+  );
+  await relay.until(() => relay.calls.length === 2, 'second connection');
+  assert.equal(relay.resets(), 1);
+  assert.equal(relay.calls[1]!.headers['last-event-id'], 'b-4');
+  assert.ok(relay.states.every(([, detail]) => !/JSON/.test(detail ?? '')));
+});
+
+test('a change that is not a JSON object is skipped, and an expired event with no readable message still ends', async (t) => {
+  const relay = fakeRelay(t, [
+    {
+      chunks: [
+        'event: ready\ndata: {}\n\nid: b-1\nevent: change\ndata: not json\n\n',
+        change('b-2', 2),
+        'event: expired\ndata: <html>\n\n',
+      ],
+      hold: true,
+    },
+  ]);
+  await relay.until(() => relay.states.some(([state]) => state === 'expired'), 'expired state');
+  assert.deepEqual(
+    relay.changes.map((item) => item.number),
+    [2],
+  );
+  assert.match(relay.states.at(-1)![1]!, /^the session ended: run boo setup-webhooks again/);
+  assert.ok(relay.states.every(([state]) => state !== 'poll'));
 });

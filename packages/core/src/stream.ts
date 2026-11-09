@@ -21,6 +21,11 @@ export interface RelayHandlers {
   /** The relay cannot give the events that the watch missed: the watch must read all. */
   reset(): void;
   state(state: RelayState, detail?: string): void;
+  /**
+   * Another named event, such as the `state`, `head` or `snapshot` events of `/state/events`. Its `id`,
+   * when it has one, is the cursor of the reports after it.
+   */
+  event?(event: SseEvent): void;
 }
 
 /** A source of relay changes. The app takes one in its props, so that the tests give a fake. */
@@ -39,7 +44,7 @@ const FIRST_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 60_000;
 const IDLE_MS = 90_000;
 
-interface SseEvent {
+export interface SseEvent {
   id?: string;
   event: string;
   data: string;
@@ -70,12 +75,41 @@ export function parseSse(buffer: string): { events: SseEvent[]; rest: string } {
 
 class SessionExpired extends Error {}
 
+/** The data of an event as an object, or undefined if it is not a JSON object. */
+function objectOf(data: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(data || '{}');
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A text field of the data of an event, or undefined. */
+const textOf = (data: string, field: string) => {
+  const value = objectOf(data)?.[field];
+  return typeof value === 'string' ? value : undefined;
+};
+
+export interface StreamOptions {
+  /** The stream: `/events`, the webhooks (the default), or `/state/events`, the changes of the reports. */
+  path?: '/events' | '/state/events';
+  /** The id of the last event that the client has, such as the cursor of `GET /state`. */
+  lastEventId?: string;
+}
+
 /** Reads the event stream of a relay, and opens it again after a cut, with the last event id. */
-export function relayStream(connection: RelayConnection, deps: StreamDeps): RelaySource {
+export function relayStream(
+  connection: RelayConnection,
+  deps: StreamDeps,
+  { path = '/events', lastEventId }: StreamOptions = {},
+): RelaySource {
   const idleMs = deps.idleMs ?? IDLE_MS;
   return {
     subscribe(handlers, signal) {
-      let lastId: string | undefined;
+      let lastId = lastEventId;
       let retry = FIRST_RETRY_MS;
 
       async function readOnce(): Promise<void> {
@@ -88,7 +122,7 @@ export function relayStream(connection: RelayConnection, deps: StreamDeps): Rela
         touch();
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         try {
-          const response = await deps.fetch(`${connection.url}/events`, {
+          const response = await deps.fetch(`${connection.url}${path}`, {
             redirect: 'error',
             headers: {
               authorization: `Bearer ${connection.session}`,
@@ -116,11 +150,20 @@ export function relayStream(connection: RelayConnection, deps: StreamDeps): Rela
                 handlers.state('live');
               } else if (event.event === 'change') {
                 if (event.id) lastId = event.id;
-                handlers.change(JSON.parse(event.data) as RelayChange);
-              } else if (event.event === 'reset') handlers.reset();
-              else if (event.event === 'expired') {
-                const { message } = JSON.parse(event.data || '{}') as { message?: string };
-                throw new SessionExpired(message ?? 'the session ended');
+                // A change that is not a JSON object cannot be read: it is skipped, and the stream goes on.
+                const change = objectOf(event.data);
+                if (change) handlers.change(change as unknown as RelayChange);
+              } else if (event.event === 'reset') {
+                // The reset of `/state/events` gives the cursor of now: a reconnect resumes from it. A
+                // reset with no readable cursor is still a reset.
+                const cursor = textOf(event.data, 'cursor');
+                if (cursor) lastId = cursor;
+                handlers.reset();
+              } else if (event.event === 'expired') {
+                throw new SessionExpired(textOf(event.data, 'message') ?? 'the session ended');
+              } else {
+                if (event.id) lastId = event.id;
+                handlers.event?.(event);
               }
             }
           }

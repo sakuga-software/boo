@@ -1,3 +1,5 @@
+import type { RelayState } from '@sakuga-software/boo-core/stream';
+import type { Tone } from '@sakuga-software/boo-core/theme';
 import type { StateRead, UserState } from './read-state';
 
 /** The list of the pull requests on the phone. */
@@ -47,4 +49,14 @@ export function listView(pulls: PullsState): ListView {
     reports: state.reports,
     ...(error && { stale: error }),
   };
+}
+
+/**
+ * The badge of the stream in the header, with the words of the header of `boo` in the terminal:
+ * `live` when the stream is open, `poll` when it is down or the relay ended it.
+ */
+export function liveBadge(live: RelayState | undefined): { text: string; tone: Tone; spoken: string } | undefined {
+  if (!live) return undefined;
+  if (live === 'live') return { text: 'live', tone: 'green', spoken: 'Live: the relay sends each change' };
+  return { text: 'poll', tone: 'yellow', spoken: 'Poll: the list is read every minute' };
 }
