@@ -49,10 +49,11 @@ The home screen signs in with the device flow of GitHub, on the relay of the set
 `https://boo-relay.sakuga.dev` (`DEFAULT_RELAY` of core, also used when the key is missing). Two
 variables of the environment change it when Metro starts, through `app.config.js`:
 
-| Variable         | What it changes                                                              |
-| ---------------- | ---------------------------------------------------------------------------- |
-| `BOO_RELAY_URL`  | The relay, for example `http://localhost:4621` for a relay on this computer. |
-| `BOO_GITHUB_URL` | The GitHub of the device flow. Only for a local demo against a fake GitHub.  |
+| Variable            | What it changes                                                                        |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| `BOO_RELAY_URL`     | The relay, for example `http://localhost:4621` for a relay on this computer.           |
+| `BOO_GITHUB_URL`    | The GitHub of the device flow. Only for a local demo against a fake GitHub.            |
+| `BOO_EXPO_PUSH_URL` | The Expo service that gives the push token. Only for a local demo against a fake Expo. |
 
 `http://` is accepted only for `localhost`, `127.0.0.1` and `[::1]`: core refuses it elsewhere.
 
@@ -136,6 +137,9 @@ the `sakuga-software` Expo account does this once:
    the project `boo` and writes its id to `extra.eas.projectId`.
 2. Run `npx eas-cli update:configure`. It writes `https://u.expo.dev/<project id>` to `updates.url`.
 3. Run `npx eas-cli credentials -p ios` and choose the Apple team that signs `dev.sakuga.boo`.
+   Under **Push Notifications**, let EAS make an APNs key (or upload one): the push notifications
+   need it. For Android, upload the FCM V1 service account key of a Firebase project
+   (`npx eas-cli credentials -p android` → **Google Service Account** → **Push Notifications**).
 4. Commit the change of `app.json`.
 
 ## The pull requests
@@ -156,6 +160,31 @@ report, and the marks and their tones from `packages/core/src/theme.ts`, which t
   longer knows signs out.
 - The login in the header opens the account: the relay, the install link of the App, and the
   sign-out.
+
+## Push notifications
+
+Once signed in, the app registers the phone for the push notifications of the relay
+(`src/push/register.ts`, mounted by `PushProvider` in `_layout.tsx`):
+
+1. The permission of the system. iOS shows its prompt once; after a refusal, the settings screen
+   says to turn the notifications on in the iOS settings, and the app tries again each time it comes
+   back to the foreground.
+2. The Expo push token, for the EAS project of `extra.eas.projectId`. With the placeholder id of
+   `app.json`, the app gets no token, and the settings screen says so (see **Before the first build**).
+3. `POST /devices` on the relay, with the session token. The relay keeps one token for each session, and
+   **Sign out** (`DELETE /sessions`) deletes it. A new token from Expo is sent again.
+
+The relay sends a notification when a pull request changes to ready to merge, changes requested,
+checks failing, conflicts, merged, or starts to stall. **Settings → Push notifications** has one switch
+for each: they are the `push` key of the settings on the relay, saved with the other settings (D6).
+
+A tap on a notification opens its pull request (`boo://pull/<owner>/<repo>/<number>`), also when it
+starts the app; the app opens the screen once the session is read. A notification that comes while the
+app is open shows as a banner too.
+
+The iOS simulator gets no real push from APNs. For a local demo, `BOO_EXPO_PUSH_URL` (only
+`http://localhost` or `127.0.0.1`) points the token request to a fake Expo service, and
+`xcrun simctl push` hands a notification to the simulator.
 
 ## Checks
 

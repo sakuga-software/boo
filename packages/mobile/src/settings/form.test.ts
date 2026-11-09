@@ -4,6 +4,15 @@ import { parseSettings } from '@sakuga-software/boo-core/settings';
 import { configOf, formOf, unchanged } from './form';
 import type { WatchConfig } from './remote';
 
+const ALL_ON = {
+  ready: true,
+  changesRequested: true,
+  checksFailing: true,
+  conflicts: true,
+  merged: true,
+  stalled: true,
+};
+
 const current: WatchConfig = {
   org: 'acme',
   settings: parseSettings({
@@ -16,13 +25,15 @@ const current: WatchConfig = {
 };
 
 test('the fields show the organization, then one author and one repository per line', () => {
-  assert.deepEqual(formOf(current), { org: 'acme', authors: '@me\nbob', repos: 'acme/api' });
-  assert.deepEqual(formOf({ org: '', settings: parseSettings(undefined) }), { org: '', authors: '@me', repos: '' });
+  const { push: _push, ...fields } = formOf(current);
+  assert.deepEqual(fields, { org: 'acme', authors: '@me\nbob', repos: 'acme/api' });
+  const { push: _none, ...empty } = formOf({ org: '', settings: parseSettings(undefined) });
+  assert.deepEqual(empty, { org: '', authors: '@me', repos: '' });
 });
 
 test('a save changes the organization, the authors and the repositories, and keeps every other setting', () => {
   const next = configOf(
-    { org: ' @acme ', authors: '@me, carol\n\ncarol app/dependabot', repos: 'web\nother/lib' },
+    { org: ' @acme ', authors: '@me, carol\n\ncarol app/dependabot', repos: 'web\nother/lib', push: ALL_ON },
     current,
   );
   assert.equal(next.error, undefined);
@@ -39,7 +50,7 @@ test('a save changes the organization, the authors and the repositories, and kee
 });
 
 test('no repository removes the list, so the relay follows every repository', () => {
-  const next = configOf({ org: '', authors: '@me', repos: '  \n' }, current);
+  const next = configOf({ org: '', authors: '@me', repos: '  \n', push: ALL_ON }, current);
   assert.ok(next.error === undefined);
   assert.equal('repos' in next.config.settings, false);
   assert.equal(next.config.org, '');
@@ -62,4 +73,20 @@ test('Save stays off until a field gives another config', () => {
   // The same config written another way.
   assert.equal(unchanged({ ...formOf(current), authors: '@me bob', repos: 'api' }, current), true);
   assert.equal(unchanged({ ...formOf(current), org: 'bad org' }, current), false);
+});
+
+test('the push switches show the settings of the relay: a state that the key does not name is on', () => {
+  assert.deepEqual(formOf(current).push, ALL_ON);
+  const some = { org: 'acme', settings: parseSettings({ push: { merged: false, ready: true } }) };
+  assert.deepEqual(formOf(some).push, { ...ALL_ON, merged: false });
+});
+
+test('a save sends only the states turned off, and no key when every state is on', () => {
+  const form = { ...formOf(current), push: { ...ALL_ON, merged: false, stalled: false } };
+  const next = configOf(form, current) as { config: WatchConfig };
+  assert.deepEqual(next.config.settings.push, { merged: false, stalled: false });
+  assert.equal(unchanged(form, current), false);
+  const back = configOf({ ...form, push: ALL_ON }, next.config) as { config: WatchConfig };
+  assert.equal('push' in back.config.settings, false);
+  assert.equal(unchanged({ ...form, push: ALL_ON }, current), true);
 });
