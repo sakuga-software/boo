@@ -129,24 +129,21 @@ You need an Expo account that is a member of `sakuga-software`, and for iOS an A
 
 ## Before the first build
 
-The EAS project does not exist yet. `app.json` holds a placeholder,
-`00000000-0000-0000-0000-000000000000`, in `extra.eas.projectId` and in `updates.url`. An owner of
-the `sakuga-software` Expo account does this once:
+The EAS project is `boo` under the `sakuga-software` account
+(<https://expo.dev/accounts/sakuga-software/projects/boo>). `app.json` holds its id in
+`extra.eas.projectId` and in `updates.url`, and the Apple team `669547726G` in `ios.appleTeamId`. An owner
+of the Apple team and of the Firebase project does this once:
 
-1. In `packages/mobile`, run `npx eas-cli init`, and pick the `sakuga-software` account. It creates
-   the project `boo` and writes its id to `extra.eas.projectId`.
-2. Run `npx eas-cli update:configure`. It writes `https://u.expo.dev/<project id>` to `updates.url`.
-3. Run `npx eas-cli credentials -p ios` and choose the Apple team that signs `dev.sakuga.boo`.
+1. Run `npx eas-cli credentials -p ios` and choose the Apple team that signs `dev.sakuga.boo`.
    Under **Push Notifications**, let EAS make an APNs key (or upload one): the push notifications
    need it.
-4. **Android:** in a Firebase project, add an Android app `dev.sakuga.boo`.
+2. **Android:** in a Firebase project, add an Android app `dev.sakuga.boo`.
    - Upload the FCM V1 service account key of the project to EAS (`npx eas-cli credentials -p android`
      → **Google Service Account** → **Push Notifications**): Expo sends with it.
    - Download its `google-services.json`, and add it to EAS as an environment variable of type
      **file**, named `GOOGLE_SERVICES_JSON`, for each environment (`npx eas-cli env:create`).
      `app.config.js` gives it to `android.googleServicesFile`: the phone needs it to get a push token.
      The file stays out of the repository.
-5. Commit the change of `app.json`.
 
 ## The pull requests
 

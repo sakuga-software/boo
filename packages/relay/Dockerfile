@@ -7,7 +7,7 @@
 ARG NODE_VERSION=26.12.1
 
 # Keep the tag equal to `packageManager` in the root package.json.
-FROM ghcr.io/pnpm/pnpm:11.17.0@sha256:e26f380828856f205feaaf42abd157df9ce41bc8e17b662eeaa3379a9638dee0 AS pnpm
+FROM ghcr.io/pnpm/pnpm:12.15.0@sha256:d6148daf3ad2af8fa4ecd1aa06db73da32b2e37f63088987eea2fb375ee7f320 AS pnpm
 
 FROM node:${NODE_VERSION}-slim AS build
 COPY --from=pnpm /opt/pnpm /opt/pnpm
