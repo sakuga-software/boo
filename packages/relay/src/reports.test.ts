@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { PullRequestSnapshot } from '@sakuga-software/boo-core/github';
 import { DEFAULT_SETTINGS } from '@sakuga-software/boo-core/settings';
-import { readableReports, Reports, type UserState } from './reports.js';
+import { LOG_SIZE, readableReports, Reports, type UserState } from './reports.js';
 import { StateStore } from './state-store.js';
 
 const MINUTE = 60_000;
@@ -103,6 +103,104 @@ test('a listener that stops gets no more changes', () => {
   store.savePull(pr(1), { snapshot: snapshot({ head: 'a2' }) }, start + MINUTE);
   reports.refresh('alice');
   assert.deepEqual(seen, ['alice']);
+});
+
+test('a pull request that stalls gives a snapshot event, and a stream resumes from any kept cursor', () => {
+  const { reports, advance } = setup();
+  const first = reports.get('alice');
+  advance(31 * MINUTE);
+  const stalled = reports.refresh('alice');
+  const missed = reports.since('alice', first.cursor);
+  assert.ok(Array.isArray(missed));
+  assert.deepEqual(
+    missed.map(({ cursor, event }) => [cursor, event.event, event.pr]),
+    [[stalled.cursor, 'snapshot', 'acme/web#1']],
+  );
+  assert.deepEqual(reports.since('alice', stalled.cursor), []);
+  assert.equal(reports.since('alice', '00000000-0'), 'reset');
+  assert.equal(reports.since('alice', `${stalled.cursor.split('-')[0]}-99`), 'reset');
+  assert.equal(reports.since('bob', first.cursor), 'reset');
+});
+
+test('a cursor older than the kept changes gets a reset', () => {
+  const { store, reports, advance } = setup();
+  const first = reports.get('alice');
+  for (let index = 0; index <= LOG_SIZE; index++) {
+    advance(MINUTE);
+    store.savePull(pr(1), { snapshot: snapshot({ head: `h${index}` }) }, start);
+    reports.refresh('alice');
+  }
+  assert.equal(reports.since('alice', first.cursor), 'reset');
+  const last = reports.get('alice').cursor;
+  const kept = `${last.split('-')[0]}-${Number(last.split('-')[1]) - 3}`;
+  const missed = reports.since('alice', kept);
+  assert.ok(Array.isArray(missed));
+  assert.deepEqual(
+    missed.map(({ event }) => event.event),
+    ['head', 'head', 'head'],
+  );
+});
+
+test('a new comment of a person gives a comment event, and a merge gives one left event', () => {
+  const { store, reports, changes, advance } = setup();
+  reports.get('alice');
+  advance(MINUTE);
+  const comment = {
+    id: 9,
+    user: { login: 'bob' },
+    body: 'Can you rename this?',
+    created_at: new Date(start + MINUTE).toISOString(),
+    updated_at: new Date(start + MINUTE).toISOString(),
+  };
+  store.savePull(pr(1), { snapshot: snapshot({ comments: [comment] }) }, start + MINUTE);
+  reports.refresh('alice');
+  const talk = reports.since('alice', reports.get('alice').cursor.replace(/\d+$/, '0'));
+  assert.ok(Array.isArray(talk));
+  assert.deepEqual(
+    talk.map(({ event }) => event.event),
+    ['comment'],
+  );
+  advance(MINUTE);
+  store.savePull(pr(1), { snapshot: snapshot({ status: 'merged', mergedAt: new Date(start).toISOString() }) }, start);
+  reports.refresh('alice');
+  advance(MINUTE);
+  reports.refresh('alice');
+  const left = changes.flatMap(({ after, before }) => (before ? [after.cursor] : []));
+  const events = reports.since('alice', reports.get('alice').cursor.replace(/\d+$/, '1'));
+  assert.ok(Array.isArray(events));
+  assert.deepEqual(
+    events.map(({ event }) => event.event),
+    ['left'],
+  );
+  assert.equal(left.length, 2, 'the comment, then the merge: the second computation of the merge moves nothing');
+});
+
+test('a pull request that a user starts to follow later gives no event for its old comments, and one for a new comment', () => {
+  const { store, reports, advance } = setup();
+  reports.get('alice');
+  const comment = (id: number, minute: number) => ({
+    id,
+    user: { login: 'bob' },
+    body: `comment ${id}`,
+    created_at: new Date(start + minute * MINUTE).toISOString(),
+    updated_at: new Date(start + minute * MINUTE).toISOString(),
+  });
+  advance(MINUTE);
+  store.savePull(pr(2), { snapshot: snapshot({ comments: [comment(1, 0)] }) }, start + MINUTE);
+  store.setFollows('alice', [pr(1), pr(2)], start + MINUTE);
+  const entered = reports.refresh('alice');
+  advance(MINUTE);
+  store.savePull(pr(2), { snapshot: snapshot({ comments: [comment(1, 0), comment(2, 2)] }) }, start + 2 * MINUTE);
+  reports.refresh('alice');
+  const events = reports.since('alice', entered.cursor.replace(/\d+$/, '0'));
+  assert.ok(Array.isArray(events));
+  assert.deepEqual(
+    events.map(({ event }) => [event.event, event.pr, 'body' in event ? event.body : null]),
+    [
+      ['entered', 'acme/web#2', null],
+      ['comment', 'acme/web#2', 'comment 2'],
+    ],
+  );
 });
 
 test('a user whose reports fail does not stop the others', () => {
