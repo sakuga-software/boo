@@ -17,7 +17,19 @@ export interface ConnectDeps {
   now: () => number;
   /** The longest wait for one answer of the network. */
   timeoutMs?: number;
+  /** Gets the code of the device flow before `open`, for a host that shows it on a screen. */
+  onCode?: (code: DeviceCodeShown) => void;
+  /** The GitHub that signs in the user: `https://github.com` by default. A test gives a fake one. */
+  githubUrl?: string;
 }
+
+/** The code that the person types on GitHub, and the page where they type it. */
+export interface DeviceCodeShown {
+  userCode: string;
+  verificationUri: string;
+}
+
+const GITHUB = 'https://github.com';
 
 const TIMEOUT_MS = 15_000;
 
@@ -42,6 +54,18 @@ function timed(fetchFn: typeof fetch, ms: number): typeof fetch {
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 export class SetupError extends Error {}
+
+/** Refuses a URL that is not HTTPS, except on this machine. */
+function checkSecure(url: string): void {
+  let address: URL;
+  try {
+    address = new URL(url);
+  } catch {
+    throw new SetupError(`${url} is not a URL.`);
+  }
+  if (address.protocol === 'http:' && !LOCAL_HOSTS.has(address.hostname))
+    throw new SetupError(`${url} is not HTTPS: the GitHub authorization would travel in clear text. Use https://.`);
+}
 
 const json = async <T>(response: Response, what: string): Promise<T> => {
   if (!response.ok) {
@@ -78,6 +102,7 @@ interface DeviceToken {
 /** Gets a user token of the App with the device flow: the person types a code on github.com. */
 async function deviceFlow(
   clientId: string,
+  github: string,
   deps: ConnectDeps,
 ): Promise<Required<Pick<DeviceToken, 'access_token'>> & DeviceToken> {
   const form = (fields: Record<string, string>) => ({
@@ -86,9 +111,10 @@ async function deviceFlow(
     body: new URLSearchParams(fields).toString(),
   });
   const code = await json<DeviceCode>(
-    await deps.fetch('https://github.com/login/device/code', form({ client_id: clientId })),
+    await deps.fetch(`${github}/login/device/code`, form({ client_id: clientId })),
     'GitHub refused the device code',
   );
+  deps.onCode?.({ userCode: code.user_code, verificationUri: code.verification_uri });
   deps.log(`Open ${code.verification_uri} and type the code ${code.user_code}`);
   await deps.open(code.verification_uri).catch(() => {});
   const end = deps.now() + code.expires_in * 1000;
@@ -97,7 +123,7 @@ async function deviceFlow(
     await deps.sleep(interval);
     const token = await json<DeviceToken>(
       await deps.fetch(
-        'https://github.com/login/oauth/access_token',
+        `${github}/login/oauth/access_token`,
         form({
           client_id: clientId,
           device_code: code.device_code,
@@ -117,7 +143,8 @@ async function deviceFlow(
   throw new SetupError('The code expired before the authorization. Run boo setup-webhooks again.');
 }
 
-interface Installations {
+/** The installations of the App that the user reads, and the page that installs it. */
+export interface Installations {
   installations: { id: number; account: string }[];
   installUrl: string;
 }
@@ -136,15 +163,10 @@ const INSTALL_POLL_MS = 5_000;
 export async function connectRelay(input: string | undefined, setup: ConnectDeps): Promise<RelayConnection> {
   const deps = { ...setup, fetch: timed(setup.fetch, setup.timeoutMs ?? TIMEOUT_MS) };
   const url = relayUrl(input);
-  let address: URL;
-  try {
-    address = new URL(url);
-  } catch {
-    throw new SetupError(`${url} is not a URL.`);
-  }
-  // The GitHub token of the user goes to the relay: in clear text, anyone on the way reads it.
-  if (address.protocol === 'http:' && !LOCAL_HOSTS.has(address.hostname))
-    throw new SetupError(`${url} is not HTTPS: the GitHub authorization would travel in clear text. Use https://.`);
+  // The GitHub token of the user goes to the relay, and comes from GitHub: in clear text, anyone on the way reads it.
+  checkSecure(url);
+  const github = (setup.githubUrl ?? GITHUB).replace(/\/+$/, '');
+  checkSecure(github);
   const relay = await json<{ name?: string; clientId?: string; installUrl?: string }>(
     await deps.fetch(url).catch((error: unknown) => {
       throw new SetupError(`No relay answers at ${url}: ${error instanceof Error ? error.message : String(error)}`);
@@ -163,7 +185,7 @@ export async function connectRelay(input: string | undefined, setup: ConnectDeps
       'Your GitHub authorization goes to this relay, which reads your pull requests: use only a relay that you trust.',
     );
 
-  const token = await deviceFlow(relay.clientId, deps);
+  const token = await deviceFlow(relay.clientId, github, deps);
   const { session, login } = await json<{ session: string; login: string }>(
     await deps.fetch(`${url}/sessions`, {
       method: 'POST',
@@ -178,11 +200,7 @@ export async function connectRelay(input: string | undefined, setup: ConnectDeps
   );
   deps.log(`Signed in as ${login}`);
 
-  const auth = { headers: { authorization: `Bearer ${session}` } };
-  const installations = () =>
-    deps
-      .fetch(`${url}/installations`, auth)
-      .then((response) => json<Installations>(response, 'The relay refused the installations'));
+  const installations = () => readInstallations({ url, session, login }, setup);
   let found = await installations();
   if (found.installations.length === 0) {
     deps.log(`Install the App on your organizations or your account: ${found.installUrl}`);
@@ -199,6 +217,18 @@ export async function connectRelay(input: string | undefined, setup: ConnectDeps
   for (const installation of found.installations) deps.log(`Installed on ${installation.account}`);
 
   return { url, session, login };
+}
+
+/** Reads the installations of the App that the user of the session reads. */
+export async function readInstallations(
+  connection: RelayConnection,
+  read: Pick<ConnectDeps, 'fetch' | 'timeoutMs'>,
+): Promise<Installations> {
+  const fetchFn = timed(read.fetch, read.timeoutMs ?? TIMEOUT_MS);
+  return json<Installations>(
+    await fetchFn(`${connection.url}/installations`, { headers: { authorization: `Bearer ${connection.session}` } }),
+    'The relay refused the installations',
+  );
 }
 
 /** Deletes the session on the relay. A relay that refuses or does not answer gets a line in the log, not an error. */
