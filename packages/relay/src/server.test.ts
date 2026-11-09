@@ -107,10 +107,10 @@ async function login(base: string, accessToken: string, extra: object = {}): Pro
 }
 
 /** Opens the event stream and gives the events as they arrive. */
-async function stream(t: TestContext, base: string, session: string, lastEventId?: string) {
+async function stream(t: TestContext, base: string, session: string, lastEventId?: string, path = '/events') {
   const abort = new AbortController();
   t.after(() => abort.abort());
-  const response = await fetch(`${base}/events`, {
+  const response = await fetch(`${base}${path}`, {
     headers: { authorization: `Bearer ${session}`, ...(lastEventId && { 'last-event-id': lastEventId }) },
     signal: abort.signal,
   });
@@ -650,7 +650,7 @@ async function startStatefulRelay(t: TestContext) {
   tracker.onChange = (change) => void changes.push(`${change.type} ${change.repo}#${change.number}`);
   const reports = new Reports(store);
   const relay = await startRelay(t, fakeGitHub(), { state: { store, tracker, reports } });
-  return { ...relay, store, refreshed, changes };
+  return { ...relay, store, reports, refreshed, changes };
 }
 
 const put = (base: string, session: string, body: unknown) =>
@@ -780,4 +780,63 @@ test('GET /state answers 503 on a relay with no state', async (t) => {
   const { base } = await startRelay(t);
   const session = await login(base, 'ghu_alice');
   assert.equal((await fetch(`${base}/state`, { headers: { authorization: `Bearer ${session}` } })).status, 503);
+});
+
+test('GET /state/events streams the changes of the reports with the cursor, resumes, and resets after a gap', async (t) => {
+  const { base, store, reports } = await startStatefulRelay(t);
+  const pull = (repo: string, number: number) => ({
+    repo,
+    number,
+    title: `PR ${number}`,
+    url: `https://github.com/${repo}/pull/${number}`,
+  });
+  store.savePull(pull('acme/web', 1), { snapshot: snapshotOf('a1') }, Date.now());
+  store.savePull(pull('acme/secret', 2), { snapshot: snapshotOf('a2') }, Date.now());
+  store.setFollows('alice', [pull('acme/web', 1), pull('acme/secret', 2)], Date.now());
+  const session = await login(base, 'ghu_alice');
+  assert.equal((await put(base, session, { org: 'acme' })).status, 200);
+  const state = (await (await fetch(`${base}/state`, { headers: { authorization: `Bearer ${session}` } })).json()) as {
+    cursor: string;
+  };
+
+  assert.equal((await fetch(`${base}/state/events`)).status, 401);
+  const live = await stream(t, base, session, state.cursor, '/state/events');
+  await live.until(() => live.events.some((event) => event.event === 'ready'), 'ready event');
+  assert.equal(live.events[0]?.data.cursor, state.cursor);
+
+  // The checks of both pull requests turn green. Only the readable repository gives events.
+  const green = { ...snapshotOf('a1'), checks: [{ name: 'ci', state: 'success' as const }] };
+  store.savePull(pull('acme/web', 1), { snapshot: green }, Date.now());
+  store.savePull(pull('acme/secret', 2), { snapshot: { ...green, head: 'a2' } }, Date.now());
+  reports.refreshFollowers(pull('acme/web', 1));
+  await live.until(() => live.events.some((event) => event.event === 'state'), 'state event');
+  const changes = live.events.filter((event) => event.event !== 'ready');
+  assert.ok(
+    changes.every((event) => event.data.pr === 'acme/web#1'),
+    JSON.stringify(changes),
+  );
+  const stateEvent = changes.find((event) => event.event === 'state')!;
+  assert.deepEqual([stateEvent.data.from, stateEvent.data.to], ['checks failing', 'awaiting review']);
+  assert.ok(changes.some((event) => event.event === 'check' && event.data.to === 'not failing'));
+  const cursor = stateEvent.id!;
+  assert.notEqual(cursor, state.cursor);
+
+  // A stream that resumes from the first cursor gets the same changes again; from the last one, nothing.
+  const resumed = await stream(t, base, session, state.cursor, '/state/events');
+  await resumed.until(() => resumed.events.some((event) => event.event === 'state'), 'missed state event');
+  assert.equal(resumed.events.find((event) => event.event === 'state')?.id, cursor);
+  const current = await stream(t, base, session, cursor, '/state/events');
+  await current.until(() => current.events.some((event) => event.event === 'ready'), 'ready event');
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(
+    current.events.map((event) => event.event),
+    ['ready'],
+  );
+
+  // A cursor of another boot of the relay, or one that the relay never gave, gets a reset with the current cursor.
+  for (const unknown of ['00000000-3', `${cursor.split('-')[0]}-999`, 'nonsense']) {
+    const gap = await stream(t, base, session, unknown, '/state/events');
+    await gap.until(() => gap.events.some((event) => event.event === 'reset'), `reset for ${unknown}`);
+    assert.equal(gap.events.find((event) => event.event === 'reset')?.data.cursor, cursor);
+  }
 });

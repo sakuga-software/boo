@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { WatchEvent } from '@sakuga-software/boo-core/events';
 import { parseSettings, resolveRepos } from '@sakuga-software/boo-core/settings';
 import { Access, SessionExpired } from './access.js';
 import { changesAccess, changesOf } from './events.js';
@@ -156,6 +157,79 @@ export function createRelay(options: RelayOptions) {
     json(response, 200, readableReports(reports.get(session.user.login), repos));
   }
 
+  /**
+   * The changes of the reports of the user, in the vocabulary of `boo --watch --events`, with `id` set
+   * to the cursor of `GET /state`. A client reads `GET /state`, then opens the stream with its cursor in
+   * `Last-Event-ID`: it gets the changes after that cursor, or `event: reset` if the relay cannot give
+   * them all, and then reads `GET /state` again.
+   */
+  async function onStateEvents(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
+    const { reports } = stateOf();
+    let left = false;
+    let stop = () => {};
+    response.once('close', () => {
+      left = true;
+      stop();
+    });
+    await access.repos(session).catch((error: unknown) => {
+      if (error instanceof SessionExpired) throw error;
+      console.error(error);
+    });
+    if (left) return;
+    if (!store.has(session.id)) throw new HttpError(401, 'The session was deleted');
+    response.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+    const login = session.user.login.toLowerCase();
+    // While the access is not valid, the stream drops events; a reset follows when it is valid again.
+    let dropped = false;
+    const send = (cursor: string, event: WatchEvent) => {
+      const repos = access.kept(session.id);
+      if (!repos) {
+        dropped = true;
+        return;
+      }
+      if (!repos.has(event.pr.slice(0, event.pr.lastIndexOf('#')).toLowerCase())) return;
+      response.write(`id: ${cursor}\nevent: ${event.event}\ndata: ${JSON.stringify(event)}\n\n`);
+    };
+    const unsubscribe = reports.onChange((user, _before, after, events) => {
+      if (user !== login || response.writableEnded) return;
+      for (const event of events) send(after.cursor, event);
+    });
+    const heartbeat = setInterval(() => {
+      try {
+        if (response.destroyed || response.writableEnded) return stop();
+        if (!store.has(session.id)) return endStream(response, 'expired', 'The session ended');
+        if (dropped && access.kept(session.id)) {
+          dropped = false;
+          response.write(`event: reset\ndata: ${JSON.stringify({ cursor: reports.get(login).cursor })}\n\n`);
+        }
+        response.write(': ping\n\n');
+        checkAccess(response, session);
+      } catch (error) {
+        console.error(error);
+        stop();
+      }
+    }, heartbeatMs);
+    stop = () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      streams.delete(response);
+    };
+    streams.set(response, { session, stop });
+    const current = reports.get(login);
+    const lastEventId = header(request, 'last-event-id');
+    response.write(`event: ready\ndata: ${JSON.stringify({ login: session.user.login, cursor: current.cursor })}\n\n`);
+    if (!lastEventId) return;
+    const missed = reports.since(login, lastEventId);
+    if (missed === 'reset' || !access.kept(session.id))
+      response.write(`event: reset\ndata: ${JSON.stringify({ cursor: current.cursor })}\n\n`);
+    else for (const { cursor, event } of missed) send(cursor, event);
+  }
+
   async function onEvents(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
     // The client can leave during the read of its access. Then no stream starts.
     let left = false;
@@ -260,6 +334,8 @@ export function createRelay(options: RelayOptions) {
         return onEvents(request, response, authenticate(request));
       case 'GET /state':
         return onGetState(authenticate(request), response);
+      case 'GET /state/events':
+        return onStateEvents(request, response, authenticate(request));
       case 'GET /settings':
         return onGetSettings(authenticate(request), response);
       case 'PUT /settings':

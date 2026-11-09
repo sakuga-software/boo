@@ -21,6 +21,7 @@ are the ones of the webhook. The access filter below decides who gets these fiel
 | `GET /installations` | `boo`        | The installations of the App that the user can read.                                                                |
 | `GET /events`        | `boo`        | The stream of the changes in the repositories that the user can read through the App.                               |
 | `GET /state`         | `boo`, app   | The reports of the user, with the keys of `boo --json`, plus `cursor` and `at`.                                     |
+| `GET /state/events`  | `boo`, app   | The stream of the changes of these reports, in the vocabulary of `boo --watch --events`, `id` = the cursor.         |
 | `GET /settings`      | `boo`, app   | The watch config of the user: `{ "org", "settings" }`. With no config, the defaults.                                |
 | `PUT /settings`      | `boo`, app   | Replaces the watch config of the user (the last write wins), and reads its list of pull requests again.             |
 | `GET /healthz`       | the host     | `{ "ok": true, "streams": <count> }`.                                                                               |
@@ -64,6 +65,16 @@ mobile app) do not each read GitHub. Without the key, the relay only relays the 
   time a report changes (not when only `idleMinutes` grows), and after a restart of the relay. The
   reports are computed again after each read, after each change of the list or the settings, and every
   minute, for the states that depend on time: a CodeRabbit wait that ends, a pull request that stalls.
+- **The stream of the reports.** `GET /state/events` sends each change of the reports as a server-sent
+  event, with the vocabulary of `boo --watch --events` (`state`, `head`, `review`, `check`, `findings`,
+  `policy`, `left`, `comment`, `review-request`…) as the event name, the JSON line of the watch as
+  `data`, and the cursor of `GET /state` as `id`. A report that changed with no event of its own (it
+  stalls, its CodeRabbit note changes) gives a `snapshot` event with the whole report. The stream
+  starts with `event: ready` and the current cursor. A client reads `GET /state`, then opens the stream
+  with its cursor in `Last-Event-ID`: it gets the changes after that cursor. If the relay cannot give
+  them all (another boot of the relay, or a cursor older than the last 200 changes), it sends
+  `event: reset` with the current cursor, and the client reads `GET /state` again. As on `/events`, the
+  stream gets only the repositories that the user reads, and a reset after a time with no valid access.
 - **The retention.** The relay deletes a pull request, with its text, 7 days after it is merged or
   closed, or 7 days after nobody follows it any more. The check runs at start and every hour.
 
