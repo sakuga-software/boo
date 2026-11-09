@@ -5,7 +5,7 @@ import { useRelayContext } from '../relay/relay-context';
 import { Button } from '../ui/button';
 import { formatTime } from '../ui/time';
 import { usePalette } from '../ui/use-palette';
-import { listView } from './list';
+import { listView, liveBadge } from './list';
 import { usePullsContext } from './pulls-context';
 import { PullRow } from './pull-row';
 import { reportKey } from './view';
@@ -15,7 +15,8 @@ export function PullList() {
   const palette = usePalette();
   const router = useRouter();
   const relay = useRelayContext();
-  const { pulls, refresh } = usePullsContext();
+  const { pulls, live, refresh } = usePullsContext();
+  const badge = liveBadge(live);
   const view = listView(pulls);
   const signedIn = relay.state.status === 'signedIn' ? relay.state : undefined;
   const muted = { color: palette.muted };
@@ -26,6 +27,12 @@ export function PullList() {
       <View style={styles.headerText}>
         <Text style={[styles.title, { color: palette.text }]}>boo</Text>
         <Text style={[styles.small, muted]}>
+          {badge ? (
+            <Text
+              accessibilityLabel={badge.spoken}
+              style={[styles.badge, { color: palette.tones[badge.tone] }]}
+            >{`${badge.text} · `}</Text>
+          ) : null}
           {'at' in view ? `Updated at ${formatTime(view.at)}` : 'Reading the relay…'}
         </Text>
       </View>
@@ -126,6 +133,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 28, fontWeight: '700' },
   account: { fontSize: 16, fontWeight: '600' },
   small: { fontSize: 13 },
+  badge: { fontWeight: '600' },
   banner: { fontSize: 14, paddingHorizontal: 16, paddingVertical: 10 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 },
   centered: { textAlign: 'center' },

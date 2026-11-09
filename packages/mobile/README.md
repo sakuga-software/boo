@@ -119,9 +119,14 @@ says what a row of `boo` says in the terminal: the state, `repo#n`, the title, t
 stack, the agent, `zZ stalled`, the checks and the mark of each reviewer. The words come from the
 report, and the marks and their tones from `packages/core/src/theme.ts`, which the CLI reads too.
 
-- The app reads the list when the session starts, on each return to the app, and when you pull the
-  list down. A read that fails keeps the older list, and a banner gives the error and the time of
-  that list.
+- The app reads the list when the session starts, and when you pull the list down. A read that
+  fails keeps the older list, and a banner gives the error and the time of that list.
+- In the foreground, the list stays live: the app opens `GET /state/events` from the cursor of its
+  last read, with the reader of core (`relayStream`, over `expo/fetch`). Each burst of events reads
+  `GET /state` again; `event: reset` reads it at once. The stream closes in the background, and opens
+  again in the foreground with `Last-Event-ID`: the relay sends the changes since, or a reset. The
+  header says `live` while the stream is open, and `poll` while it is down: the list is then read
+  every minute, as the stream tries again.
 - A tap on a row opens its details: the size of the change, the agent, the reviewers with their
   scores and times, the checks with the names of the ones that fail, and the notes (merge policy,
   stall, stack, merge state, retries, CodeRabbit quota, stale read). **Open on GitHub** opens the
