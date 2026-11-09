@@ -93,8 +93,12 @@ export class Tracker {
         found.set(`${pr.repo.toLowerCase()}#${pr.number}`, pr);
     const prs = [...found.values()];
     this.options.store.setFollows(login, prs, this.now());
-    await Promise.all(prs.filter((pr) => !this.options.store.pull(pr)).map((pr) => this.read(pr)));
-    this.options.onList?.(login);
+    try {
+      await Promise.all(prs.filter((pr) => !this.options.store.pull(pr)).map((pr) => this.read(pr)));
+    } finally {
+      // The list is written: the reports follow it, even if a first read failed.
+      this.options.onList?.(login);
+    }
   }
 
   /** Reads the lists of every user. A failed list keeps the last one. */

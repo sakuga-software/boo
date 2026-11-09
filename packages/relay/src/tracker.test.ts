@@ -232,3 +232,28 @@ test('the reader searches and reads with the token of the installation of the ow
   await assert.rejects(reader.graphql('acme')('query', { number: 8 }), /GitHub GraphQL: Could not resolve/);
   await assert.rejects(reader.search('other', 'x'), /not installed on other/);
 });
+
+test('the reports follow a new list even when a first read fails', async () => {
+  const store = new StateStore(':memory:');
+  const reader = fakeReader();
+  reader.results.set('acme', [pr(1)]);
+  reader.heads.set('acme/web#1', 'a1');
+  const lists: string[] = [];
+  const tracker = new Tracker({
+    store,
+    reader,
+    accounts: async () => ['acme'],
+    onRead: () => {
+      throw new Error('a listener that fails');
+    },
+    onList: (login) => lists.push(login),
+    log: () => {},
+  });
+  store.setConfig('alice', { org: 'acme', settings: settings() }, 0);
+  await assert.rejects(tracker.refreshUser('alice'), /a listener that fails/);
+  assert.deepEqual(lists, ['alice']);
+  assert.deepEqual(
+    store.pullsOf('alice').map((stored) => stored.pr.number),
+    [1],
+  );
+});
