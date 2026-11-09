@@ -5,7 +5,9 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
+    // DOM gives the types of fetch, AbortSignal, TextDecoder and the timers, which Node, a browser and
+    // React Native all have. The code uses no document.
+    "lib": ["ES2023", "DOM"],
     "strict": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,

@@ -5,7 +5,7 @@ import { render } from 'ink-testing-library';
 import { App, type GitHub } from './app.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
 import { DEFAULT_SETTINGS } from './settings.js';
-import type { RelayChange, RelayHandlers, RelaySource } from './stream.js';
+import type { RelayChange, RelayHandlers, RelaySource } from '@sakuga-software/boo-core/stream';
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
