@@ -9,6 +9,7 @@ import { test, type TestContext } from 'node:test';
 import { GitHubError, type GitHubApi, type Tokens } from './github.js';
 import { createRelay } from './server.js';
 import { SessionStore } from './sessions.js';
+import { Reports } from './reports.js';
 import { StateStore } from './state-store.js';
 import { Tracker } from './tracker.js';
 
@@ -65,7 +66,7 @@ async function startRelay(
     accessTtlMs?: number;
     heartbeatMs?: number;
     now?: () => number;
-    state?: { store: StateStore; tracker: Tracker };
+    state?: { store: StateStore; tracker: Tracker; reports: Reports };
   } = {},
 ) {
   const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'relay-')), 'sessions.json'), 'key');
@@ -647,7 +648,8 @@ async function startStatefulRelay(t: TestContext) {
   });
   tracker.refreshUser = async (login) => void refreshed.push(login);
   tracker.onChange = (change) => void changes.push(`${change.type} ${change.repo}#${change.number}`);
-  const relay = await startRelay(t, fakeGitHub(), { state: { store, tracker } });
+  const reports = new Reports(store);
+  const relay = await startRelay(t, fakeGitHub(), { state: { store, tracker, reports } });
   return { ...relay, store, refreshed, changes };
 }
 
@@ -710,4 +712,72 @@ test('each change of a webhook goes to the tracker', async (t) => {
   });
   assert.equal(response.status, 202);
   assert.deepEqual(changes, ['pull_request acme/web#4']);
+});
+
+const snapshotOf = (head: string) => ({
+  status: 'open' as const,
+  head,
+  branch: 'feature',
+  fork: false,
+  base: 'main',
+  defaultBranch: 'main',
+  author: 'alice',
+  mergeState: 'clean',
+  reviews: [],
+  comments: [],
+  checks: [{ name: 'ci', state: 'failure' as const }],
+  requested: [],
+});
+
+test('GET /state gives the reports of the user, only in the repositories that it reads', async (t) => {
+  const { base, store } = await startStatefulRelay(t);
+  const pull = (repo: string, number: number) => ({
+    repo,
+    number,
+    title: `PR ${number}`,
+    url: `https://github.com/${repo}/pull/${number}`,
+  });
+  store.savePull(pull('acme/web', 1), { snapshot: snapshotOf('a1') }, Date.now());
+  store.savePull(pull('acme/secret', 2), { snapshot: snapshotOf('a2') }, Date.now());
+  store.savePull(pull('acme/web', 3), { error: 'GitHub answered 502' }, Date.now());
+  store.setFollows('alice', [pull('acme/web', 1), pull('acme/secret', 2), pull('acme/web', 3)], Date.now());
+
+  assert.equal((await fetch(`${base}/state`)).status, 401);
+  const session = await login(base, 'ghu_alice');
+  // With no settings, the user follows nothing yet.
+  const before = (await (await fetch(`${base}/state`, { headers: { authorization: `Bearer ${session}` } })).json()) as {
+    reports: unknown[];
+  };
+  assert.deepEqual(before.reports, []);
+
+  assert.equal((await put(base, session, { org: 'acme' })).status, 200);
+  const response = await fetch(`${base}/state`, { headers: { authorization: `Bearer ${session}` } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const state = (await response.json()) as {
+    cursor: string;
+    at: string;
+    reports: { repo: string; number: number; state: string; headSha: string | null; error: string | null }[];
+  };
+  assert.match(state.cursor, /^[0-9a-f]{8}-\d+$/);
+  assert.ok(Date.parse(state.at) > 0);
+  assert.deepEqual(
+    state.reports.map(({ repo, number, state: label, headSha, error }) => ({
+      repo,
+      number,
+      state: label,
+      headSha,
+      error,
+    })),
+    [
+      { repo: 'acme/web', number: 1, state: 'checks failing', headSha: 'a1', error: null },
+      { repo: 'acme/web', number: 3, state: 'error', headSha: null, error: 'GitHub answered 502' },
+    ],
+  );
+});
+
+test('GET /state answers 503 on a relay with no state', async (t) => {
+  const { base } = await startRelay(t);
+  const session = await login(base, 'ghu_alice');
+  assert.equal((await fetch(`${base}/state`, { headers: { authorization: `Bearer ${session}` } })).status, 503);
 });

@@ -20,8 +20,10 @@ export interface TrackerOptions {
   /** A pull request gets one read for all the webhooks of this time. */
   debounceMs?: number;
   now?: () => number;
-  /** Called after each read that saved a pull request: #107 streams the changes. */
+  /** Called after each read that saved a pull request. */
   onRead?: (pr: PullRequest) => void;
+  /** Called after the list of a user changed. */
+  onList?: (login: string) => void;
   log?: (error: unknown) => void;
 }
 
@@ -91,7 +93,12 @@ export class Tracker {
         found.set(`${pr.repo.toLowerCase()}#${pr.number}`, pr);
     const prs = [...found.values()];
     this.options.store.setFollows(login, prs, this.now());
-    await Promise.all(prs.filter((pr) => !this.options.store.pull(pr)).map((pr) => this.read(pr)));
+    try {
+      await Promise.all(prs.filter((pr) => !this.options.store.pull(pr)).map((pr) => this.read(pr)));
+    } finally {
+      // The list is written: the reports follow it, even if a first read failed.
+      this.options.onList?.(login);
+    }
   }
 
   /** Reads the lists of every user. A failed list keeps the last one. */
@@ -159,7 +166,12 @@ export class Tracker {
       this.log(error);
       this.options.store.savePull(pr, { error: error instanceof Error ? error.message : String(error) }, this.now());
     }
-    this.options.onRead?.(pr);
+    // A listener that fails must not fail the read: a read from a timer has nobody to catch it.
+    try {
+      this.options.onRead?.(pr);
+    } catch (error) {
+      this.log(error);
+    }
   }
 }
 

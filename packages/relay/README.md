@@ -20,6 +20,7 @@ are the ones of the webhook. The access filter below decides who gets these fiel
 | `DELETE /sessions`   | `boo`        | Deletes the session.                                                                                                |
 | `GET /installations` | `boo`        | The installations of the App that the user can read.                                                                |
 | `GET /events`        | `boo`        | The stream of the changes in the repositories that the user can read through the App.                               |
+| `GET /state`         | `boo`, app   | The reports of the user, with the keys of `boo --json`, plus `cursor` and `at`.                                     |
 | `GET /settings`      | `boo`, app   | The watch config of the user: `{ "org", "settings" }`. With no config, the defaults.                                |
 | `PUT /settings`      | `boo`, app   | Replaces the watch config of the user (the last write wins), and reads its list of pull requests again.             |
 | `GET /healthz`       | the host     | `{ "ok": true, "streams": <count> }`.                                                                               |
@@ -55,6 +56,14 @@ mobile app) do not each read GitHub. Without the key, the relay only relays the 
   config of each user and the last read of each pull request, with the text of its description, its
   reviews and its comments. A read for a user gives only the repositories that the user reads through
   the App.
+- **The reports.** `GET /state` gives `{ "cursor", "at", "reports" }`. `reports` is the output of
+  `boo --json` (see the automation docs) for the pull requests that the user follows, computed on the
+  relay by `buildReport` of core, in the repositories that the user reads through the App now. The
+  relay knows no local Claude Code session, so `agent.session` is null. A pull request whose read
+  failed keeps its last read that worked; with none, it is in the `error` state. `cursor` changes each
+  time a report changes (not when only `idleMinutes` grows), and after a restart of the relay. The
+  reports are computed again after each read, after each change of the list or the settings, and every
+  minute, for the states that depend on time: a CodeRabbit wait that ends, a pull request that stalls.
 - **The retention.** The relay deletes a pull request, with its text, 7 days after it is merged or
   closed, or 7 days after nobody follows it any more. The check runs at start and every hour.
 
