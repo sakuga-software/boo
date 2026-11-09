@@ -9,6 +9,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -20,6 +21,9 @@ import { usePalette } from '../ui/use-palette';
 import { configOf, formOf, unchanged, type SettingsForm } from '../settings/form';
 import { checkRelayUrl } from '../settings/relay-url';
 import { readSettings, writeSettings, type WatchConfig } from '../settings/remote';
+import { PUSH_STATES } from '@sakuga-software/boo-core/settings';
+import { usePushStatus } from '../push/push-context';
+import { pushLine } from '../push/status';
 
 type Remote =
   | { status: 'loading' }
@@ -33,6 +37,7 @@ export default function SettingsScreen() {
   const relay = useRelayContext();
   const router = useRouter();
   const { state } = relay;
+  const push = usePushStatus();
   const connection = state.status === 'signedIn' ? state.connection : undefined;
   const text = { color: palette.text };
   const leave = () => (router.canGoBack() ? router.back() : router.replace('/'));
@@ -190,6 +195,19 @@ export default function SettingsScreen() {
           'One per line, as owner/name, or name in the organization. Empty: every repository.',
           { multiline: true, placeholder: 'Every repository', editable: !remote.saving },
         )}
+        <Text style={[styles.section, text]}>Push notifications</Text>
+        <Text style={[styles.hint, text]}>{pushLine(push)}</Text>
+        {PUSH_STATES.map(({ key, label }) => (
+          <View key={key} style={styles.switchRow}>
+            <Text style={[styles.label, text]}>{label}</Text>
+            <Switch
+              accessibilityLabel={label}
+              value={remote.form.push[key]}
+              disabled={remote.saving}
+              onValueChange={(on) => edit({ push: { ...remote.form.push, [key]: on } })}
+            />
+          </View>
+        ))}
         {remote.error ? <Text style={[styles.notice, { color: palette.tones.red }]}>{remote.error}</Text> : null}
         {remote.message ? <Text style={[styles.notice, text]}>{remote.message}</Text> : null}
         {button(
@@ -256,6 +274,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   field: { gap: 6 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44 },
   label: { fontSize: 15, fontWeight: '600' },
   input: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 8, paddingHorizontal: 12, minHeight: 44, fontSize: 16 },
   multiline: { minHeight: 88, paddingTop: 10, textAlignVertical: 'top' },
