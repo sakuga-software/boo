@@ -35,7 +35,6 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "prepare": "pnpm build",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc && tsc -p tsconfig.test.json && tsc -p demo/tsconfig.json",
     "test": "tsx --tsconfig tsconfig.test.json --test src/*.test.ts src/*.test.tsx",
@@ -43,7 +42,7 @@
     "check:pack": "node scripts/check-pack.mjs",
     "check": "pnpm typecheck && pnpm test:coverage && pnpm check:pack",
     "demo": "tsx --tsconfig demo/tsconfig.json demo/demo.tsx",
-    "prepack": "node -e \"for (const f of ['README.md', 'LICENSE']) fs.copyFileSync('../../' + f, f)\""
+    "prepack": "pnpm build && node -e \"for (const f of ['README.md', 'LICENSE']) fs.copyFileSync('../../' + f, f)\""
   },
   "dependencies": {
     "ink": "^7.1.1",
