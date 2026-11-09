@@ -76,7 +76,9 @@ BOO_RELAY_URL=http://localhost:4621 pnpm ios
   takes the organization.
 
 A tap on **Sign out** or on **Use this relay** that comes before the screen renders the first one sends
-nothing more (`signOutOnce` in `src/relay/sign-out.ts`).
+nothing more (`signOutOnce` in `src/relay/sign-out.ts`, `relayChanger` in `src/relay/change-relay.ts`).
+The change of relay signs out of the session of the state after the check of the new relay, not before
+it: the session can end during that check.
 
 ## Put the dev client on a phone
 

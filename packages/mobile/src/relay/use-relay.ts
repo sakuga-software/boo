@@ -8,6 +8,7 @@ import { parseStoredRelay, probeRelay, RELAY_URL_KEY } from '../settings/relay-u
 import { relayConfig } from './config';
 import { checkSession, CONNECTION_KEY, parseConnection, withAbortReason } from './connection';
 import { startSignIn, type SignIn } from './sign-in';
+import { relayChanger } from './change-relay';
 import { signOutOnce } from './sign-out';
 import { afterCheck, afterSignOut, markSigningOut, type RelayState } from './state';
 
@@ -28,6 +29,8 @@ const endSession = signOutOnce({
   forget: () => SecureStore.deleteItemAsync(CONNECTION_KEY, STORE),
 });
 
+type MoveRelay = ReturnType<typeof relayChanger>;
+
 const openBrowser = (url: string) => {
   // The promise ends when the person closes the browser. The sign-in does not wait for it.
   WebBrowser.openBrowserAsync(url).catch(() => {});
@@ -39,7 +42,6 @@ export function useRelay() {
   // The relay that the person chose in the settings, or the one of `app.json`.
   const [relayUrl, setRelayUrl] = useState(config.relayUrl);
   const signIn = useRef<SignIn | undefined>(undefined);
-  const changing = useRef(false);
 
   const checkInstallations = useCallback(async (connection: RelayConnection, asked = false) => {
     const check = await checkSession(connection, relayFetch);
@@ -102,41 +104,38 @@ export function useRelay() {
     setState((current) => afterSignOut(current, connection));
   }, [state]);
 
+  // The state of the last render, for a step that comes after a wait.
+  const latest = useRef(state);
+  useEffect(() => {
+    latest.current = state;
+  }, [state]);
+  // Made at the first change, and kept: its guard holds one change at a time.
+  const mover = useRef<MoveRelay | undefined>(undefined);
+
   /**
-   * Moves the app to another relay, or back to the one of `app.json` with `undefined`. The new relay must
-   * answer as a boo relay first. Then the app signs out of the current relay: its session belongs to that
-   * relay only. The person signs in again on the new one. Returns the problem, or `undefined`.
+   * Moves the app to another relay, or back to the one of `app.json` with `undefined` (`relayChanger`).
+   * The person signs in again on the new one. Returns the problem, or `undefined`.
    */
-  const changeRelay = useCallback(
-    async (url: string | undefined): Promise<string | undefined> => {
-      if (state.status !== 'signedIn' && state.status !== 'signedOut') return 'Wait for the sign-in to end.';
-      if (state.status === 'signedIn' && state.signingOut) return 'Wait for the sign-out to end.';
-      // As for the sign-out: a second tap can come before the render that disables the button.
-      if (changing.current) return 'The relay is already changing.';
-      changing.current = true;
-      try {
-        const next = url ?? config.relayUrl;
-        const problem = await probeRelay(next, relayFetch);
-        if (problem) return problem;
-        if (state.status === 'signedIn') {
-          setState(markSigningOut);
-          await endSession(state.connection);
-        }
-        try {
-          if (url === undefined) await SecureStore.deleteItemAsync(RELAY_URL_KEY, STORE);
-          else await SecureStore.setItemAsync(RELAY_URL_KEY, url, STORE);
-        } catch {
-          // The app uses the relay until it restarts.
-        }
-        setRelayUrl(next);
-        setState({ status: 'signedOut', notice: `The relay is now ${next}. Sign in again.` });
-        return undefined;
-      } finally {
-        changing.current = false;
-      }
-    },
-    [state],
-  );
+  const changeRelay = useCallback(async (url: string | undefined): Promise<string | undefined> => {
+    mover.current ??= relayChanger(
+      {
+        probe: (next) => probeRelay(next, relayFetch),
+        current: () => latest.current,
+        markSigningOut: () => setState(markSigningOut),
+        endSession,
+        store: (next) =>
+          next === undefined
+            ? SecureStore.deleteItemAsync(RELAY_URL_KEY, STORE)
+            : SecureStore.setItemAsync(RELAY_URL_KEY, next, STORE),
+      },
+      config.relayUrl,
+    );
+    const result = await mover.current(url);
+    if (result.problem !== undefined) return result.problem;
+    setRelayUrl(result.relayUrl);
+    setState({ status: 'signedOut', notice: `The relay is now ${result.relayUrl}. Sign in again.` });
+    return undefined;
+  }, []);
 
   return {
     state,
