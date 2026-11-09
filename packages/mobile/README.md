@@ -23,6 +23,9 @@ pnpm ios     # builds the dev client locally and opens it in the iOS simulator (
 them when they are there. Without them, `Href` accepts any string, so CI still checks the rest of the
 types.
 
+Core is TypeScript with ES module imports (`./bots.js` for `bots.ts`). `metro.config.js` drops the `.js`
+of a relative import inside `packages/core/src`, so Metro finds the `.ts` file.
+
 ## Sign in to the relay
 
 The home screen signs in with the device flow of GitHub, on the relay of the settings. The code is the one of the CLI
