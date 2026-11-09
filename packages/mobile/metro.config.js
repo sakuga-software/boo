@@ -14,19 +14,14 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
-// Core is TypeScript for Node: its relative imports end with `.js` (NodeNext), and its files are
-// `.ts`. Metro looks for the `.js` file: it gets the `.ts` file of the same name in its place.
-const resolveRequest = config.resolver.resolveRequest;
+// Core is TypeScript run as ES modules, so its relative imports name the output file: './bots.js' for
+// bots.ts. Metro looks for that name as written. For a file of core, a relative '.js' import loses its
+// extension, and Metro then finds the '.ts' file.
+const coreSource = path.resolve(workspaceRoot, 'packages/core/src') + path.sep;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  const resolve = resolveRequest ?? context.resolveRequest;
-  if (moduleName.startsWith('.') && moduleName.endsWith('.js')) {
-    try {
-      return resolve(context, `${moduleName.slice(0, -3)}.ts`, platform);
-    } catch {
-      // Not a TypeScript file: the `.js` file itself.
-    }
-  }
-  return resolve(context, moduleName, platform);
+  const fromCore = context.originModulePath.startsWith(coreSource);
+  const name = fromCore && /^\.\.?\/.*\.js$/.test(moduleName) ? moduleName.slice(0, -3) : moduleName;
+  return context.resolveRequest(context, name, platform);
 };
 
 module.exports = config;

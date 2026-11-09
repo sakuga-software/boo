@@ -54,6 +54,13 @@ export default function Account() {
           palette={palette}
           disabled={state.signingOut}
         />
+        <Button
+          label="Settings"
+          onPress={() => router.push('/settings')}
+          kind="secondary"
+          palette={palette}
+          disabled={state.signingOut}
+        />
       </View>
     </SafeAreaView>
   );

@@ -1,7 +1,7 @@
 # boo mobile
 
 The phone app of boo. It shows the state of the pull requests that the relay reads: the sign-in to
-the relay, the list of the pull requests, and the details of each one.
+the relay, the list of the pull requests, the details of each one, and the settings.
 
 - Expo SDK 57, [expo-router](https://docs.expo.dev/router/introduction/) with typed routes, and the
   React Compiler (`experiments` in `app.json`).
@@ -23,9 +23,12 @@ pnpm ios     # builds the dev client locally and opens it in the iOS simulator (
 them when they are there. Without them, `Href` accepts any string, so CI still checks the rest of the
 types.
 
+Core is TypeScript with ES module imports (`./bots.js` for `bots.ts`). `metro.config.js` drops the `.js`
+of a relative import inside `packages/core/src`, so Metro finds the `.ts` file.
+
 ## Sign in to the relay
 
-The home screen signs in with the device flow of GitHub. The code is the one of the CLI
+The home screen signs in with the device flow of GitHub, on the relay of the settings. The code is the one of the CLI
 (`connectRelay` and `closeRelaySession` in `packages/core/src/relay.ts`):
 
 1. The screen shows a code. **Copy the code and open GitHub** copies it to the clipboard and opens
@@ -56,6 +59,29 @@ variables of the environment change it when Metro starts, through `app.config.js
 ```sh
 BOO_RELAY_URL=http://localhost:4621 pnpm ios
 ```
+
+## Settings
+
+**Settings**, on the home screen when signed out and on the account screen when signed in, edits two things.
+
+- **The relay of this phone.** The field takes a URL, as `boo setup-webhooks` does: `https://` when the
+  scheme is missing, no trailing slash, `http://` only on this machine. **Use this relay** first asks the
+  new URL if it is a boo relay (`GET /`, with no token). Then the app signs out of the current relay
+  (`DELETE /sessions`): a session belongs to one relay only. The person signs in again on the new one.
+  The phone keeps the choice in `expo-secure-store` (`boo.relay.url`). **Use the default relay** goes back
+  to the relay of `app.json`, and forgets the choice.
+- **What the relay follows** (signed in only): the organization, the authors and the repositories. The
+  screen reads `GET /settings` and saves with `PUT /settings`. The settings live on the relay, and the
+  last write wins (D6): the CLI and the other phones of the user read the same ones. The relay takes the
+  whole settings file, so the settings that this screen does not edit (the bots, the merge policy, the
+  switches) go back as the relay gave them. After a save, the relay reads the list of pull requests
+  again. No repository means every repository of the organization; a repository named with no owner
+  takes the organization.
+
+A tap on **Sign out** or on **Use this relay** that comes before the screen renders the first one sends
+nothing more (`signOutOnce` in `src/relay/sign-out.ts`, `relayChanger` in `src/relay/change-relay.ts`).
+The change of relay signs out of the session of the state after the check of the new relay, not before
+it: the session can end during that check.
 
 ## Put the dev client on a phone
 

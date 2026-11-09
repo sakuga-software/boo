@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { PullList } from '../pulls/pull-list';
 import { useRelayContext } from '../relay/relay-context';
 import { Button } from '../ui/button';
@@ -10,6 +11,7 @@ import { usePalette } from '../ui/use-palette';
 export default function Home() {
   const palette = usePalette();
   const relay = useRelayContext();
+  const router = useRouter();
   const { state } = relay;
   if (state.status === 'signedIn') return <PullList />;
 
@@ -28,6 +30,7 @@ export default function Home() {
         {state.notice ? <Text style={[styles.notice, text]}>{state.notice}</Text> : null}
         {button('Sign in with GitHub', relay.start)}
         <Text style={[styles.small, text]}>Relay: {relay.relayUrl}</Text>
+        {button('Settings', () => router.push('/settings'), 'secondary')}
       </>
     );
   else {
