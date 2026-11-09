@@ -1,0 +1,24 @@
+{
+  "name": "@sakuga-software/boo-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The logic of boo that runs anywhere: the decisions, the reports and the events, with no Node API",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "tsx --tsconfig tsconfig.test.json --test src/*.test.ts",
+    "test:coverage": "tsx --tsconfig tsconfig.test.json --test --experimental-test-coverage --test-coverage-exclude=\"src/**/*.test.*\" --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=75 src/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

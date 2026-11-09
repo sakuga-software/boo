@@ -86,8 +86,10 @@ boo --help              # options, states and marks
 
 ## Development
 
-The repository is a pnpm workspace: the CLI, which npm publishes, is in `packages/cli`, and the site
-is in `packages/site`.
+The repository is a pnpm workspace: the CLI, which npm publishes, is in `packages/cli`, the relay is
+in `packages/relay`, and the site is in `packages/site`. The logic that the CLI, the relay and the
+mobile app share is in `packages/core`, a private package with no Node API: the build of the CLI
+holds it.
 
 ```sh
 git clone https://github.com/sakuga-software/boo.git

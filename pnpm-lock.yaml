@@ -33,15 +33,33 @@ importers:
         specifier: ^19.3.0
         version: 19.3.0
     devDependencies:
+      '@sakuga-software/boo-core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       ink-testing-library:
         specifier: ^4.0.0
         version: 4.0.0(@types/react@19.3.0)
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/core:
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
       tsx:
         specifier: ^4.23.15
         version: 4.23.15

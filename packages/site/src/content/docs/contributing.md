@@ -3,9 +3,12 @@ title: Contributing
 description: Work on boo. The workspace, the checks, the release and the demo.
 ---
 
-The repository is a pnpm workspace. The CLI, which npm publishes, is in `packages/cli`, and this
-site is in `packages/site`. The scripts of the root run in the CLI package, except the lint and the
-format, which read the whole repository, and the `site:` scripts.
+The repository is a pnpm workspace. The CLI, which npm publishes, is in `packages/cli`, the relay is
+in `packages/relay`, and this site is in `packages/site`. The logic that the CLI, the relay and the
+mobile app share is in `packages/core`: a private package with no Node API, which esbuild puts into
+the build of the CLI. `typecheck` and `test` run in core, the CLI and the relay; the other scripts of
+the root run in the CLI package, except the lint and the format, which read the whole repository,
+and the `site:` scripts.
 
 ```sh
 pnpm dev -- --dry-run   # run the sources with tsx

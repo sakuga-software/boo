@@ -19,6 +19,7 @@ import {
   pointsOutUntil,
   probeQuery,
   QuotaError,
+  quotaMessage,
   readKey,
   readOrLast,
   searchScope,
@@ -27,7 +28,7 @@ import {
   withUnfinishedRuns,
   type PullRequestSnapshot,
 } from './github.js';
-import { summarizeChecks } from './reviewers.js';
+import { summarizeChecks } from '@sakuga-software/boo-core/reviewers';
 
 const result = (url: string, updatedAt: string, isDraft = false) => ({ url, updatedAt, isDraft });
 
@@ -337,4 +338,11 @@ test('the search keeps the drafts only when asked, and a list with drafts has it
   const options = { org: 'acme', authors: ['@me'] };
   assert.notEqual(listKey(options), listKey({ ...options, drafts: true }));
   assert.equal(listKey(options), listKey({ ...options, drafts: false }));
+});
+
+test('the quota error tells the time of the reset, and a secondary limit', () => {
+  assert.equal(quotaMessage(undefined), 'GitHub refuses the GraphQL queries of this account: rate limit');
+  const secondary = quotaMessage('2026-11-09T10:30:00Z', true);
+  assert.match(secondary, /^GitHub refuses the GraphQL queries of this account until \S+/);
+  assert.match(secondary, /: secondary rate limit, too many queries in a short time$/);
 });
