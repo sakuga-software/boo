@@ -1,16 +1,11 @@
-import {
-  closeRelaySession,
-  readInstallations,
-  SetupError,
-  type RelayConnection,
-} from '@sakuga-software/boo-core/relay';
+import { closeRelaySession, type RelayConnection } from '@sakuga-software/boo-core/relay';
 import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { relayConfig } from './config';
-import { CONNECTION_KEY, parseConnection, withAbortReason } from './connection';
+import { checkSession, CONNECTION_KEY, parseConnection, withAbortReason } from './connection';
 import { startSignIn, type SignIn, type SignInStep } from './sign-in';
 
 export type RelayState =
@@ -45,20 +40,22 @@ export function useRelay() {
   const signIn = useRef<SignIn | undefined>(undefined);
 
   const checkInstallations = useCallback(async (connection: RelayConnection) => {
-    try {
-      const { installations, installUrl } = await readInstallations(connection, { fetch: relayFetch });
+    const check = await checkSession(connection, relayFetch);
+    if (check.status === 'expired') {
+      // The relay no longer knows the session: the phone forgets it too.
+      await SecureStore.deleteItemAsync(CONNECTION_KEY, STORE).catch(() => {});
       setState((current) =>
         current.status === 'signedIn' && current.connection.session === connection.session
-          ? { status: 'signedIn', connection, ...(installations.length === 0 && { installUrl }) }
+          ? { status: 'signedOut', notice: 'The relay ended the session. Sign in again.' }
           : current,
       );
-    } catch (error) {
-      // 401: the relay no longer knows the session. Another error (no network) keeps the session.
-      if (error instanceof SetupError && /: 401\b/.test(error.message)) {
-        await SecureStore.deleteItemAsync(CONNECTION_KEY, STORE).catch(() => {});
-        setState({ status: 'signedOut', notice: 'The relay ended the session. Sign in again.' });
-      }
-    }
+    } else if (check.status === 'read')
+      // Another error (no network) keeps the session and the screen as they are.
+      setState((current) =>
+        current.status === 'signedIn' && current.connection.session === connection.session
+          ? { status: 'signedIn', connection, ...(check.installUrl && { installUrl: check.installUrl }) }
+          : current,
+      );
   }, []);
 
   useEffect(() => {

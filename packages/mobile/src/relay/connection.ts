@@ -1,4 +1,4 @@
-import type { RelayConnection } from '@sakuga-software/boo-core/relay';
+import { readInstallations, type RelayConnection } from '@sakuga-software/boo-core/relay';
 
 /** The key of the connection in the secure store of the phone. */
 export const CONNECTION_KEY = 'boo.relay.connection';
@@ -28,4 +28,27 @@ export function withAbortReason(fetchFn: typeof fetch): typeof fetch {
       throw error;
     }
   }) as typeof fetch;
+}
+
+/** What the relay says of a stored session: its installations, a session that it no longer knows, or nothing. */
+export type SessionCheck = { status: 'read'; installUrl?: string } | { status: 'expired' } | { status: 'unknown' };
+
+/**
+ * Reads the installations of the session with `readInstallations` of core. `installUrl` is set when
+ * the user reads no installation. The HTTP status, not the text of the error, tells a session that the
+ * relay no longer knows (401) from a relay that cannot answer now.
+ */
+export async function checkSession(connection: RelayConnection, fetchFn: typeof fetch): Promise<SessionCheck> {
+  let status = 0;
+  const watched = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const response = await fetchFn(input, init);
+    status = response.status;
+    return response;
+  }) as typeof fetch;
+  try {
+    const { installations, installUrl } = await readInstallations(connection, { fetch: watched });
+    return installations.length === 0 ? { status: 'read', installUrl } : { status: 'read' };
+  } catch {
+    return status === 401 ? { status: 'expired' } : { status: 'unknown' };
+  }
 }
