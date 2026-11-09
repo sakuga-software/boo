@@ -42,9 +42,12 @@ export interface AppCredentials {
   clientSecret: string;
 }
 
-const API = 'https://api.github.com';
-
-export function gitHubApi(app: AppCredentials, fetchFn: typeof fetch = fetch, now = Date.now): GitHubApi {
+export function gitHubApi(
+  app: AppCredentials,
+  fetchFn: typeof fetch = fetch,
+  now = Date.now,
+  apiUrl = 'https://api.github.com',
+): GitHubApi {
   const request = async <T>(url: string, init: RequestInit = {}): Promise<T> => {
     const response = await fetchFn(url, {
       ...init,
@@ -75,7 +78,7 @@ export function gitHubApi(app: AppCredentials, fetchFn: typeof fetch = fetch, no
   const installations = async (token: string): Promise<Installation[]> => {
     const found: Installation[] = [];
     for await (const item of pages<{ id: number; account: { login: string } }>(
-      `${API}/user/installations`,
+      `${apiUrl}/user/installations`,
       token,
       'installations',
     ))
@@ -88,7 +91,7 @@ export function gitHubApi(app: AppCredentials, fetchFn: typeof fetch = fetch, no
       // This endpoint takes the credentials of the App: a token of another App or of a person gives 404.
       const basic = Buffer.from(`${app.clientId}:${app.clientSecret}`).toString('base64');
       try {
-        const body = await request<{ user: GitHubUser }>(`${API}/applications/${app.clientId}/token`, {
+        const body = await request<{ user: GitHubUser }>(`${apiUrl}/applications/${app.clientId}/token`, {
           method: 'POST',
           headers: { authorization: `Basic ${basic}`, 'content-type': 'application/json' },
           body: JSON.stringify({ access_token: accessToken }),
@@ -131,7 +134,7 @@ export function gitHubApi(app: AppCredentials, fetchFn: typeof fetch = fetch, no
       const names: string[] = [];
       for (const installation of await installations(accessToken))
         for await (const repo of pages<{ full_name: string }>(
-          `${API}/user/installations/${installation.id}/repositories`,
+          `${apiUrl}/user/installations/${installation.id}/repositories`,
           accessToken,
           'repositories',
         ))

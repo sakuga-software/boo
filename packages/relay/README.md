@@ -20,6 +20,8 @@ are the ones of the webhook. The access filter below decides who gets these fiel
 | `DELETE /sessions`   | `boo`        | Deletes the session.                                                                                                |
 | `GET /installations` | `boo`        | The installations of the App that the user can read.                                                                |
 | `GET /events`        | `boo`        | The stream of the changes in the repositories that the user can read through the App.                               |
+| `GET /settings`      | `boo`, app   | The watch config of the user: `{ "org", "settings" }`. With no config, the defaults.                                |
+| `PUT /settings`      | `boo`, app   | Replaces the watch config of the user (the last write wins), and reads its list of pull requests again.             |
 | `GET /healthz`       | the host     | `{ "ok": true, "streams": <count> }`.                                                                               |
 
 A stream gets a change only for a repository that its user can read through the installations of the
@@ -29,6 +31,32 @@ at once after an `installation`, `installation_repositories`, `member`, `members
 a repository that left an installation must not send one more. The safety poll of the watch covers
 that time, and the stream sends `event: reset` when the access is valid again, so the watch reads
 all. A resume with `Last-Event-ID` while the access is not valid gets a reset too. One relay can serve several people and several organizations.
+
+## The state of the pull requests
+
+With the key of the App (`GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY`), the relay keeps the last state of
+each pull request that a user follows, so that several clients (several `boo` on several machines, the
+mobile app) do not each read GitHub. Without the key, the relay only relays the webhooks, and
+`/settings` answers 503.
+
+- **What a user follows.** `PUT /settings` takes the settings file of `boo` (`authors`, `repos`,
+  `mergePolicy`, `customBots`, `drafts`…) with `org` beside it: the login of an organization or an
+  account, or `""` for every account where the App is installed. A repository named without its owner
+  takes `org`. `@me` is the user of the session. The settings belong to the GitHub login, not to the
+  session: every client of the user sees the last write.
+- **The list.** The relay searches the open pull requests of each author, in each installation of the
+  App that the config names. It reads the lists again every 10 minutes, after `PUT /settings`, and
+  after a `pull_request` webhook that can add one (opened, reopened, ready for review…).
+- **The reads.** A pull request gets a first GraphQL read when a user starts to follow it, then one
+  read 2 seconds after each burst of webhooks that name it, or its head commit. A pull request is read
+  once for all the users that follow it. The reads use the installation tokens of the App: they count
+  on the limit of the installation, not of a user, and they work when no user is signed in.
+- **The storage.** `state.db` in `RELAY_DATA_DIR`, a SQLite database (`node:sqlite`). It holds the watch
+  config of each user and the last read of each pull request, with the text of its description, its
+  reviews and its comments. A read for a user gives only the repositories that the user reads through
+  the App.
+- **The retention.** The relay deletes a pull request, with its text, 7 days after it is merged or
+  closed, or 7 days after nobody follows it any more. The check runs at start and every hour.
 
 ## Limits
 
@@ -63,8 +91,10 @@ GitHub App**.
   Membership, Organization, Repository.
 - **Where can this GitHub App be installed?**: any account, if other people use your relay.
 
-Then note the **Client ID**, generate a **client secret**, and note the **slug** of the App (the end
-of `github.com/apps/<slug>`). The relay needs no private key.
+Then note the **Client ID** and the **App ID**, generate a **client secret** and a **private key**,
+and note the **slug** of the App (the end of `github.com/apps/<slug>`). The private key lets the relay
+read the pull requests with the tokens of the installations; without it, the relay only relays the
+webhooks.
 
 To install the App on an organization, you must be an owner of the organization. A member can only
 request the installation, and an owner approves it.
@@ -78,7 +108,10 @@ request the installation, and an owner approves it.
 | `GITHUB_APP_SLUG`          | The slug of the App.                                                                                                                       |
 | `GITHUB_WEBHOOK_SECRET`    | The webhook secret of the App.                                                                                                             |
 | `RELAY_ENCRYPTION_KEY`     | A long random value. It encrypts the GitHub tokens in the sessions file. If you change it, every user must run `boo setup-webhooks` again. |
-| `RELAY_DATA_DIR`           | The folder of `sessions.json`. `/data` in the image. Keep it on a volume.                                                                  |
+| `GITHUB_APP_ID`            | The App ID. With `GITHUB_APP_PRIVATE_KEY`, the relay keeps the state of the pull requests.                                                 |
+| `GITHUB_APP_PRIVATE_KEY`   | The private key of the App, in PEM. In one line, write `\n` for each line break.                                                           |
+| `GITHUB_API_URL`           | `https://api.github.com` by default.                                                                                                       |
+| `RELAY_DATA_DIR`           | The folder of `sessions.json` and `state.db`. `/data` in the image. Keep it on a volume.                                                   |
 | `PORT`                     | `3000` by default.                                                                                                                         |
 
 With Docker, from the root of the repository:

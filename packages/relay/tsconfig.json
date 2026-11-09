@@ -5,8 +5,8 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "outDir": "dist",
-    "rootDir": "src",
+    // esbuild builds dist/ with core in it (scripts/build.mjs): tsc only checks the types.
+    "noEmit": true,
     "strict": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
