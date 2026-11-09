@@ -44,6 +44,9 @@ With a relay, `boo --watch` reads the stream of the relay:
   gives about twenty check events. A read by another run of boo on this machine after the change
   answers with no query.
 - A pull request that opens, closes or leaves draft reads the list again.
+- A merge reads the other pull requests of the repository on the same base 5 seconds later: GitHub
+  sends them no webhook, but the merge can give them a conflict. While GitHub has not computed the
+  mergeable state of a pull request yet, the watch reads it again every 30 seconds.
 - The list and every pull request get a safety read every 10 minutes, for a webhook that GitHub
   delivers late or not at all.
 - The header shows the state of the stream: `live · safety check in 9:58`, or `poll · next check in
