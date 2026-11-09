@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { detectAgent, type AgentSignals } from './agents.js';
+import { agentName, detectAgent, type AgentSignals } from './agents.js';
 
 const signals = (patch: Partial<AgentSignals>): AgentSignals => ({
   author: 'Mheaus',
@@ -42,4 +42,10 @@ test('the author or the branch names the other agents', () => {
   assert.equal(detectAgent(signals({ branch: 'codex/fix-login' }))?.id, 'codex');
   assert.equal(detectAgent(signals({ author: 'cursor[bot]' }))?.id, 'cursor');
   assert.equal(detectAgent(signals({ author: 'devin-ai-integration[bot]' }))?.id, 'devin');
+});
+
+test('the id of an agent gives its name, and an unknown id gives itself', () => {
+  assert.equal(agentName('claude'), 'Claude Code');
+  assert.equal(agentName('copilot'), 'Copilot');
+  assert.equal(agentName('jules'), 'jules');
 });
