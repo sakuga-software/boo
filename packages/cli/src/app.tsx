@@ -121,6 +121,11 @@ export interface Timing {
   relayPollMs: number;
   /** The quiet time after a relay change before the read. The read waits at most 4 times this. */
   relaySettleMs: number;
+  /**
+   * After a merge, the time before the watch reads the other pull requests on the same base. GitHub
+   * sends them no webhook, and it computes their mergeable state a few seconds after the merge.
+   */
+  relayMergeDelayMs: number;
 }
 
 const DEFAULT_TIMING: Timing = {
@@ -131,6 +136,7 @@ const DEFAULT_TIMING: Timing = {
   sessionsPollMs: 5_000,
   // A push gives about twenty check events in a minute: the watch reads after a quiet time, or after the cap.
   relaySettleMs: 2_500,
+  relayMergeDelayMs: 5_000,
   relayPollMs: 10 * 60_000,
 };
 // The actions of a pull request that can add it to the list of the search, or take it out.
@@ -538,7 +544,32 @@ export function App(props: AppProps) {
     let live = false;
     let settle: NodeJS.Timeout | undefined;
     let firstChangeAt: number | undefined;
-    signal.addEventListener('abort', () => clearTimeout(settle));
+    const mergeChecks = new Set<NodeJS.Timeout>();
+    signal.addEventListener('abort', () => {
+      clearTimeout(settle);
+      for (const timer of mergeChecks) clearTimeout(timer);
+    });
+
+    // A merge can give the other pull requests on its base a conflict: read them after GitHub computes it.
+    function checkAfterMerge(repo: string, number: number | undefined, base: string | undefined) {
+      const timer = setTimeout(() => {
+        mergeChecks.delete(timer);
+        for (const [key, row] of rowsRef.current) {
+          if (row.left || row.pr.number === number || row.pr.repo.toLowerCase() !== repo.toLowerCase()) continue;
+          if (base !== undefined && row.fetched && row.fetched.base !== base) continue;
+          changed.set(key, Date.now());
+        }
+        wakeSoon();
+      }, timing.relayMergeDelayMs);
+      mergeChecks.add(timer);
+    }
+
+    // GitHub gives `unknown` until it computes the mergeable state, and no webhook when it does.
+    const unsettled = () =>
+      tracked().filter((pr) => {
+        const row = rowOf(pr);
+        return !row.left && row.fetched?.mergeState === 'unknown';
+      });
 
     function wakeSoon() {
       const now = Date.now();
@@ -568,6 +599,9 @@ export function App(props: AppProps) {
         {
           change(change) {
             if (change.type === 'pull_request' && change.action && LIST_ACTIONS.has(change.action)) listChanged = true;
+            const pull = change.data?.pullRequest;
+            if (change.type === 'pull_request' && change.action === 'closed' && pull?.merged)
+              checkAfterMerge(change.repo, change.number, pull.baseRef);
             const key = keyOfChange(change);
             const at = Date.parse(change.at) || Date.now();
             if (key) changed.set(key, Math.max(changed.get(key) ?? 0, at));
@@ -599,7 +633,8 @@ export function App(props: AppProps) {
       const ends = [...waits, ...retries, ...(refusedUntil ? [Date.parse(refusedUntil)] : [])].map(
         (end) => end + 2_000 - Date.now(),
       );
-      return Math.max(1_000, Math.min(pollEvery(timing.watchPollMs), ...ends));
+      const settling = live && unsettled().length > 0 ? timing.watchPollMs : Infinity;
+      return Math.max(1_000, Math.min(pollEvery(timing.watchPollMs), settling, ...ends));
     }
 
     const tracked = () => [...rowsRef.current.values()].map((row) => row.pr);
@@ -730,6 +765,12 @@ export function App(props: AppProps) {
           return inProgress(row) || row.decision?.kind !== 'wait' || waitEnded;
         });
         await refreshAll(due);
+        // The probe does not read the mergeable state: only a read of GitHub sees it settle.
+        if (live && !pollDue) {
+          const dueKeys = new Set(due.map(keyOf));
+          const settling = unsettled().filter((pr) => !announcedKeys.has(keyOf(pr)) && !dueKeys.has(keyOf(pr)));
+          if (settling.length > 0) await refreshAll(settling, true);
+        }
         await triggerReady(tracked());
         await retryOthers(tracked());
       }

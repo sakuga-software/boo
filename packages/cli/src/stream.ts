@@ -9,6 +9,8 @@ export interface RelayChange {
   sha?: string;
   /** The time that the relay received the webhook. */
   at: string;
+  /** The fields of the webhook. The watch reads only these ones. */
+  data?: { pullRequest?: { merged?: boolean; baseRef?: string } };
 }
 
 /** `live`: the stream is open. `poll`: it is down and reconnects. `expired`: the session ended, no reconnect. */
