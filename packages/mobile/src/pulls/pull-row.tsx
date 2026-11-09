@@ -1,5 +1,5 @@
 import type { PullRequestReport } from '@sakuga-software/boo-core/report';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { CLAUDE, type Palette } from '../ui/theme';
 import { agentBadge, checksBadge, reviewerChips, stackHint, stateView } from './view';
 
@@ -7,7 +7,15 @@ import { agentBadge, checksBadge, reviewerChips, stackHint, stateView } from './
 const NO_CHECKS = new Set(['error', 'merged', 'closed']);
 
 /** One pull request, as a row of the list of boo in the terminal: the state, the name, the title, and the badges. */
-export function PullRow({ report, palette }: { report: PullRequestReport; palette: Palette }) {
+export function PullRow({
+  report,
+  palette,
+  onPress,
+}: {
+  report: PullRequestReport;
+  palette: Palette;
+  onPress: () => void;
+}) {
   const state = stateView(report);
   const checks = NO_CHECKS.has(report.state) ? undefined : checksBadge(report.checks);
   const hint = stackHint(report.stack);
@@ -20,7 +28,17 @@ export function PullRow({ report, palette }: { report: PullRequestReport; palett
     .filter(Boolean)
     .join(', ');
   return (
-    <View accessible accessibilityLabel={spoken} style={[styles.row, { borderColor: palette.border }]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={spoken}
+      accessibilityHint="Shows the details"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.row,
+        { borderColor: palette.border },
+        pressed && { backgroundColor: palette.surface },
+      ]}
+    >
       <View style={styles.line}>
         <View style={styles.mark}>
           {state.spins ? (
@@ -61,7 +79,7 @@ export function PullRow({ report, palette }: { report: PullRequestReport; palett
           </Text>
         ))}
       </View>
-    </View>
+    </Pressable>
   );
 }
 

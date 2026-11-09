@@ -76,7 +76,21 @@ export function PullList() {
       <FlatList
         data={view.reports}
         keyExtractor={reportKey}
-        renderItem={({ item }) => <PullRow report={item} palette={palette} />}
+        renderItem={({ item }) => {
+          const [owner, repo] = item.repo.split('/');
+          return (
+            <PullRow
+              report={item}
+              palette={palette}
+              onPress={() =>
+                router.push({
+                  pathname: '/pull/[owner]/[repo]/[number]',
+                  params: { owner: owner!, repo: repo!, number: String(item.number) },
+                })
+              }
+            />
+          );
+        }}
         refreshControl={refreshControl}
         contentContainerStyle={view.kind === 'empty' && styles.grow}
         ListEmptyComponent={

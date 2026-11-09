@@ -48,6 +48,7 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   needsOwner: null,
   readyForOwner: false,
   draftState: null,
+  changes: null,
   ...patch,
 });
 const byKey = (...reports: PullRequestReport[]) => new Map(reports.map((item) => [`acme/web#${item.number}`, item]));
