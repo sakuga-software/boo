@@ -2,10 +2,11 @@ import type { ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { PullList } from '../pulls/pull-list';
-import { useRelayContext } from '../relay/relay-context';
-import { Button } from '../ui/button';
-import { usePalette } from '../ui/use-palette';
+import { Ghost, PullList } from '../../pulls/pull-list';
+import { useRelayContext } from '../../relay/relay-context';
+import { Button } from '../../ui/button';
+import { font } from '../../ui/fonts';
+import { usePalette } from '../../ui/use-palette';
 
 // The home screen: the sign-in to the relay, then the list of the pull requests.
 export default function Home() {
@@ -16,7 +17,7 @@ export default function Home() {
   if (state.status === 'signedIn') return <PullList />;
 
   const text = { color: palette.text };
-  const muted = [styles.muted, text];
+  const muted = [styles.muted, { color: palette.muted }];
   const button = (label: string, onPress: () => void, kind: 'primary' | 'secondary' = 'primary') => (
     <Button label={label} onPress={onPress} kind={kind} palette={palette} />
   );
@@ -82,7 +83,10 @@ export default function Home() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: palette.background }]}>
       <View style={styles.body}>
-        <Text style={[styles.title, text]}>boo</Text>
+        <View style={styles.brand}>
+          <Ghost palette={palette} size={56} />
+          <Text style={[styles.title, text]}>boo</Text>
+        </View>
         {body}
       </View>
     </SafeAreaView>
@@ -92,10 +96,11 @@ export default function Home() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   body: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 },
-  title: { fontSize: 48, fontWeight: '700' },
-  muted: { fontSize: 16, textAlign: 'center', opacity: 0.7 },
-  small: { fontSize: 13, textAlign: 'center', opacity: 0.6 },
-  notice: { fontSize: 15, textAlign: 'center' },
-  code: { fontSize: 40, fontWeight: '700', letterSpacing: 4, fontVariant: ['tabular-nums'] },
+  brand: { alignItems: 'center', gap: 4, marginBottom: 8 },
+  title: { ...font(700, 44), letterSpacing: -0.9 },
+  muted: { ...font(400, 16), textAlign: 'center' },
+  small: { ...font(400, 13), textAlign: 'center', opacity: 0.7 },
+  notice: { ...font(500, 15), textAlign: 'center' },
+  code: { ...font(700, 40), letterSpacing: 4, fontVariant: ['tabular-nums'] },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });
