@@ -54,7 +54,10 @@ test('an answer that is not a list of reports fails', async () => {
     });
 });
 
-test('a relay that does not answer in time, or a network that fails, gives a failure to show', async () => {
+test('a relay that does not answer in time, or a network that fails, gives a failure to show', async (t) => {
+  // The timer of AbortSignal.timeout does not hold the event loop, and the fake holds nothing: Node 22 can end the test first.
+  const hold = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(hold));
   const hangs = ((_url: string, init: RequestInit) =>
     new Promise((_resolve, reject) =>
       init.signal!.addEventListener('abort', () => reject(init.signal!.reason)),

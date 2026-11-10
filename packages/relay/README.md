@@ -145,9 +145,14 @@ GitHub App**.
 - **Enable Device Flow**: on.
 - **Expire user authorization tokens**: on is supported. The relay keeps the refresh token, encrypted.
 - **Webhook URL**: `https://<your relay>/webhooks`. **Webhook secret**: a long random value.
-- **Repository permissions**, all **read-only**: Pull requests, Issues, Checks, Commit statuses,
-  Actions, Metadata. GitHub refuses the `issue_comment` event without Issues: the comments of a pull
-  request come through it. No Contents, and no write: `boo` still posts with your `gh` token.
+- **Repository permissions**, all **read-only**: Pull requests, Issues, Contents, Checks, Commit
+  statuses, Actions, Metadata. GitHub refuses the `issue_comment` event without Issues: the comments
+  of a pull request come through it. The read of a pull request needs Contents: the head commit (its
+  checks and its time), the commit of each review and the commit of the base branch are git objects,
+  and with no Contents GitHub answers « Resource not accessible by integration ». No write: `boo`
+  still posts with your `gh` token.
+- After a change of the permissions, an owner accepts the update on each installation, and the relay
+  needs a restart: an installation token keeps the permissions of its creation for one hour.
 - **Organization permissions**: Members, read-only, to get the `membership` and `organization`
   events.
 - **Subscribe to events**: Pull request, Pull request review, Pull request review comment, Pull
