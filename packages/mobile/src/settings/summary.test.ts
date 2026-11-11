@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { PUSH_STATES } from '@sakuga-software/boo-core/settings';
+import type { WatchConfig } from './remote';
 import { authorsSummary, hostOf, orgSummary, PUSH_ROWS, reposSummary, withPush } from './summary';
 
 test('the rows of what the relay follows say the organization, the authors and the repositories', () => {
@@ -18,7 +19,11 @@ test('the switches name every push state of core once', () => {
 });
 
 test('a switch keeps only the states turned off, and the other settings as they came', () => {
-  const config = { org: 'acme', settings: { authors: ['@me'], push: { merged: false } } };
+  // Only the keys that the switch reads: the other settings go back as they came.
+  const config: WatchConfig = {
+    org: 'acme',
+    settings: { authors: ['@me'], push: { merged: false } } as WatchConfig['settings'],
+  };
   assert.deepEqual(withPush(config, 'ready', false), {
     org: 'acme',
     settings: { authors: ['@me'], push: { merged: false, ready: false } },
