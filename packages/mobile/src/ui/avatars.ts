@@ -20,10 +20,10 @@ const VIOLET: Pair = { dark: ['#2E2440', '#C9B5FB'], light: ['#ECE4FB', '#5B2BB5
 const BLUE: Pair = { dark: ['#1C2F45', '#8DBDF5'], light: ['#DDEBFA', '#0B4F99'] };
 
 // The bots of the mockup keep their colors and their letters. Any other account gets a color from its name.
-const KNOWN: Record<string, { mono: string; pair: Pair }> = {
+const KNOWN: Record<string, { mono: string; pair: Pair; name?: string }> = {
   copilot: { mono: 'Co', pair: GRAY },
   greptile: { mono: 'Gr', pair: GREEN },
-  coderabbitai: { mono: 'CR', pair: ORANGE },
+  coderabbitai: { mono: 'CR', pair: ORANGE, name: 'coderabbit' },
   coderabbit: { mono: 'CR', pair: ORANGE },
   'sakuga-review': { mono: 'SR', pair: VIOLET },
   dependabot: { mono: 'De', pair: BLUE },
@@ -49,7 +49,7 @@ export function accountAvatar(login: string, scheme: Scheme): Avatar {
   const name = displayName(login);
   const known = KNOWN[name.toLowerCase()];
   const [bg, fg] = (known?.pair ?? pairOf(name.toLowerCase()))[scheme];
-  return { mono: known?.mono ?? monogram(name), claude: false, bg, fg, name };
+  return { mono: known?.mono ?? monogram(name), claude: false, bg, fg, name: known?.name ?? name };
 }
 
 /**

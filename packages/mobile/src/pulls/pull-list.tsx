@@ -13,6 +13,7 @@ import { formatTime } from '../ui/time';
 import { useNow } from '../ui/use-now';
 import { usePalette } from '../ui/use-palette';
 import { listView, liveBadge } from './list';
+import { useMergeToast } from './merge-toast';
 import { usePullsContext } from './pulls-context';
 import { PullRow } from './pull-row';
 import { triage, type Group } from './triage';
@@ -47,6 +48,7 @@ export function PullList() {
   const insets = useSafeAreaInsets();
   const relay = useRelayContext();
   const { pulls, live, refresh } = usePullsContext();
+  const toast = useMergeToast();
   const now = useNow();
   const scroll = useRef<ScrollView>(null);
   const [offsets, setOffsets] = useState<Partial<Record<Group, number>>>({});
@@ -252,6 +254,20 @@ export function PullList() {
         </View>
       ) : null}
       {body}
+      {toast.merge ? (
+        <View accessibilityRole="alert" style={[styles.toast, { backgroundColor: palette.toastBg }]}>
+          <Icon name="merged" size={16} color={palette.toastAccent} />
+          <Label size={14} color={palette.toastFg} style={styles.grow}>
+            <Label weight={700} size={14} color={palette.toastFg}>{`${toast.merge.name} merged`}</Label>
+            {toast.merge.branchDeleted ? ' · branch deleted' : ''}
+          </Label>
+          <Pressable accessibilityRole="button" onPress={() => router.navigate('/activity')} style={styles.toastLink}>
+            <Label weight={700} size={14} color={palette.toastAccent}>
+              View
+            </Label>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -299,4 +315,19 @@ const styles = StyleSheet.create({
   grow: { flex: 1 },
   shrink: { flexShrink: 1 },
   pressed: { opacity: 0.6 },
+  toast: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 12,
+    paddingVertical: 6,
+    paddingLeft: 14,
+    paddingRight: 6,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    boxShadow: '0 10px 30px rgba(10,6,20,0.28)',
+  },
+  toastLink: { height: 36, paddingHorizontal: 12, justifyContent: 'center' },
 });

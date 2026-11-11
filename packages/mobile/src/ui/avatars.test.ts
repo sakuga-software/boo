@@ -11,6 +11,7 @@ test('the bots of the mockup keep their letters and colors, by their login on Gi
     ['Co', 'Gr', 'CR', 'SR'],
   );
   assert.equal(accountAvatar('greptile-apps[bot]', 'light').bg, '#D9F0E3');
+  assert.equal(accountAvatar('coderabbitai[bot]', 'dark').name, 'coderabbit');
 });
 
 test('another account gets two letters and the same color each time', () => {

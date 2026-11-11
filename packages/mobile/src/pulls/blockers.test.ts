@@ -81,6 +81,11 @@ test('a read that failed, an owner to wait for, and a quota show as blockers', (
 test('the main action names the failing check, or the place on GitHub', () => {
   const failing = blockersOf(report({ state: 'checks failing', checks: { ...report().checks, failing: ['e2e'] } }), []);
   assert.deepEqual(mainAction(failing), { label: 'Re-run e2e', icon: 'retry', target: 'checks' });
+  const long = blockersOf(
+    report({ state: 'checks failing', checks: { ...report().checks, failing: ['e2e (playwright)'] } }),
+    [],
+  );
+  assert.equal(mainAction(long)?.label, 'Re-run e2e');
   const review = blockersOf(report({ reviewers: [{ ...reviewer, mark: 'changes requested' }] }), []);
   assert.equal(mainAction(review)?.label, 'Open on GitHub');
   assert.equal(mainAction([]), undefined);

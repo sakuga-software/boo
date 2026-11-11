@@ -3,6 +3,7 @@ import { SplashScreen, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { ActivityProvider } from '../activity/activity-context';
+import { MergeToastProvider } from '../pulls/merge-toast';
 import { PullsProvider } from '../pulls/pulls-context';
 import { PushProvider } from '../push/push-context';
 import { RelayProvider } from '../relay/relay-context';
@@ -24,24 +25,26 @@ export default function RootLayout() {
   return (
     <RelayProvider>
       <PullsProvider>
-        <ActivityProvider>
-          <SettingsProvider>
-            <PushProvider>
-              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: palette.background } }}>
-                <Stack.Screen name="(tabs)" />
-                <Stack.Screen
-                  name="merge/[owner]/[repo]/[number]"
-                  options={{
-                    presentation: 'transparentModal',
-                    animation: 'fade',
-                    contentStyle: { backgroundColor: 'transparent' },
-                  }}
-                />
-              </Stack>
-              <StatusBar style="auto" />
-            </PushProvider>
-          </SettingsProvider>
-        </ActivityProvider>
+        <MergeToastProvider>
+          <ActivityProvider>
+            <SettingsProvider>
+              <PushProvider>
+                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: palette.background } }}>
+                  <Stack.Screen name="(tabs)" />
+                  <Stack.Screen
+                    name="merge/[owner]/[repo]/[number]"
+                    options={{
+                      presentation: 'transparentModal',
+                      animation: 'fade',
+                      contentStyle: { backgroundColor: 'transparent' },
+                    }}
+                  />
+                </Stack>
+                <StatusBar style="auto" />
+              </PushProvider>
+            </SettingsProvider>
+          </ActivityProvider>
+        </MergeToastProvider>
       </PullsProvider>
     </RelayProvider>
   );

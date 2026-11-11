@@ -44,7 +44,10 @@ export function mergeRules(report: PullRequestReport): MergeRule[] {
   rules.push({
     label: 'Approved',
     ok: approvers.length > 0,
-    value: approvers.length > 0 ? approvers.map(({ login }) => displayName(login)).join(' · ') : 'nobody yet',
+    value:
+      approvers.length > 0
+        ? approvers.map(({ login }) => `${displayName(login)}${login.endsWith('[bot]') ? ' · bot' : ''}`).join(', ')
+        : 'nobody yet',
     ...(approvers[0] && { approver: approvers[0].login }),
   });
   rules.push({ label: `No conflicts with ${report.base ?? 'the base'}`, ok: report.state !== 'conflicts', value: '' });

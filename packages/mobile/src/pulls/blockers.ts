@@ -126,6 +126,7 @@ export function targetUrl(report: Pick<PullRequestReport, 'url'>, target: Target
 export function mainAction(blockers: readonly Blocker[]): (Blocker['action'] & { label: string }) | undefined {
   const first = blockers.find((blocker) => blocker.action);
   if (!first?.action) return undefined;
-  const check = first.what.match(/^(.+) fails$/)?.[1];
+  // The bar has room for a short name: `e2e (playwright)` gives `e2e`.
+  const check = first.what.match(/^(.+) fails$/)?.[1]?.replace(/\s*\(.*\)$/, '');
   return { ...first.action, label: check ? `Re-run ${check}` : `${first.action.label} on GitHub` };
 }

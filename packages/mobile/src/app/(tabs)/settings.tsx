@@ -7,7 +7,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePullsContext } from '../../pulls/pulls-context';
 import { usePushStatus } from '../../push/push-context';
 import { pushLine } from '../../push/status';
+import { canMergeIn } from '../../pulls/merge';
 import { useRelayContext } from '../../relay/relay-context';
+import { useInstallations } from '../../relay/use-installations';
 import { useSettings } from '../../settings/settings-context';
 import { authorsSummary, hostOf, orgSummary, PUSH_ROWS, reposSummary, withPush } from '../../settings/summary';
 import { monogram } from '../../ui/avatars';
@@ -76,6 +78,13 @@ export default function SettingsScreen() {
   const { live } = usePullsContext();
   const push = usePushStatus();
   const { remote, retry, save } = useSettings();
+  const installations = useInstallations();
+  // The merge is on if the App can merge in the organization, or in each account with no organization set.
+  const followed =
+    remote.status === 'ready' && remote.config.org
+      ? [remote.config.org]
+      : (installations ?? []).map(({ account }) => account);
+  const canMerge = followed.length > 0 && followed.every((account) => canMergeIn(installations, account) === true);
   const [problem, setProblem] = useState<string>();
   const { state } = relay;
   const signedIn = state.status === 'signedIn' ? state : undefined;
@@ -127,13 +136,15 @@ export default function SettingsScreen() {
             index={2}
             icon="lock"
             label="Merge from the phone"
-            value="read only"
-            valueColor={palette.tones.yellow}
+            value={canMerge ? 'on' : 'read only'}
+            valueColor={canMerge ? palette.tones.green : palette.tones.yellow}
             valueWeight={700}
             onPress={() =>
               Alert.alert(
                 'Merge from the phone',
-                'The GitHub App of the relay only reads your repositories. The Merge sheet shows the policy, and you merge on GitHub.',
+                canMerge
+                  ? 'The relay merges with your GitHub account: GitHub shows you as the author of the merge, and your rights apply.'
+                  : 'The GitHub App of the relay only reads your repositories. An owner gives it write access to Contents and Pull requests, then the Merge sheet merges.',
               )
             }
           />
