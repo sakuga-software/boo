@@ -7,6 +7,7 @@
     "scheme": "boo",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon/icon.png",
     "runtimeVersion": {
       "policy": "fingerprint"
     },
@@ -20,7 +21,12 @@
     },
     "android": {
       "package": "dev.sakuga.boo",
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon/adaptive-foreground.png",
+        "backgroundImage": "./assets/icon/adaptive-background.png",
+        "backgroundColor": "#120F18"
+      }
     },
     "web": {
       "output": "single"

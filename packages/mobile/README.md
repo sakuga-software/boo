@@ -194,6 +194,14 @@ The iOS simulator gets no real push from APNs. For a local demo, `BOO_EXPO_PUSH_
 `http://localhost` or `127.0.0.1`) points the token request to a fake Expo service, and
 `xcrun simctl push` hands a notification to the simulator.
 
+## The icon
+
+`assets/icon/` holds the icon: the ghost of boo in its violet outline, on the dark background of the
+app. Each PNG comes from the SVG of the same name, at 1024 × 1024: `icon.png` for iOS (no
+transparency), and the two layers of the adaptive icon of Android. To change the icon, edit the SVG,
+render it again in a browser at 1024 × 1024, then remove the transparency of `icon.png`. The icon is
+native: a new dev client shows it.
+
 ## Checks
 
 `pnpm lint`, `pnpm format`, `pnpm typecheck` and `pnpm test` at the root of the repository cover this
