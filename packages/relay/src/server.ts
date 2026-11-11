@@ -3,7 +3,7 @@ import type { WatchEvent } from '@sakuga-software/boo-core/events';
 import { parseSettings, resolveRepos } from '@sakuga-software/boo-core/settings';
 import { Access, SessionExpired } from './access.js';
 import { changesAccess, changesOf } from './events.js';
-import type { GitHubApi } from './github.js';
+import { GitHubError, type GitHubApi, type MergeMethod } from './github.js';
 import { Hub, type RelayEvent, type Subscriber } from './hub.js';
 import type { Session, SessionStore } from './sessions.js';
 import { PUSH_TOKEN, PushNotifier, type PushOptions } from './push.js';
@@ -35,6 +35,12 @@ export interface RelayOptions {
 const MAX_SETTINGS_BYTES = 256 * 1024;
 const ORG = /^[a-z\d](?:[a-z\d-]{0,38})$/i;
 
+// A merge request is some tens of bytes.
+const MAX_MERGE_BYTES = 4 * 1024;
+const MERGE_METHODS: readonly MergeMethod[] = ['squash', 'merge', 'rebase'];
+const REPO = /^[\w.-]+\/[\w.-]+$/;
+const SHA = /^[0-9a-f]{40}$/i;
+
 // A push token is some tens of bytes.
 const MAX_DEVICE_BYTES = 4 * 1024;
 
@@ -45,6 +51,8 @@ class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** A code for the client, beside the message: `no-write` for an App with no write permission. */
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -176,6 +184,51 @@ export function createRelay(options: RelayOptions) {
     if (!store.has(session.id)) throw new HttpError(401, 'The session was deleted');
     state.setDevice(token, { session: session.id, login: session.user.login }, (options.now ?? Date.now)());
     json(response, 200, { token });
+  }
+
+  /**
+   * Merges a pull request for the user of the session, with the token of the user: GitHub records the
+   * user as the author of the merge, and the rights of the user apply. The App must have the write
+   * permissions on Contents and Pull requests. `sha` is the head that the person saw: a push after it
+   * makes GitHub refuse the merge.
+   */
+  async function onMerge(request: IncomingMessage, response: ServerResponse, session: Session): Promise<void> {
+    const body = parseJson<Record<string, unknown>>(await readBody(request, MAX_MERGE_BYTES));
+    const { repo, number, method, deleteBranch, sha } = typeof body === 'object' && body !== null ? body : {};
+    if (typeof repo !== 'string' || !REPO.test(repo)) throw new HttpError(400, 'repo must be "owner/name"');
+    if (typeof number !== 'number' || !Number.isInteger(number) || number < 1)
+      throw new HttpError(400, 'number must be the number of a pull request');
+    if (typeof method !== 'string' || !MERGE_METHODS.includes(method as MergeMethod))
+      throw new HttpError(400, 'method must be squash, merge or rebase');
+    if (typeof deleteBranch !== 'boolean') throw new HttpError(400, 'deleteBranch must be true or false');
+    if (typeof sha !== 'string' || !SHA.test(sha)) throw new HttpError(400, 'sha must be the head commit');
+    // A repository that the user does not read through the App gives the same answer as one that does not exist.
+    if (!(await access.repos(session)).has(repo.toLowerCase()))
+      throw new HttpError(404, `No pull request ${repo}#${number} for this session`);
+
+    const merged = await access
+      .withToken(session, async (token) => {
+        const head = await gitHub.pullHead(token, repo, number);
+        const commit = await gitHub.merge(token, repo, number, { method: method as MergeMethod, sha });
+        return { head, commit, token };
+      })
+      .catch((error: unknown) => {
+        throw mergeError(error);
+      });
+
+    let branchDeleted = false;
+    // A branch of a fork belongs to another repository: the relay leaves it.
+    if (deleteBranch && merged.head.repo?.toLowerCase() === repo.toLowerCase())
+      branchDeleted = await gitHub.deleteBranch(merged.token, repo, merged.head.ref).then(
+        () => true,
+        (error: unknown) => {
+          console.error(error);
+          return false;
+        },
+      );
+    // The webhook of the merge comes too, but later: the list and the push notifications see it now.
+    options.state?.tracker.onChange({ type: 'pull_request', action: 'closed', repo, number });
+    json(response, 200, { merged: true, sha: merged.commit, branchDeleted });
   }
 
   /**
@@ -384,6 +437,8 @@ export function createRelay(options: RelayOptions) {
         return onGetSettings(authenticate(request), response);
       case 'PUT /settings':
         return onPutSettings(request, response, authenticate(request));
+      case 'POST /merge':
+        return onMerge(request, response, authenticate(request));
       case 'POST /devices':
         return onPostDevice(request, response, authenticate(request));
       case 'DELETE /devices': {
@@ -403,11 +458,34 @@ export function createRelay(options: RelayOptions) {
       const message = error instanceof Error && status !== 500 ? error.message : 'The relay failed';
       if (status === 500) console.error(error);
       if (response.headersSent) response.end();
-      else json(response, status, { error: message });
+      else
+        json(response, status, {
+          error: message,
+          ...(error instanceof HttpError && error.code && { code: error.code }),
+        });
     });
   }
 
   return { handle, hub, push };
+}
+
+/**
+ * The answer to a merge that failed. A 403 is an App with no write permission: GitHub answers
+ * "Resource not accessible by integration". A refused merge (405, 409, 422) gives the message of
+ * GitHub, such as a branch protection rule, for the person to read.
+ */
+function mergeError(error: unknown): unknown {
+  if (!(error instanceof GitHubError)) return error;
+  if (error.status === 403)
+    return new HttpError(
+      403,
+      'The GitHub App of the relay cannot merge: an owner must give it write access to Contents and Pull requests',
+      'no-write',
+    );
+  if (error.status === 404) return new HttpError(404, 'GitHub does not know this pull request');
+  if ([405, 409, 422].includes(error.status))
+    return new HttpError(409, error.detail ?? `GitHub refused the merge (${error.status})`);
+  return new HttpError(502, `GitHub did not merge: ${error.detail ?? `it answered ${error.status}`}`);
 }
 
 function statusOf(error: unknown): number {
