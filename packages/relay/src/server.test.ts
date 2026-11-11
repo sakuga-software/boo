@@ -1115,6 +1115,11 @@ test('an App with no write permission gives 403 no-write, and a refused merge gi
   assert.equal((await merge(base, session, request)).status, 409);
   gitHub.mergeRefusal = new GitHubError('GitHub answered 502', 502);
   assert.equal((await merge(base, session, request)).status, 502);
+  // GitHub hides a private repository behind a 404: after a read of the pull request that worked, it is a missing right.
+  gitHub.mergeRefusal = new GitHubError('GitHub answered 404', 404, 'Not Found');
+  const hidden = await merge(base, session, request);
+  assert.equal(hidden.status, 403);
+  assert.equal(((await hidden.json()) as { code: string }).code, 'no-write');
   assert.deepEqual(gitHub.merges, []);
 });
 

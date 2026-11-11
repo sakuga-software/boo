@@ -209,7 +209,14 @@ export function createRelay(options: RelayOptions) {
     const merged = await access
       .withToken(session, async (token) => {
         const head = await gitHub.pullHead(token, repo, number);
-        const commit = await gitHub.merge(token, repo, number, { method: method as MergeMethod, sha });
+        const commit = await gitHub
+          .merge(token, repo, number, { method: method as MergeMethod, sha })
+          .catch((error: unknown) => {
+            // The read of the pull request worked: a 404 of the merge is a right to write that the App does not have.
+            if (error instanceof GitHubError && error.status === 404)
+              throw new GitHubError(error.message, 403, error.detail);
+            throw error;
+          });
         return { head, commit, token };
       })
       .catch((error: unknown) => {
