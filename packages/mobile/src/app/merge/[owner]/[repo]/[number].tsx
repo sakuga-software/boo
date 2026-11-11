@@ -1,10 +1,10 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { canMergeIn, mergedDetail, mergePull, type MergeMethod, type MergeResult } from '../../../../pulls/merge';
 import { mergeRules } from '../../../../pulls/merge-rules';
-import { useMergeToast } from '../../../../pulls/merge-toast';
+import { useMergeToast, type DoneMerge } from '../../../../pulls/merge-toast';
 import { usePullsContext } from '../../../../pulls/pulls-context';
 import { shortName } from '../../../../pulls/triage';
 import { withAbortReason } from '../../../../relay/connection';
@@ -36,7 +36,15 @@ export default function MergeSheet() {
   const insets = useSafeAreaInsets();
   const relay = useRelayContext();
   const { pulls, refresh } = usePullsContext();
-  const toast = useMergeToast();
+  const { show } = useMergeToast();
+  // The toast starts when the sheet closes: the list is under the sheet until then.
+  const done = useRef<DoneMerge>(undefined);
+  useEffect(
+    () => () => {
+      if (done.current) show(done.current);
+    },
+    [show],
+  );
   const installations = useInstallations();
   const { owner, repo, number } = useLocalSearchParams<{ owner: string; repo: string; number: string }>();
   const [method, setMethod] = useState<MergeMethod>('squash');
@@ -66,7 +74,7 @@ export default function MergeSheet() {
     if (answer.status === 'expired') return void relay.recheck(connection);
     setPhase({ step: 'done', result: answer });
     if (answer.status === 'merged') {
-      toast.show({ name: shortName(report), branchDeleted: answer.branchDeleted });
+      done.current = { name: shortName(report), branchDeleted: answer.branchDeleted };
       refresh();
     }
   };
