@@ -95,7 +95,7 @@ export function eventsBetween(
   before: readonly Report[],
   after: readonly Report[],
   at: Date,
-  idOf: (index: number) => string,
+  idOf: (key: string, index: number) => string,
 ): ActivityEvent[] {
   const old = new Map(before.map((report) => [reportKey(report), report]));
   const events: ActivityEvent[] = [];
@@ -105,7 +105,7 @@ export function eventsBetween(
     for (const change of changesOf(previous, report))
       events.push({
         ...change,
-        id: idOf(events.length),
+        id: idOf(reportKey(report), events.length),
         key: reportKey(report),
         name: shortName(report),
         title: report.title,
@@ -152,6 +152,21 @@ export function groupByDay(events: readonly ActivityEvent[], now: Date) {
     else groups.push({ label, events: [event] });
   }
   return groups;
+}
+
+/**
+ * Reads the log of the phone. `writable` is false when the file exists but the read failed: a write
+ * would then replace an activity that a later read could still give.
+ */
+export async function loadLog(
+  read: () => Promise<string | undefined>,
+  now: Date,
+): Promise<{ log: ActivityLog; writable: boolean }> {
+  try {
+    return { log: parseLog(await read(), now), writable: true };
+  } catch {
+    return { log: parseLog(undefined, now), writable: false };
+  }
 }
 
 /** A log read from a file, or an empty log if the text is not one. */

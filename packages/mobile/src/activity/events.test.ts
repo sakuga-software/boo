@@ -6,6 +6,7 @@ import {
   eventsBetween,
   groupByDay,
   isUnread,
+  loadLog,
   MAX_EVENTS,
   parseLog,
   unreadCount,
@@ -14,7 +15,7 @@ import {
 } from './events';
 
 const at = new Date('2026-11-10T14:58:00.000Z');
-const ids = (index: number) => `e${index}`;
+const ids = (key: string, index: number) => `${key}:e${index}`;
 const reviewer = report().reviewers[0]!;
 
 test('a change of state gives one event, with the words and the glyph of the new state', () => {
@@ -58,7 +59,7 @@ test('a change of state gives one event, with the words and the glyph of the new
     tone: 'green',
     what: 'Ready to merge',
     canMerge: true,
-    id: 'e0',
+    id: 'acme/web#1:e0',
     key: 'acme/web#1',
     name: 'web#1',
     title: 'Show the list',
@@ -152,4 +153,23 @@ test('a log file that is missing or broken gives an empty log, read from now', (
   assert.deepEqual(parseLog('{', now), { events: [], readAt: now.toISOString() });
   assert.deepEqual(parseLog('{"events":3}', now), { events: [], readAt: now.toISOString() });
   assert.deepEqual(parseLog('{"events":[],"readAt":"x"}', now), { events: [], readAt: 'x' });
+});
+
+test('a log that the phone cannot read is not written: a later read can still give it', async () => {
+  const now = new Date('2026-11-10T15:00:00.000Z');
+  const failed = await loadLog(() => Promise.reject(new Error('busy')), now);
+  assert.deepEqual(failed, { log: { events: [], readAt: now.toISOString() }, writable: false });
+  const missing = await loadLog(() => Promise.resolve(undefined), now);
+  assert.equal(missing.writable, true);
+  const read = await loadLog(() => Promise.resolve('{"events":[],"readAt":"x"}'), now);
+  assert.deepEqual(read, { log: { events: [], readAt: 'x' }, writable: true });
+});
+
+test('two events of one list get two ids, each with the key of its pull request', () => {
+  const before = [report({ number: 1, state: 'reviewing' }), report({ number: 2, state: 'reviewing' })];
+  const after = [report({ number: 1, state: 'ready to merge' }), report({ number: 2, state: 'conflicts' })];
+  assert.deepEqual(
+    eventsBetween(before, after, at, ids).map(({ id }) => id),
+    ['acme/web#1:e0', 'acme/web#2:e1'],
+  );
 });

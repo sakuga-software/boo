@@ -3,13 +3,21 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import type { PullRequestReport } from '@sakuga-software/boo-core/report';
 import { usePullsContext } from '../pulls/pulls-context';
 import { useRelayContext } from '../relay/relay-context';
-import { eventsBetween, parseLog, unreadCount, withEvents, type ActivityLog } from './events';
+import { eventsBetween, loadLog, unreadCount, withEvents, type ActivityLog } from './events';
 
 interface Activity {
   log: ActivityLog;
   unread: number;
   /** Marks every event as read. */
   readAll: () => void;
+}
+
+/** The log of one login. `changed`: the log differs from the file. `writable`: the read of the file worked. */
+interface Entry {
+  login: string;
+  log: ActivityLog;
+  writable: boolean;
+  changed: boolean;
 }
 
 const EMPTY: Activity = { log: { events: [], readAt: '' }, unread: 0, readAll: () => {} };
@@ -27,58 +35,56 @@ export function ActivityProvider({ children }: { children: ReactNode }) {
   const relay = useRelayContext();
   const { pulls } = usePullsContext();
   const login = relay.state.status === 'signedIn' ? relay.state.connection.login : undefined;
-  const [entry, setEntry] = useState<{ login: string; log: ActivityLog }>();
+  const [entry, setEntry] = useState<Entry>();
   const previous = useRef<{ login: string; reports: PullRequestReport[] }>(undefined);
-  const log = entry && entry.login === login ? entry.log : undefined;
-  const latest = useRef(log);
-  useEffect(() => {
-    latest.current = log;
-  }, [log]);
-  const loaded = log !== undefined;
+  const current = entry && entry.login === login ? entry : undefined;
+  const log = current?.log;
+  // A change for the login of now: a log that another login loaded meanwhile stays as it is.
+  const update = (change: (entry: Entry) => Entry) =>
+    setEntry((now) => (now && now.login === login ? change(now) : now));
 
   useEffect(() => {
     if (!login) return;
-    let current = true;
+    let active = true;
     const file = fileOf(login);
-    const read = file.exists ? file.text() : Promise.resolve(undefined);
-    void read
-      .catch(() => undefined)
-      .then((text) => {
-        if (current) setEntry({ login, log: parseLog(text, new Date()) });
-      });
+    void loadLog(() => (file.exists ? file.text() : Promise.resolve(undefined)), new Date()).then((loaded) => {
+      if (active) setEntry({ login, ...loaded, changed: false });
+    });
     return () => {
-      current = false;
+      active = false;
     };
   }, [login]);
 
   const reports = pulls.state?.reports;
   const at = pulls.state?.at;
-  // Only a new list gives events. The log comes from a ref: a change of the log must not compare a list
-  // with itself.
   useEffect(() => {
-    const current = latest.current;
-    if (!login || !reports || !at || !loaded || !current) return;
+    if (!login || !reports || !at || !log) return;
+    // A change of the log runs this effect again with the same list: that list gave its events already.
+    if (previous.current?.login === login && previous.current.reports === reports) return;
     const before = previous.current?.login === login ? previous.current.reports : undefined;
     previous.current = { login, reports };
     if (!before) return;
-    const events = eventsBetween(before, reports, new Date(at), (index) => `${at}-${index}`);
-    if (events.length > 0) setEntry({ login, log: withEvents(current, events) });
-  }, [login, reports, at, loaded]);
+    const stamp = Date.now().toString(36);
+    const events = eventsBetween(before, reports, new Date(at), (key, index) => `${stamp}-${key}-${index}`);
+    if (events.length > 0)
+      setEntry((now) => (now?.login === login ? { ...now, log: withEvents(now.log, events), changed: true } : now));
+  }, [login, reports, at, log]);
 
   useEffect(() => {
-    if (!login || !log) return;
+    if (!current?.changed || !current.writable) return;
     try {
-      fileOf(login).write(JSON.stringify(log));
+      fileOf(current.login).write(JSON.stringify(current.log));
     } catch {
       // A full disk loses the activity of this session, not the app.
     }
-  }, [login, log]);
+  }, [current]);
 
   const value: Activity = log
     ? {
         log,
         unread: unreadCount(log),
-        readAll: () => setEntry({ login: login!, log: { ...log, readAt: new Date().toISOString() } }),
+        readAll: () =>
+          update((now) => ({ ...now, log: { ...now.log, readAt: new Date().toISOString() }, changed: true })),
       }
     : EMPTY;
   return <ActivityContext.Provider value={value}>{children}</ActivityContext.Provider>;
