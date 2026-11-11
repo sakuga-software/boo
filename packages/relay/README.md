@@ -18,7 +18,7 @@ are the ones of the webhook. The access filter below decides who gets these fiel
 | `POST /webhooks`     | GitHub       | Checks the signature, keeps the fields that the watch needs, and sends them to the streams.                         |
 | `POST /sessions`     | `boo`        | Takes the user token of the App from the device flow, checks that it belongs to the App, and gives a session token. |
 | `DELETE /sessions`   | `boo`        | Deletes the session.                                                                                                |
-| `GET /installations` | `boo`        | The installations of the App that the user can read.                                                                |
+| `GET /installations` | `boo`        | The installations of the App that the user can read. `canMerge`: the installation accepted the write permissions.   |
 | `GET /events`        | `boo`        | The stream of the changes in the repositories that the user can read through the App.                               |
 | `GET /state`         | `boo`, app   | The reports of the user, with the keys of `boo --json`, plus `cursor` and `at`.                                     |
 | `GET /state/events`  | `boo`, app   | The stream of the changes of these reports, in the vocabulary of `boo --watch --events`, `id` = the cursor.         |
@@ -26,6 +26,7 @@ are the ones of the webhook. The access filter below decides who gets these fiel
 | `PUT /settings`      | `boo`, app   | Replaces the watch config of the user (the last write wins), and reads its list of pull requests again.             |
 | `POST /devices`      | app          | Records the Expo push token of the phone of the session: `{ "token": "ExponentPushToken[…]" }`.                     |
 | `DELETE /devices`    | app          | Deletes the push token of the session: the phone gets no more push notifications.                                   |
+| `POST /merge`        | app          | Merges a pull request with the token of the user. See [Merge from the phone](#merge-from-the-phone).                |
 | `GET /healthz`       | the host     | `{ "ok": true, "streams": <count> }`.                                                                               |
 
 A stream gets a change only for a repository that its user can read through the installations of the
@@ -122,6 +123,26 @@ failing, conflicts, merged, or when it starts to stall.
   does. No second try: a request that ran out of time can still be delivered.
 - **A tap** opens `boo://pull/<owner>/<repo>/<number>`, the screen of the pull request in the app.
 
+## Merge from the phone
+
+`POST /merge` takes `{ "repo": "owner/name", "number", "method": "squash" | "merge" | "rebase",
+"deleteBranch", "sha" }`. `sha` is the head commit that the person saw: if a push came after it,
+GitHub refuses the merge.
+
+- **The token.** The relay merges with the user token of the session, never with a token of an
+  installation. GitHub records the user as the author of the merge, and the rights of the user apply:
+  a user that cannot merge on GitHub cannot merge through the relay.
+- **The access.** The repository must be one that the user reads through the App. Any other
+  repository gets 404.
+- **The branch.** With `deleteBranch`, the relay deletes the head branch after the merge, only if the
+  branch is in the same repository. It leaves the branch of a fork. A failed delete does not fail the
+  merge: the answer says `branchDeleted: false`.
+- **The answers.** 200 `{ "merged": true, "sha", "branchDeleted" }`. 403 `{ "error", "code": "no-write" }`
+  if the App has no write permission. 409 `{ "error" }` with the words of GitHub if GitHub refuses the
+  merge: a rule of the branch protection, a head that moved, conflicts. 502 if GitHub fails.
+- After a merge, the relay reads the pull request again at once: the list and the push notifications
+  do not wait for the webhook.
+
 ## Limits
 
 - The relay keeps the last 10 000 events in memory, and at most 64 MB of them: an event carries the
@@ -145,14 +166,22 @@ GitHub App**.
 - **Enable Device Flow**: on.
 - **Expire user authorization tokens**: on is supported. The relay keeps the refresh token, encrypted.
 - **Webhook URL**: `https://<your relay>/webhooks`. **Webhook secret**: a long random value.
-- **Repository permissions**, all **read-only**: Pull requests, Issues, Contents, Checks, Commit
-  statuses, Actions, Metadata. GitHub refuses the `issue_comment` event without Issues: the comments
-  of a pull request come through it. The read of a pull request needs Contents: the head commit (its
-  checks and its time), the commit of each review and the commit of the base branch are git objects,
-  and with no Contents GitHub answers « Resource not accessible by integration ». No write: `boo`
-  still posts with your `gh` token.
-- After a change of the permissions, an owner accepts the update on each installation, and the relay
-  needs a restart: an installation token keeps the permissions of its creation for one hour.
+- **Repository permissions**:
+  - **Read and write**: Pull requests, Contents. The merge from the phone needs them: GitHub merges
+    with Pull requests write, and deletes the branch with Contents write. With read-only, the relay
+    works, but `POST /merge` answers 403 `no-write`.
+  - **Read-only**: Issues, Checks, Commit statuses, Actions, Metadata.
+
+  GitHub refuses the `issue_comment` event without Issues: the comments of a pull request come
+  through it. The read of a pull request needs Contents: the head commit (its checks and its time),
+  the commit of each review and the commit of the base branch are git objects, and with no Contents
+  GitHub answers « Resource not accessible by integration ». The relay writes nothing but a merge and
+  the delete of its branch: `boo` still posts with your `gh` token.
+
+- After a change of the permissions, an owner accepts the update on each installation. Then restart
+  the relay: an installation token keeps the permissions of its creation for one hour. The user tokens
+  need no new sign-in: GitHub checks a user token against the permissions that the installation
+  accepted, at each request.
 - **Organization permissions**: Members, read-only, to get the `membership` and `organization`
   events.
 - **Subscribe to events**: Pull request, Pull request review, Pull request review comment, Pull

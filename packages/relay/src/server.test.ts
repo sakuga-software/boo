@@ -21,6 +21,14 @@ interface FakeGitHub extends GitHubApi {
   repos: Map<string, string[]>;
   repoReads: number;
   refreshes: string[];
+  /** The repository of the head branch of a pull request: another one is a fork. */
+  headRepo: string | null;
+  /** The merges that GitHub did: the token, the pull request, the method and the sha. */
+  merges: string[];
+  deletes: string[];
+  /** The error of the next merge, if GitHub refuses it. */
+  mergeRefusal?: GitHubError;
+  deleteFails: boolean;
 }
 
 const USERS = new Map([
@@ -49,12 +57,33 @@ function fakeGitHub(): FakeGitHub {
       if (refreshToken !== 'ghr_alice' || used) throw new GitHubError('bad refresh token', 401);
       return { accessToken: 'ghu_alice_2', refreshToken: 'ghr_alice_2', expiresAt: Date.now() + 8 * 3_600_000 };
     },
-    installations: async (token) => (fake.repos.has(userOf(token)) ? [{ id: 9, account: 'acme' }] : []),
+    installations: async (token) => (fake.repos.has(userOf(token)) ? [{ id: 9, account: 'acme', canMerge: true }] : []),
     repositories: async (token) => {
       fake.repoReads++;
       const repos = fake.repos.get(userOf(token));
       if (!repos) throw new GitHubError('Bad credentials', 401);
       return repos;
+    },
+    headRepo: 'acme/web',
+    merges: [],
+    deletes: [],
+    deleteFails: false,
+    pullHead: async (_token, repo, number) => ({
+      ref: `feat/${number}`,
+      repo: fake.headRepo ?? null,
+      sha: 'a'.repeat(40),
+      state: 'open',
+    }),
+    merge: async (token, repo, number, { method, sha }) => {
+      const refusal = fake.mergeRefusal;
+      fake.mergeRefusal = undefined;
+      if (refusal) throw refusal;
+      fake.merges.push(`${token} ${repo}#${number} ${method} ${sha}`);
+      return 'm'.repeat(40);
+    },
+    deleteBranch: async (token, repo, branch) => {
+      if (fake.deleteFails) throw new GitHubError('Reference does not exist', 422);
+      fake.deletes.push(`${token} ${repo} ${branch}`);
     },
   };
   return fake;
@@ -358,7 +387,7 @@ test('an expired token is refreshed before a read, and kept for the next restart
   const response = await fetch(`${base}/installations`, { headers: { authorization: `Bearer ${session}` } });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
-    installations: [{ id: 9, account: 'acme' }],
+    installations: [{ id: 9, account: 'acme', canMerge: true }],
     installUrl: 'https://github.com/apps/boo-relay/installations/new',
   });
   assert.deepEqual(gitHub.refreshes, ['ghr_alice']);
@@ -1019,4 +1048,98 @@ test('after a time with no valid access, the reset comes before any new event', 
     ['ready', 'reset'],
   );
   assert.equal(live.events[1]?.data.cursor, reports.get('alice').cursor);
+});
+
+const HEAD = 'b'.repeat(40);
+
+function merge(base: string, session: string, body: object) {
+  return fetch(`${base}/merge`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${session}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+const request = { repo: 'acme/web', number: 7, method: 'squash', deleteBranch: true, sha: HEAD };
+
+test('a merge runs with the token of the user, passes the seen head, and deletes the branch of the same repository', async (t) => {
+  const { base, gitHub } = await startRelay(t);
+  const session = await login(base, 'ghu_alice');
+  const response = await merge(base, session, request);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { merged: true, sha: 'm'.repeat(40), branchDeleted: true });
+  assert.deepEqual(gitHub.merges, [`ghu_alice acme/web#7 squash ${HEAD}`]);
+  assert.deepEqual(gitHub.deletes, ['ghu_alice acme/web feat/7']);
+});
+
+test('a merge leaves the branch of a fork, and a failed delete does not fail the merge', async (t) => {
+  const { base, gitHub } = await startRelay(t);
+  const session = await login(base, 'ghu_alice');
+  gitHub.headRepo = 'mallory/web';
+  assert.deepEqual(await (await merge(base, session, request)).json(), {
+    merged: true,
+    sha: 'm'.repeat(40),
+    branchDeleted: false,
+  });
+  assert.deepEqual(gitHub.deletes, []);
+  gitHub.headRepo = 'acme/web';
+  gitHub.deleteFails = true;
+  const failed = await merge(base, session, { ...request, method: 'rebase' });
+  assert.equal(failed.status, 200);
+  assert.equal(((await failed.json()) as { branchDeleted: boolean }).branchDeleted, false);
+  assert.deepEqual(gitHub.merges.at(-1), `ghu_alice acme/web#7 rebase ${HEAD}`);
+});
+
+test('an App with no write permission gives 403 no-write, and a refused merge gives the words of GitHub', async (t) => {
+  const { base, gitHub } = await startRelay(t);
+  const session = await login(base, 'ghu_alice');
+  gitHub.mergeRefusal = new GitHubError('GitHub answered 403', 403, 'Resource not accessible by integration');
+  const noWrite = await merge(base, session, request);
+  assert.equal(noWrite.status, 403);
+  assert.equal(((await noWrite.json()) as { code: string }).code, 'no-write');
+  gitHub.mergeRefusal = new GitHubError(
+    'GitHub answered 405',
+    405,
+    'At least 1 approving review is required by reviewers with write access.',
+  );
+  const refused = await merge(base, session, request);
+  assert.equal(refused.status, 409);
+  assert.deepEqual(await refused.json(), {
+    error: 'At least 1 approving review is required by reviewers with write access.',
+  });
+  gitHub.mergeRefusal = new GitHubError(
+    'GitHub answered 409',
+    409,
+    'Head branch was modified. Review and try the merge again.',
+  );
+  assert.equal((await merge(base, session, request)).status, 409);
+  gitHub.mergeRefusal = new GitHubError('GitHub answered 502', 502);
+  assert.equal((await merge(base, session, request)).status, 502);
+  assert.deepEqual(gitHub.merges, []);
+});
+
+test('a merge of a repository that the user does not read gives 404, a bad body 400, and no session 401', async (t) => {
+  const { base, gitHub } = await startRelay(t);
+  const session = await login(base, 'ghu_alice');
+  assert.equal((await merge(base, session, { ...request, repo: 'acme/secret' })).status, 404);
+  for (const bad of [
+    { ...request, repo: 'web' },
+    { ...request, number: 0 },
+    { ...request, method: 'fast-forward' },
+    { ...request, deleteBranch: 'yes' },
+    { ...request, sha: 'main' },
+  ])
+    assert.equal((await merge(base, session, bad)).status, 400, JSON.stringify(bad));
+  assert.equal((await merge(base, 'no-session', request)).status, 401);
+  assert.deepEqual(gitHub.merges, []);
+});
+
+test('a merge asks the tracker to read the pull request again, and a refused merge does not', async (t) => {
+  const { base, gitHub, changes } = await startStatefulRelay(t);
+  const session = await login(base, 'ghu_alice');
+  assert.equal((await merge(base, session, request)).status, 200);
+  assert.deepEqual(changes, ['pull_request acme/web#7']);
+  gitHub.mergeRefusal = new GitHubError('GitHub answered 405', 405, 'Pull Request is not mergeable');
+  assert.equal((await merge(base, session, request)).status, 409);
+  assert.deepEqual(changes, ['pull_request acme/web#7']);
 });

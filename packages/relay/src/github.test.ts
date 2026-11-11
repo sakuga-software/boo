@@ -20,7 +20,7 @@ function fakeFetch(answer: (call: Call) => { status?: number; body: unknown }) {
     };
     calls.push(call);
     const { status = 200, body } = answer(call);
-    return new Response(JSON.stringify(body), { status });
+    return new Response(status === 204 ? null : JSON.stringify(body), { status });
   }) as typeof fetch;
   return { calls, fetchFn };
 }
@@ -75,8 +75,8 @@ test('the repositories of a user come from each installation, page by page', asy
       return {
         body: {
           installations: [
-            { id: 1, account: { login: 'acme' } },
-            { id: 2, account: { login: 'alice' } },
+            { id: 1, account: { login: 'acme' }, permissions: { contents: 'write', pull_requests: 'write' } },
+            { id: 2, account: { login: 'alice' }, permissions: { contents: 'read', pull_requests: 'write' } },
           ],
         },
       };
@@ -91,7 +91,46 @@ test('the repositories of a user come from each installation, page by page', asy
   assert.ok(repos.includes('alice/dotfiles'));
   assert.ok(calls.every((call) => call.headers.authorization === 'Bearer ghu_ok'));
   assert.deepEqual(await gitHub.installations('ghu_ok'), [
-    { id: 1, account: 'acme' },
-    { id: 2, account: 'alice' },
+    { id: 1, account: 'acme', canMerge: true },
+    { id: 2, account: 'alice', canMerge: false },
   ]);
+});
+
+test('a merge reads the head, merges with the seen sha, and deletes the branch, all with the token of the user', async () => {
+  const { calls, fetchFn } = fakeFetch(({ method }) => {
+    if (method === 'GET')
+      return { body: { state: 'open', head: { ref: 'feat/a', sha: 'abc', repo: { full_name: 'acme/web' } } } };
+    if (method === 'PUT') return { body: { sha: 'merged', merged: true } };
+    return { status: 204, body: null };
+  });
+  const gitHub = gitHubApi(app, fetchFn);
+  assert.deepEqual(await gitHub.pullHead('ghu_ok', 'acme/web', 7), {
+    ref: 'feat/a',
+    sha: 'abc',
+    repo: 'acme/web',
+    state: 'open',
+  });
+  assert.equal(await gitHub.merge('ghu_ok', 'acme/web', 7, { method: 'squash', sha: 'abc' }), 'merged');
+  await gitHub.deleteBranch('ghu_ok', 'acme/web', 'feat/a');
+  assert.deepEqual(
+    calls.map(({ method, url }) => `${method} ${new URL(url).pathname}`),
+    [
+      'GET /repos/acme/web/pulls/7',
+      'PUT /repos/acme/web/pulls/7/merge',
+      'DELETE /repos/acme/web/git/refs/heads/feat/a',
+    ],
+  );
+  assert.deepEqual(calls[1]!.body, { merge_method: 'squash', sha: 'abc' });
+  assert.ok(calls.every((call) => call.headers.authorization === 'Bearer ghu_ok'));
+});
+
+test('a refused merge keeps the message of GitHub', async () => {
+  const gitHub = gitHubApi(
+    app,
+    fakeFetch(() => ({ status: 405, body: { message: 'Pull Request is not mergeable' } })).fetchFn,
+  );
+  await assert.rejects(
+    gitHub.merge('ghu_ok', 'acme/web', 7, { method: 'merge', sha: 'abc' }),
+    (error) => error instanceof GitHubError && error.status === 405 && error.detail === 'Pull Request is not mergeable',
+  );
 });

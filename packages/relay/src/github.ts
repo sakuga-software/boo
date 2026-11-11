@@ -15,6 +15,19 @@ export interface GitHubUser {
 export interface Installation {
   id: number;
   account: string;
+  /** The installation accepted the write permissions that a merge needs: Contents and Pull requests. */
+  canMerge: boolean;
+}
+
+export type MergeMethod = 'squash' | 'merge' | 'rebase';
+
+/** The head of a pull request: its branch, and the repository of the branch. */
+export interface PullHead {
+  ref: string;
+  /** `owner/name`. A pull request from a fork has the fork here. Null if the fork was deleted. */
+  repo: string | null;
+  sha: string;
+  state: string;
 }
 
 /** The calls of the relay to GitHub. The tests give a fake. */
@@ -26,12 +39,27 @@ export interface GitHubApi {
   installations(accessToken: string): Promise<Installation[]>;
   /** The full names of the repositories that the user of the token reads through the App. */
   repositories(accessToken: string): Promise<string[]>;
+  /** The head of a pull request, read with the token of the user. */
+  pullHead(accessToken: string, repo: string, number: number): Promise<PullHead>;
+  /**
+   * Merges a pull request with the token of the user: GitHub records the user as the author of the
+   * merge. GitHub refuses the merge if the head is not `sha`. Gives the commit of the merge.
+   */
+  merge(
+    accessToken: string,
+    repo: string,
+    number: number,
+    merge: { method: MergeMethod; sha: string },
+  ): Promise<string>;
+  deleteBranch(accessToken: string, repo: string, branch: string): Promise<void>;
 }
 
 export class GitHubError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** The `message` of the answer of GitHub, if it gave one. */
+    readonly detail?: string,
   ) {
     super(message);
   }
@@ -58,10 +86,17 @@ export function gitHubApi(
         ...init.headers,
       },
     });
-    if (!response.ok) throw new GitHubError(`GitHub answered ${response.status} to ${url}`, response.status);
+    if (!response.ok) {
+      const body = (await response.json().catch(() => undefined)) as { message?: unknown } | undefined;
+      const detail = typeof body?.message === 'string' ? body.message : undefined;
+      throw new GitHubError(`GitHub answered ${response.status} to ${url}`, response.status, detail);
+    }
+    // A 204 has no body.
+    if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   };
   const asUser = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
+  const repoPath = (repo: string) => repo.split('/').map(encodeURIComponent).join('/');
 
   async function* pages<T>(url: string, token: string, key: string): AsyncGenerator<T> {
     for (let page = 1; ; page++) {
@@ -77,12 +112,16 @@ export function gitHubApi(
 
   const installations = async (token: string): Promise<Installation[]> => {
     const found: Installation[] = [];
-    for await (const item of pages<{ id: number; account: { login: string } }>(
+    for await (const item of pages<{ id: number; account: { login: string }; permissions?: Record<string, string> }>(
       `${apiUrl}/user/installations`,
       token,
       'installations',
     ))
-      found.push({ id: item.id, account: item.account.login });
+      found.push({
+        id: item.id,
+        account: item.account.login,
+        canMerge: item.permissions?.contents === 'write' && item.permissions.pull_requests === 'write',
+      });
     return found;
   };
 
@@ -140,6 +179,31 @@ export function gitHubApi(
         ))
           names.push(repo.full_name);
       return names;
+    },
+
+    async pullHead(accessToken, repo, number) {
+      const pull = await request<{
+        state: string;
+        head: { ref: string; sha: string; repo: { full_name: string } | null };
+      }>(`${apiUrl}/repos/${repoPath(repo)}/pulls/${number}`, asUser(accessToken));
+      return { ref: pull.head.ref, sha: pull.head.sha, repo: pull.head.repo?.full_name ?? null, state: pull.state };
+    },
+
+    async merge(accessToken, repo, number, { method, sha }) {
+      const body = await request<{ sha: string }>(`${apiUrl}/repos/${repoPath(repo)}/pulls/${number}/merge`, {
+        method: 'PUT',
+        headers: { ...asUser(accessToken).headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ merge_method: method, sha }),
+      });
+      return body.sha;
+    },
+
+    async deleteBranch(accessToken, repo, branch) {
+      const ref = branch.split('/').map(encodeURIComponent).join('/');
+      await request<undefined>(`${apiUrl}/repos/${repoPath(repo)}/git/refs/heads/${ref}`, {
+        ...asUser(accessToken),
+        method: 'DELETE',
+      });
     },
   };
 }
