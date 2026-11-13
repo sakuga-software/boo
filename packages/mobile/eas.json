@@ -33,5 +33,13 @@
       "channel": "production",
       "autoIncrement": true
     }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appName": "boo",
+        "ascAppId": "6834360592"
+      }
+    }
   }
 }
