@@ -4,7 +4,7 @@
 #   docker build -f packages/relay/Dockerfile -t boo-relay .
 
 # Keep NODE_VERSION in the major of `.nvmrc`, which the workflows read.
-ARG NODE_VERSION=26.12.1
+ARG NODE_VERSION=26.13.1
 
 # Keep the tag equal to `packageManager` in the root package.json.
 FROM ghcr.io/pnpm/pnpm:12.15.0@sha256:d6148daf3ad2af8fa4ecd1aa06db73da32b2e37f63088987eea2fb375ee7f320 AS pnpm
