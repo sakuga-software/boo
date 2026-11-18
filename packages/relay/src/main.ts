@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { gitHubApi } from './github.js';
 import { installationReader } from './installations.js';
 import { EXPO_URL, expoPush } from './push.js';
-import { Reports } from './reports.js';
+import { keepHistory, Reports } from './reports.js';
 import { createRelay } from './server.js';
 import { SessionStore } from './sessions.js';
 import { StateStore } from './state-store.js';
@@ -34,11 +34,15 @@ const PURGE_EVERY_MS = 60 * 60_000;
 // The states that depend on time (a CodeRabbit wait that ends, a pull request that stalls) change
 // with no webhook: the reports are computed again at this interval.
 const REPORTS_EVERY_MS = 60_000;
+// BOO-9: the days that the history of the pull requests stays, for the statistics.
+const historyDays = Number(process.env.RELAY_HISTORY_DAYS);
+const historyRetentionMs = (historyDays > 0 ? historyDays : 90) * 24 * 60 * 60_000;
 let state: { store: StateStore; tracker: Tracker; reports: Reports } | undefined;
 if (appId && privateKey) {
   const installations = installationReader({ appId, privateKey }, { apiUrl });
   const stateStore = new StateStore(join(dataDir, 'state.db'));
   const reports = new Reports(stateStore);
+  keepHistory(reports, stateStore);
   const tracker = new Tracker({
     store: stateStore,
     reader: pullReader(installations, { apiUrl }),
@@ -51,6 +55,11 @@ if (appId && privateKey) {
   const purge = () => {
     const deleted = stateStore.purge(Date.now());
     if (deleted > 0) console.log(`Deleted ${deleted} pull requests closed or unfollowed for 7 days`);
+    const history = stateStore.purgeHistory(Date.now(), historyRetentionMs);
+    if (history.pulls + history.events > 0)
+      console.log(
+        `Deleted the history of ${history.pulls} pull requests and ${history.events} events older than the retention`,
+      );
   };
   purge();
   setInterval(purge, PURGE_EVERY_MS).unref();

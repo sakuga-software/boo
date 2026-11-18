@@ -149,3 +149,23 @@ test('a pull request that nobody follows for 7 days is deleted, and one followed
   assert.ok(store.pull(pr(1)));
   assert.equal(store.pull(pr(2)), undefined);
 });
+
+test('the purge of the history deletes the events and the summaries older than the retention', () => {
+  const store = new StateStore(':memory:');
+  const day = 24 * 60 * 60_000;
+  const now = Date.parse('2026-11-18T12:00:00Z');
+  const report = (number: number, state: string) =>
+    ({ repo: 'acme/web', number, state, mergedAt: null, mergedBy: null, agent: { kind: null } }) as never;
+  const event = (number: number, at: number) =>
+    ({ at: new Date(at).toISOString(), pr: `acme/web#${number}`, event: 'head', from: 'a', to: 'b' }) as never;
+  store.recordHistory('alice', [report(1, 'reviewing')], [event(1, now - 100 * day)], now - 100 * day);
+  store.recordHistory('alice', [report(2, 'reviewing')], [event(2, now - day)], now - day);
+  assert.deepEqual(store.purgeHistory(now), { pulls: 1, events: 1 });
+  assert.deepEqual(
+    store.historyOf('alice').map((pull) => pull.number),
+    [2],
+  );
+  assert.equal(store.historyEvents('alice', { repo: 'acme/web', number: 1 }).length, 0);
+  assert.equal(store.historyEvents('alice', { repo: 'acme/web', number: 2 }).length, 1);
+  assert.deepEqual(store.purgeHistory(now, day / 2), { pulls: 1, events: 1 });
+});

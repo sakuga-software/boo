@@ -85,6 +85,17 @@ mobile app) do not each read GitHub. Without the key, the relay only relays the 
   stream gets only the repositories that the user reads, and a reset after a time with no valid access.
 - **The retention.** The relay deletes a pull request, with its text, 7 days after it is merged or
   closed, or 7 days after nobody follows it any more. The check runs at start and every hour.
+- **The history.** For the statistics, the relay keeps a history of the pull requests of each user,
+  in its own tables of `state.db`, so the purge above does not delete it:
+  - a summary of each pull request: author, agent, first time seen, last state, merge time and who
+    merged, close time, count of reviews and of checks that turned red;
+  - the events of each pull request, in the vocabulary of `boo --watch --events`: `entered`, `state`,
+    `head`, `review` (reviewer, mark, verdict, score), `check`, `left` (with `mergedBy`), `restack`.
+
+  The history keeps no text that a person wrote: no comment, no review body. The relay deletes an
+  event older than `RELAY_HISTORY_DAYS` (90 by default), and the summary of a pull request with no
+  change for that time. The first time seen is the first time the relay computed the pull request for
+  the user, not its creation on GitHub.
 
 ## Push notifications
 
@@ -214,6 +225,7 @@ request the installation, and an owner approves it.
 | `EXPO_ACCESS_TOKEN`        | Optional. An access token of Expo, if the Expo project turns on the enhanced security of push notifications.                               |
 | `EXPO_PUSH_URL`            | `https://exp.host` by default. A test points it to a fake Expo push service.                                                               |
 | `RELAY_PUSH_WINDOW_MS`     | The time that the changes of a user wait before their push notifications go out. `30000` by default.                                       |
+| `RELAY_HISTORY_DAYS`       | The days that the history of the pull requests stays, for the statistics. `90` by default.                                                 |
 
 With Docker, from the root of the repository:
 

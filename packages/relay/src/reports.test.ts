@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { PullRequestSnapshot } from '@sakuga-software/boo-core/github';
 import { DEFAULT_SETTINGS } from '@sakuga-software/boo-core/settings';
-import { LOG_SIZE, readableReports, Reports, type UserState } from './reports.js';
+import { keepHistory, LOG_SIZE, readableReports, Reports, type UserState } from './reports.js';
 import { StateStore } from './state-store.js';
 
 const MINUTE = 60_000;
@@ -218,4 +218,88 @@ test('a user whose reports fail does not stop the others', () => {
   reports.refreshAll((error) => logged.push(String(error)));
   assert.deepEqual(done, ['bob']);
   assert.deepEqual(logged, ['Error: a broken config']);
+});
+
+test('a pull request followed from its open to its merge keeps its history after the purge of the pull requests', () => {
+  let clock = start;
+  const store = new StateStore(':memory:');
+  store.setConfig('alice', { org: 'acme', settings: DEFAULT_SETTINGS }, clock);
+  store.savePull(pr(1), { snapshot: snapshot({ checks: [{ name: 'ci', state: 'success' }] }) }, clock);
+  store.setFollows('alice', [pr(1)], clock);
+  const reports = new Reports(store, () => clock);
+  keepHistory(reports, store, () => clock);
+  reports.get('alice');
+
+  clock += 10 * MINUTE;
+  const red = snapshot({ head: 'a2', checks: [{ name: 'ci', state: 'failure' }] });
+  store.savePull(pr(1), { snapshot: red }, clock);
+  reports.refreshFollowers(pr(1));
+
+  clock += 10 * MINUTE;
+  const review = {
+    user: { login: 'bob' },
+    commit_id: 'a2',
+    submitted_at: new Date(clock).toISOString(),
+    state: 'APPROVED',
+    body: 'Looks good, but a secret text of a person.',
+  };
+  const green = snapshot({ head: 'a2', checks: [{ name: 'ci', state: 'success' }], reviews: [review] });
+  store.savePull(pr(1), { snapshot: green }, clock);
+  reports.refreshFollowers(pr(1));
+
+  clock += 10 * MINUTE;
+  const mergedAt = new Date(clock).toISOString();
+  store.savePull(pr(1), { snapshot: { ...green, status: 'merged', mergedBy: 'alice', mergedAt } }, clock);
+  reports.refreshFollowers(pr(1));
+
+  const [pull] = store.historyOf('alice');
+  assert.equal(pull?.repo, 'acme/web');
+  assert.equal(pull?.number, 1);
+  assert.equal(pull?.author, 'alice');
+  assert.equal(pull?.firstSeenAt, start);
+  assert.equal(pull?.state, 'merged');
+  assert.equal(pull?.mergedBy, 'alice');
+  assert.equal(pull?.mergedAt, mergedAt);
+  assert.equal(pull?.reviews, 1);
+  assert.equal(pull?.redChecks, 1);
+
+  const events = store.historyEvents('alice', pr(1));
+  const kinds = events.map((event) => event.event);
+  for (const kind of ['head', 'check', 'state', 'review', 'left'])
+    assert.ok(kinds.includes(kind), `${kind} in ${kinds}`);
+  const left = events.find((event) => event.event === 'left');
+  assert.deepEqual(left?.data, { reason: 'merged', mergedBy: 'alice', mergedAt });
+  assert.doesNotMatch(JSON.stringify(events), /secret text/);
+
+  // The purge of the pull requests deletes the text after 7 days; the history stays for its own retention.
+  assert.equal(store.purge(clock + 8 * 24 * 60 * MINUTE), 1);
+  assert.equal(store.pull(pr(1)), undefined);
+  assert.equal(store.historyOf('alice').length, 1);
+  assert.equal(store.historyEvents('alice', pr(1)).length, events.length);
+});
+
+test('the history of each user is apart, and a failed write of the history keeps the reports', () => {
+  const { store, reports, advance } = setup();
+  store.setConfig('bob', { org: 'acme', settings: DEFAULT_SETTINGS }, start);
+  store.setFollows('bob', [pr(1)], start);
+  keepHistory(reports, store, () => start);
+  reports.get('alice');
+  assert.equal(store.historyOf('alice').length, 1);
+  assert.equal(store.historyOf('bob').length, 0);
+
+  const logged: unknown[] = [];
+  const original = console.error;
+  console.error = (error: unknown) => logged.push(error);
+  try {
+    store.recordHistory = () => {
+      throw new Error('disk full');
+    };
+    advance(MINUTE);
+    store.savePull(pr(1), { snapshot: snapshot({ checks: [{ name: 'ci', state: 'success' }] }) }, start + MINUTE);
+    reports.refreshFollowers(pr(1));
+  } finally {
+    console.error = original;
+  }
+  assert.equal(logged.length >= 1, true);
+  assert.equal(reports.get('alice').reports[0]?.state, 'awaiting review');
 });

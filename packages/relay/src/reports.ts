@@ -217,3 +217,17 @@ export const readableReports = (state: UserState, repos: ReadonlySet<string>): U
   ...state,
   reports: state.reports.filter((report) => repos.has(report.repo.toLowerCase())),
 });
+
+/**
+ * Records each change of the reports in the history of the store, for the statistics (BOO-9). A write
+ * that fails goes to the log: the reports and the streams go on. Returns the function that stops it.
+ */
+export function keepHistory(reports: Reports, store: StateStore, now = Date.now): () => void {
+  return reports.onChange((login, _before, after, events) => {
+    try {
+      store.recordHistory(login, after.reports, events, now());
+    } catch (error) {
+      console.error(error);
+    }
+  });
+}

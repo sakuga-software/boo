@@ -1,7 +1,9 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type { WatchEvent } from '@sakuga-software/boo-core/events';
 import type { PullRequest, PullRequestSnapshot } from '@sakuga-software/boo-core/github';
+import type { PullRequestReport } from '@sakuga-software/boo-core/report';
 import type { Settings } from '@sakuga-software/boo-core/settings';
 
 /** What a user follows: the settings of boo, and the organization of the list ('' for every account). */
@@ -16,6 +18,97 @@ export interface StoredPull {
   snapshot?: PullRequestSnapshot;
   error?: string;
   readAt: number;
+}
+
+/** BOO-9: the history of the pull requests stays this long after its last change, for the statistics. */
+export const HISTORY_RETENTION_MS = 90 * 24 * 60 * 60_000;
+
+/** The summary of a pull request that a user follows or followed. The times are milliseconds, but `mergedAt` is the ISO time of GitHub. */
+export interface HistoryPull {
+  repo: string;
+  number: number;
+  author: string | null;
+  /** The kind of the coding agent of the pull request, such as `claude-code`, or null. */
+  agent: string | null;
+  /** The first time the relay saw the pull request for this user. */
+  firstSeenAt: number;
+  /** The last state, as the report gives it. */
+  state: string;
+  mergedAt: string | null;
+  mergedBy: string | null;
+  closedAt: number | null;
+  /** The count of reviews, and of checks that turned red, while the relay followed the pull request. */
+  reviews: number;
+  redChecks: number;
+  updatedAt: number;
+}
+
+export interface HistoryEvent {
+  at: number;
+  event: string;
+  data: Record<string, unknown>;
+}
+
+interface HistoryRow {
+  repo: string;
+  number: number;
+  author: string | null;
+  agent: string | null;
+  first_seen_at: number;
+  state: string;
+  merged_at: string | null;
+  merged_by: string | null;
+  closed_at: number | null;
+  reviews: number;
+  red_checks: number;
+  updated_at: number;
+}
+
+const toHistoryPull = (row: HistoryRow): HistoryPull => ({
+  repo: row.repo,
+  number: row.number,
+  author: row.author,
+  agent: row.agent,
+  firstSeenAt: row.first_seen_at,
+  state: row.state,
+  mergedAt: row.merged_at,
+  mergedBy: row.merged_by,
+  closedAt: row.closed_at,
+  reviews: row.reviews,
+  redChecks: row.red_checks,
+  updatedAt: row.updated_at,
+});
+
+/**
+ * The fields of an event that the history keeps, or undefined for an event that it does not keep. The
+ * history keeps no text written by a person (comments, review bodies), and no whole report.
+ */
+function historyData(event: WatchEvent): Record<string, unknown> | undefined {
+  switch (event.event) {
+    case 'entered':
+      return { state: event.state };
+    case 'state':
+      return { from: event.from, to: event.to, failing: event.failing };
+    case 'head':
+      return { from: event.from, to: event.to };
+    case 'review':
+      return {
+        reviewer: event.reviewer,
+        mark: event.mark,
+        onHead: event.onHead,
+        verdict: event.verdict,
+        score: event.score,
+        reviewedAt: event.reviewedAt,
+      };
+    case 'check':
+      return { check: event.check, to: event.to, ...(event.reviewerError && { reviewerError: true }) };
+    case 'left':
+      return { reason: event.reason, mergedBy: event.mergedBy ?? null, mergedAt: event.mergedAt ?? null };
+    case 'restack':
+      return { oldBase: event.oldBase, base: event.base };
+    default:
+      return undefined;
+  }
 }
 
 /** D9: the text of a pull request stays on the disk this long after it closes, or after nobody follows it. */
@@ -67,6 +160,33 @@ export class StateStore {
       );
       CREATE INDEX IF NOT EXISTS devices_by_login ON devices (login);
       CREATE INDEX IF NOT EXISTS devices_by_session ON devices (session);
+      CREATE TABLE IF NOT EXISTS history_pulls (
+        login TEXT NOT NULL,
+        key TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        author TEXT,
+        agent TEXT,
+        first_seen_at INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        merged_at TEXT,
+        merged_by TEXT,
+        closed_at INTEGER,
+        reviews INTEGER NOT NULL DEFAULT 0,
+        red_checks INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (login, key)
+      );
+      CREATE INDEX IF NOT EXISTS history_pulls_by_update ON history_pulls (updated_at);
+      CREATE TABLE IF NOT EXISTS history_events (
+        login TEXT NOT NULL,
+        key TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS history_events_by_pull ON history_events (login, key, at);
+      CREATE INDEX IF NOT EXISTS history_events_by_time ON history_events (at);
       CREATE TABLE IF NOT EXISTS push_marks (
         login TEXT NOT NULL,
         key TEXT NOT NULL,
@@ -239,6 +359,107 @@ export class StateStore {
       this.db.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  /**
+   * Records the history of the pull requests of `login` (BOO-9), for the statistics: a summary row for
+   * each pull request of `reports`, and a row for each event of `events`. The history has its own
+   * tables, so the purge of the pull requests does not delete it: `purgeHistory` does.
+   */
+  recordHistory(
+    login: string,
+    reports: readonly PullRequestReport[],
+    events: readonly WatchEvent[],
+    now: number,
+  ): void {
+    const user = login.toLowerCase();
+    const upsert = this.db.prepare(
+      `INSERT INTO history_pulls (login, key, repo, number, author, agent, first_seen_at, state, merged_at, merged_by, closed_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (login, key) DO UPDATE SET author = COALESCE(excluded.author, history_pulls.author),
+         agent = COALESCE(excluded.agent, history_pulls.agent), state = excluded.state,
+         merged_at = COALESCE(excluded.merged_at, history_pulls.merged_at),
+         merged_by = COALESCE(excluded.merged_by, history_pulls.merged_by),
+         closed_at = COALESCE(history_pulls.closed_at, excluded.closed_at), updated_at = excluded.updated_at`,
+    );
+    const touch = this.db.prepare(
+      `INSERT OR IGNORE INTO history_pulls (login, key, repo, number, first_seen_at, state, updated_at)
+       VALUES (?, ?, ?, ?, ?, '', ?)`,
+    );
+    const addEvent = this.db.prepare('INSERT INTO history_events (login, key, at, event, data) VALUES (?, ?, ?, ?, ?)');
+    const countReview = this.db.prepare(
+      'UPDATE history_pulls SET reviews = reviews + 1, updated_at = ? WHERE login = ? AND key = ?',
+    );
+    const countRedCheck = this.db.prepare(
+      'UPDATE history_pulls SET red_checks = red_checks + 1, updated_at = ? WHERE login = ? AND key = ?',
+    );
+    this.db.exec('BEGIN');
+    try {
+      for (const report of reports) {
+        const key = keyOf(report);
+        // A report gives no author: the snapshot of the pull request does.
+        const author = this.pull(report)?.snapshot?.author ?? null;
+        const closed = report.state === 'closed' ? now : null;
+        upsert.run(
+          user,
+          key,
+          report.repo.toLowerCase(),
+          report.number,
+          author,
+          report.agent.kind,
+          now,
+          report.state,
+          report.mergedAt,
+          report.mergedBy,
+          closed,
+          now,
+        );
+      }
+      for (const event of events) {
+        const data = historyData(event);
+        if (!data) continue;
+        const hash = event.pr.lastIndexOf('#');
+        const pr = { repo: event.pr.slice(0, hash), number: Number(event.pr.slice(hash + 1)) };
+        const key = keyOf(pr);
+        touch.run(user, key, pr.repo.toLowerCase(), pr.number, now, now);
+        addEvent.run(user, key, Date.parse(event.at) || now, event.event, JSON.stringify(data));
+        if (event.event === 'review') countReview.run(now, user, key);
+        if (event.event === 'check' && event.to === 'failing') countRedCheck.run(now, user, key);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /** The history of the pull requests of `login`, from the oldest seen. */
+  historyOf(login: string): HistoryPull[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM history_pulls WHERE login = ? ORDER BY first_seen_at, key')
+        .all(login.toLowerCase()) as unknown as HistoryRow[]
+    ).map(toHistoryPull);
+  }
+
+  /** The events of one pull request of `login`, from the oldest. */
+  historyEvents(login: string, pr: Pick<PullRequest, 'repo' | 'number'>): HistoryEvent[] {
+    return (
+      this.db
+        .prepare('SELECT at, event, data FROM history_events WHERE login = ? AND key = ? ORDER BY at, rowid')
+        .all(login.toLowerCase(), keyOf(pr)) as { at: number; event: string; data: string }[]
+    ).map((row) => ({ at: row.at, event: row.event, data: JSON.parse(row.data) as Record<string, unknown> }));
+  }
+
+  /**
+   * Deletes the events older than `retentionMs`, and the summary of each pull request with no change
+   * for that time. Returns the counts of rows deleted.
+   */
+  purgeHistory(now: number, retentionMs = HISTORY_RETENTION_MS): { pulls: number; events: number } {
+    const limit = now - retentionMs;
+    const events = this.db.prepare('DELETE FROM history_events WHERE at <= ?').run(limit).changes;
+    const pulls = this.db.prepare('DELETE FROM history_pulls WHERE updated_at <= ?').run(limit).changes;
+    return { pulls: Number(pulls), events: Number(events) };
   }
 
   /**
