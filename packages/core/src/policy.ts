@@ -283,6 +283,8 @@ export function reviewerGroup(policy: MergePolicy | undefined): ReviewerGroup | 
 }
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The word "review" alone, not a part of a login or a mention: "@kento-review feedback" asks nothing.
+const REVIEW_WORD = String.raw`(?<![\w@/-])review(?![\w-])`;
 const lastReviewOf = (reviews: readonly Review[], counts: (login: string) => boolean) =>
   reviews
     .filter((review) => review.user && counts(review.user.login))
@@ -319,7 +321,7 @@ export function reviewRequests(
   ];
   const askers: { bot: string; member: (login: string) => boolean; asks: (body: string) => boolean }[] = bots.map(
     (bot) => {
-      const mention = new RegExp(`^\\s*@${escape(bot.replace(/\[bot\]$/, ''))}(?![\\w-])[^\\n]*\\breview\\b`, 'im');
+      const mention = new RegExp(`^\\s*@${escape(bot.replace(/\[bot\]$/, ''))}(?![\\w-])[^\\n]*${REVIEW_WORD}`, 'im');
       return { bot, member: (login: string) => login === bot, asks: (body: string) => mention.test(body) };
     },
   );
@@ -328,7 +330,8 @@ export function reviewRequests(
     const line = new RegExp(`^\\s*(?:${mentions.map(escape).join('|')})(?![\\w-])([^\\n]*)`, 'gim');
     // A level counts only as the first word after the mention: "@kento-review the lite mode works" is no request.
     const level = new RegExp(`^\\s*(?:${group.levels.map(escape).join('|') || '(?!)'})\\b`, 'i');
-    const asks = (rest: string) => /\breview\b/i.test(rest) || level.test(rest);
+    const word = new RegExp(REVIEW_WORD, 'i');
+    const asks = (rest: string) => word.test(rest) || level.test(rest);
     askers.unshift({
       bot: group.logins[0]!,
       member: inGroup,
