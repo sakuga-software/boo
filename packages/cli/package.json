@@ -1,6 +1,6 @@
 {
   "name": "@sakuga-software/boo",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Watches your open pull requests: the approval, the reviewers of every provider, the checks, and the review quotas",
   "keywords": [
     "claude-code",
