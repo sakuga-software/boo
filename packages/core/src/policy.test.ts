@@ -112,7 +112,8 @@ test('a request to one login of the reviewer list is answered by a review of ano
   const reject = comment('mathieu', '@kento-review reject the file is generated', 5);
   const remark = comment('mathieu', '@kento the lite mode is enough here, thanks', 5);
   const ownQuote = comment('kento-review[bot]', '@kento-ai review heavy', 5);
-  assert.deepEqual(policyMisses(group, facts({ reviews: [old], comments: [reject, remark, ownQuote] })), []);
+  const login = comment('mathieu', '@kento thanks, @sakuga-review saw it too', 5);
+  assert.deepEqual(policyMisses(group, facts({ reviews: [old], comments: [reject, remark, ownQuote, login] })), []);
   const other = comment('mathieu', '@greptile-apps review', 5);
   const greptile = comment('greptile-apps[bot]', 'Confidence Score: 4/5', 30);
   assert.deepEqual(unansweredRequests({ reviews: [old], comments: [greptile, other] }, undefined), [
@@ -201,6 +202,24 @@ test('only a request at the start of a line, after the last review, and not of t
   );
   const agent = comment('sakuga-agent[bot]', '@sakuga-review review balanced', 1);
   assert.deepEqual(unansweredRequests({ reviews: [reviewed], comments: [agent] }), [SAKUGA]);
+});
+
+test('a reply of a bot that names another bot with "review" in its login asks for no review', () => {
+  // The reply of Kentō on sakuga-software/jexplore-web#894: it starts with the mention of the agent.
+  const agentReview = review('sakuga-agent[bot]', 'old', '', 10);
+  const kento = comment(
+    'kento-review[bot]',
+    '@sakuga-agent[bot] Kentō reviewed this PR 3 times. To answer, write `@kento-review feedback <your opinion>`.',
+    5,
+  );
+  assert.deepEqual(unansweredRequests({ reviews: [agentReview], comments: [kento] }), []);
+  assert.deepEqual(
+    unansweredRequests({ reviews: [agentReview], comments: [comment('mathieu', '@sakuga-agent see kento-review', 5)] }),
+    [],
+  );
+  // The word alone still asks, before or after a login that holds it.
+  const asked = comment('mathieu', '@sakuga-agent please review, as @kento-review did', 5);
+  assert.deepEqual(unansweredRequests({ reviews: [agentReview], comments: [asked] }), ['sakuga-agent[bot]']);
 });
 
 test('a change to an owned path needs the owner, and @me is the user of boo', () => {
