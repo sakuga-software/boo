@@ -20,6 +20,7 @@ export const ICONS = {
   stale: { d: 'M5 12a7 7 0 1 0 14 0a7 7 0 1 0-14 0z', dash: '3 3.2' },
   merged: { d: 'M12 3.5l8.5 8.5-8.5 8.5L3.5 12z', filled: true },
   zz: { d: 'M4 10h5l-5 6h5M12 5h7l-7 8h7' },
+  flag: { d: 'M6 21V4M6 4h11l-2.5 4.5L17 13H6' },
   claude: { d: 'M12 3.5v17M3.5 12h17M6 6l12 12M18 6L6 18' },
   chevronRight: { d: 'm9 6 6 6-6 6' },
   chevronLeft: { d: 'm15 6-6 6 6 6' },
@@ -88,6 +89,7 @@ const OF_MARK: Record<string, IconName> = {
   '◌': 'stale',
   '⊘': 'stale',
   '‖': 'stale',
+  '⚑': 'flag',
 };
 
 /** The icon of a mark of the terminal. An unknown mark gets the ring of a pull request that waits. */

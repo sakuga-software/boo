@@ -10,6 +10,26 @@ test('a pull request ready to merge, merged or closed has nothing that blocks it
   assert.deepEqual(blockersOf(report({ state: 'merged', stalled: true }), []), []);
 });
 
+test('each action that GitHub needs is a blocker, and unresolved threads open the files', () => {
+  const blockers = blockersOf(
+    report({
+      state: 'approved',
+      actions: [
+        { reason: 'review', note: 'GitHub requires an approving review' },
+        { reason: 'threads', note: '2 unresolved threads' },
+      ],
+    }),
+    [],
+  );
+  assert.deepEqual(
+    blockers.map(({ icon, what, why, action }) => [icon, what, why, action?.target]),
+    [
+      ['flag', 'GitHub requires an approving review', 'GitHub needs the approval of a person', 'pull'],
+      ['flag', '2 unresolved threads', 'GitHub needs them resolved before a merge', 'files'],
+    ],
+  );
+});
+
 test('the blockers come in order: checks, reviews, conflicts, agent, policy, threads, stack', () => {
   const parent = report({ number: 3, state: 'reviewing' });
   const blocked = report({

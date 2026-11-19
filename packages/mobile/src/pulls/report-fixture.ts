@@ -35,6 +35,7 @@ export function report(patch: Partial<PullRequestReport> = {}): PullRequestRepor
     stale: null,
     findings: summarizeFindings([]),
     threads: null,
+    actions: [],
     needsOwner: null,
     readyForOwner: false,
     draftState: null,

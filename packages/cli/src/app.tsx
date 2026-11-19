@@ -53,7 +53,14 @@ import { extraFields } from '@sakuga-software/boo-core/policy';
 import { assess, keyOf, MERGE_STATE_WARNINGS, OVERALL_LABELS, stallOf } from '@sakuga-software/boo-core/report';
 import type { RelayChange, RelaySource, RelayState } from '@sakuga-software/boo-core/stream';
 import { planSync, type LeftStatus } from './sync.js';
-import { ERROR_MARK, LEFT_MARKS, OVERALL_MARKS, REVIEWER_MARKS, type Mark } from '@sakuga-software/boo-core/theme';
+import {
+  ACTION_MARK,
+  ERROR_MARK,
+  LEFT_MARKS,
+  OVERALL_MARKS,
+  REVIEWER_MARKS,
+  type Mark,
+} from '@sakuga-software/boo-core/theme';
 import { createReplyFilter, GHOST_PALETTES, type Background } from './theme.js';
 import { visibleRange } from './viewport.js';
 import {
@@ -1741,7 +1748,9 @@ function notesOf(row: Row, context: DescribeContext): string[] {
     context.stack,
     row.fetched?.restack &&
       `rebase on ${row.fetched.base}: its parent on ${row.fetched.restack.oldBase} merged, and its commits are still here`,
-    row.summary && MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
+    ...(row.summary?.actions ?? []).map(({ note }) => `action required: ${note}`),
+    // An action says more than the merge state: it tells what to do.
+    row.summary && row.summary.actions.length === 0 && MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? 'unknown'],
     ...(context.retries ?? []).map(({ bot, at }) => `${bot.name} retry at ${formatTime(at)}`),
     row.summary && coderabbitDetail(row.decision, context),
   ];
@@ -2284,6 +2293,14 @@ function RowView({
         {stalled && (
           <Box flexShrink={0} marginLeft={2}>
             <Text color="yellow">zZ{layout.agentName && ' stalled'}</Text>
+          </Box>
+        )}
+        {summary && !row.left && summary.actions.length > 0 && (
+          <Box flexShrink={0} marginLeft={2}>
+            <Text color={ACTION_MARK.tone}>
+              {ACTION_MARK.mark}
+              {layout.agentName && ' action required'}
+            </Text>
           </Box>
         )}
         {summary && !row.left && layout.checks && (

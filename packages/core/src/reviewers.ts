@@ -88,6 +88,10 @@ export interface PullRequestFacts {
   openThreads?: OpenThread[];
   files?: string[];
   changes?: { files: number };
+  /** How many review threads are not resolved. Undefined if the read did not count them. */
+  unresolvedThreads?: number;
+  /** The `reviewDecision` of GitHub in lower case. */
+  reviewDecision?: string;
   policy?: MergePolicy | undefined;
   /** The login of the user of boo. */
   viewer?: string | undefined;
@@ -394,6 +398,36 @@ export const isOnHead = (reviewer: Reviewer) => ON_HEAD.includes(reviewer.status
 // and summarizeChecks already decides if that check counts.
 const MERGEABLE = new Set(['clean', 'has_hooks', 'unstable']);
 
+/** Why GitHub refuses the merge: a review of a person, unresolved threads, a base branch that moved, or an unknown rule. */
+export type ActionReason = 'review' | 'threads' | 'behind' | 'blocked';
+
+/** A thing that a person must do before GitHub merges the pull request. The note has no text of a person. */
+export interface RequiredAction {
+  reason: ActionReason;
+  note: string;
+}
+
+/**
+ * The actions that GitHub needs before a merge. Each one comes from a fact of the read, and only if
+ * the merge state is `blocked` or `behind`: GitHub can show unresolved threads that no rule needs.
+ * A pull request that waits for its checks or its reviewers has no action.
+ */
+export function requiredActions(
+  facts: Pick<PullRequestFacts, 'mergeState' | 'reviewDecision' | 'unresolvedThreads'>,
+  { overall, pending }: { overall: Overall; pending: number },
+): RequiredAction[] {
+  if (facts.mergeState === 'behind') return [{ reason: 'behind', note: 'behind the base branch: update it' }];
+  if (facts.mergeState !== 'blocked') return [];
+  const actions: RequiredAction[] = [];
+  if (facts.reviewDecision === 'review_required')
+    actions.push({ reason: 'review', note: 'GitHub requires an approving review' });
+  const threads = facts.unresolvedThreads ?? 0;
+  if (threads > 0) actions.push({ reason: 'threads', note: `${threads} unresolved thread${threads === 1 ? '' : 's'}` });
+  if (actions.length === 0 && overall === 'approved' && pending === 0)
+    actions.push({ reason: 'blocked', note: 'a rule of the branch blocks the merge' });
+  return actions;
+}
+
 export interface Summary {
   reviewers: Reviewer[];
   checks: ChecksSummary;
@@ -412,6 +446,8 @@ export interface Summary {
   needsOwner?: { owner: string; paths: string[]; partial: boolean };
   /** Green, approved, mergeable, and every rule passes but `ownerOnly`: only the owner can merge it now. */
   readyForOwner: boolean;
+  /** The actions that GitHub needs before a merge. */
+  actions: RequiredAction[];
 }
 
 /**
@@ -488,6 +524,7 @@ export function summarize(facts: PullRequestFacts): Summary {
     }),
     ...(needsOwner && { needsOwner }),
     readyForOwner,
+    actions: requiredActions(facts, { overall: plain, pending: checks.pending }),
   };
 }
 

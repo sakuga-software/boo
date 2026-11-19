@@ -24,6 +24,7 @@ const firstPage = {
   isDraft: false,
   merged: false,
   mergeStateStatus: 'CLEAN',
+  threadStates: { nodes: [{ isResolved: true }, { isResolved: false }] },
   headRefOid: 'head',
   headRefName: 'feature',
   baseRefName: 'main',
@@ -87,6 +88,9 @@ test('a read through the transport reads the older comments and the newer checks
     ['lint', 'test'],
   );
   assert.equal(snapshot.status, 'open');
+  // A read without the threads still counts the unresolved ones, and has no thread to read.
+  assert.equal(snapshot.unresolvedThreads, 1);
+  assert.equal(snapshot.openThreads, undefined);
   assert.equal(node.headRefOid, 'head');
   assert.deepEqual(calls[0], { owner: 'sakuga-software', name: 'boo', number: 7 });
   assert.equal(calls.length, 3);
@@ -114,6 +118,10 @@ test('a transport that gives the same cursor twice stops the read', async () => 
 });
 
 test('the query asks for the threads and the files only when a read needs them', () => {
-  assert.doesNotMatch(queryOf({}), /reviewThreads|files\(first/);
+  // Every read counts the unresolved threads, with no comment: it costs no GraphQL point.
+  assert.match(queryOf({}), /threadStates: reviewThreads\(first: 100\) \{ nodes \{ isResolved \} \}/);
+  assert.doesNotMatch(queryOf({}), /comments\(first: 1\) \{ nodes \{ author|files\(first/);
+  assert.doesNotMatch(queryOf({ threads: true }), /threadStates/);
   assert.match(queryOf({ threads: true, files: true }), /reviewThreads\(first: 100\)[\s\S]*files\(first: 100\)/);
+  assert.match(queryOf({}), /reviewDecision/);
 });

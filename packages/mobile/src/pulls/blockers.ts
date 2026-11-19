@@ -3,7 +3,7 @@ import { displayName } from '@sakuga-software/boo-core/reviewers';
 import type { Tone } from '@sakuga-software/boo-core/theme';
 import type { IconName } from '../ui/icons';
 import { formatTime } from '../ui/time';
-import { failedChecks } from './triage';
+import { actionsOf, failedChecks } from './triage';
 
 /** Where an action of the details sends the person: the relay cannot act, GitHub can. */
 export type Target = 'checks' | 'pull' | 'files';
@@ -17,6 +17,13 @@ export interface Blocker {
   why: string;
   action?: { label: string; icon: IconName; target: Target };
 }
+
+const ACTION_WHY: Record<PullRequestReport['actions'][number]['reason'], string> = {
+  review: 'GitHub needs the approval of a person',
+  threads: 'GitHub needs them resolved before a merge',
+  behind: 'GitHub needs the branch up to date with its base',
+  blocked: 'GitHub refuses the merge, and does not say why',
+};
 
 const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
@@ -76,6 +83,14 @@ export function blockersOf(report: PullRequestReport, reports: readonly PullRequ
     });
   else if (report.stalled)
     out.push({ icon: 'zz', tone: 'yellow', what: 'Stalled', why: 'It needs work, and no commit came for a while' });
+  for (const { reason, note } of actionsOf(report))
+    out.push({
+      icon: 'flag',
+      tone: 'yellow',
+      what: capital(note),
+      why: ACTION_WHY[reason],
+      action: reason === 'threads' ? { label: 'Open', icon: 'external', target: 'files' } : open,
+    });
   for (const { note } of report.policy)
     out.push({ icon: 'gauge', tone: 'yellow', what: capital(note), why: 'A rule of the merge policy', action: open });
   if (report.threads && report.threads.open > 0) {

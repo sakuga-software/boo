@@ -5,6 +5,7 @@ import { Icon } from '../ui/icon';
 import { AvatarBadge, divider, Label, Pill, Pips, Well } from '../ui/kit';
 import { well, type Palette } from '../ui/theme';
 import {
+  actionsOf,
   bestScore,
   reviewerGlyph,
   reviewerWords,
@@ -140,9 +141,9 @@ export function PullRow({ report, group, index, palette, at, now, onPress, onMer
         iconSize={compact ? 14 : 16}
         strokeWidth={compact ? 2.4 : 2.2}
       >
-        {report.stalled ? (
+        {report.stalled || actionsOf(report).length > 0 ? (
           <View style={[styles.zz, { backgroundColor: palette.zzBg, boxShadow: `0 0 0 2px ${palette.surface}` }]}>
-            <Icon name="zz" size={12} color={palette.zzFg} strokeWidth={3} />
+            <Icon name={report.stalled ? 'zz' : 'flag'} size={12} color={palette.zzFg} strokeWidth={3} />
           </View>
         ) : null}
       </Well>

@@ -116,6 +116,30 @@ test('an approval with green checks and a clean merge state is ready', () => {
   );
 });
 
+test('a blocked merge names the actions that GitHub needs, from the facts of the read', () => {
+  const approved = [review(CLAUDE, 'head', 5, 'APPROVED')];
+  const checks: Check[] = [{ name: 'test', state: 'success' }];
+  const actionsOf = (patch: Partial<PullRequestFacts>) =>
+    summarize(facts({ reviews: approved, checks, ...patch })).actions.map(({ reason, note }) => `${reason}: ${note}`);
+
+  assert.deepEqual(actionsOf({ mergeState: 'blocked', reviewDecision: 'review_required', unresolvedThreads: 2 }), [
+    'review: GitHub requires an approving review',
+    'threads: 2 unresolved threads',
+  ]);
+  assert.deepEqual(actionsOf({ mergeState: 'blocked', unresolvedThreads: 1 }), ['threads: 1 unresolved thread']);
+  assert.deepEqual(actionsOf({ mergeState: 'behind' }), ['behind: behind the base branch: update it']);
+  // Approved, green, and still blocked: GitHub gives no reason, and boo says so.
+  assert.deepEqual(actionsOf({ mergeState: 'blocked', reviewDecision: 'approved', unresolvedThreads: 0 }), [
+    'blocked: a rule of the branch blocks the merge',
+  ]);
+  // A merge that GitHub allows needs no action, even with unresolved threads: no rule needs them resolved.
+  assert.deepEqual(actionsOf({ mergeState: 'clean', unresolvedThreads: 3 }), []);
+  // A pull request that waits for its checks or its reviewers is blocked, and needs no action of a person.
+  assert.deepEqual(actionsOf({ mergeState: 'blocked', checks: [{ name: 'test', state: 'pending' }] }), []);
+  assert.deepEqual(actionsOf({ mergeState: 'blocked', reviews: [] }), []);
+  assert.deepEqual(actionsOf({ mergeState: 'blocked', checks: [{ name: 'test', state: 'failure' }] }), []);
+});
+
 test('a conflict wins over everything, then a request for changes, then a failed check', () => {
   const approved = [review(CLAUDE, 'head', 5, 'APPROVED')];
   const failed: Check[] = [{ name: 'test', state: 'failure' }];
@@ -422,6 +446,7 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     mergedBy: bot('mergify'),
     mergedAt: ago(1),
     mergeStateStatus: 'UNSTABLE',
+    reviewDecision: 'REVIEW_REQUIRED',
     headRefOid: 'head',
     headRefName: 'mathieu/feature',
     baseRefName: 'main',
@@ -525,6 +550,8 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
     },
   });
   assert.equal(snapshot.mergeState, 'unstable');
+  assert.equal(snapshot.reviewDecision, 'review_required');
+  assert.equal(snapshot.unresolvedThreads, 3);
   assert.equal(snapshot.headAt, ago(90));
   assert.equal(snapshot.agent?.id, 'claude');
   assert.deepEqual(snapshot.changes, { additions: 190, deletions: 65, files: 12 });
