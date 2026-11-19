@@ -122,18 +122,26 @@ test('a blocked merge names the actions that GitHub needs, from the facts of the
   const actionsOf = (patch: Partial<PullRequestFacts>) =>
     summarize(facts({ reviews: approved, checks, ...patch })).actions.map(({ reason, note }) => `${reason}: ${note}`);
 
-  assert.deepEqual(actionsOf({ mergeState: 'blocked', reviewDecision: 'review_required', unresolvedThreads: 2 }), [
+  const required = { mergeState: 'blocked', threadsRequired: true };
+  assert.deepEqual(actionsOf({ ...required, reviewDecision: 'review_required', unresolvedThreads: 2 }), [
     'review: GitHub requires an approving review',
     'threads: 2 unresolved threads',
   ]);
-  assert.deepEqual(actionsOf({ mergeState: 'blocked', unresolvedThreads: 1 }), ['threads: 1 unresolved thread']);
+  assert.deepEqual(actionsOf({ ...required, unresolvedThreads: 1 }), ['threads: 1 unresolved thread']);
+  // With no ruleset that needs them resolved, the threads are only a possible cause, and never next to a known one.
+  assert.deepEqual(actionsOf({ mergeState: 'blocked', unresolvedThreads: 2 }), [
+    'blocked: a rule of the branch blocks the merge, maybe the 2 unresolved threads',
+  ]);
+  assert.deepEqual(actionsOf({ mergeState: 'blocked', reviewDecision: 'review_required', unresolvedThreads: 2 }), [
+    'review: GitHub requires an approving review',
+  ]);
   assert.deepEqual(actionsOf({ mergeState: 'behind' }), ['behind: behind the base branch: update it']);
   // Approved, green, and still blocked: GitHub gives no reason, and boo says so.
   assert.deepEqual(actionsOf({ mergeState: 'blocked', reviewDecision: 'approved', unresolvedThreads: 0 }), [
     'blocked: a rule of the branch blocks the merge',
   ]);
   // A merge that GitHub allows needs no action, even with unresolved threads: no rule needs them resolved.
-  assert.deepEqual(actionsOf({ mergeState: 'clean', unresolvedThreads: 3 }), []);
+  assert.deepEqual(actionsOf({ mergeState: 'clean', unresolvedThreads: 3, threadsRequired: true }), []);
   // A pull request that waits for its checks or its reviewers is blocked, and needs no action of a person.
   assert.deepEqual(actionsOf({ mergeState: 'blocked', checks: [{ name: 'test', state: 'pending' }] }), []);
   assert.deepEqual(actionsOf({ mergeState: 'blocked', reviews: [] }), []);
@@ -515,6 +523,14 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
           contexts: { nodes: [{ __typename: 'CheckRun', name: 'e2e', status: 'COMPLETED', conclusion: 'FAILURE' }] },
         },
       },
+      // Two rulesets: one of them needs the threads resolved.
+      rules: {
+        nodes: [
+          { type: 'PULL_REQUEST', parameters: { requiredReviewThreadResolution: false } },
+          { type: 'DELETION', parameters: null },
+          { type: 'PULL_REQUEST', parameters: { requiredReviewThreadResolution: true } },
+        ],
+      },
     },
     commits: {
       nodes: [
@@ -552,6 +568,7 @@ test('the snapshot restores the bot suffix and marks the thread replies', () => 
   assert.equal(snapshot.mergeState, 'unstable');
   assert.equal(snapshot.reviewDecision, 'review_required');
   assert.equal(snapshot.unresolvedThreads, 3);
+  assert.equal(snapshot.threadsRequired, true);
   assert.equal(snapshot.headAt, ago(90));
   assert.equal(snapshot.agent?.id, 'claude');
   assert.deepEqual(snapshot.changes, { additions: 190, deletions: 65, files: 12 });

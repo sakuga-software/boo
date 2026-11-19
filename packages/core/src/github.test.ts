@@ -91,6 +91,8 @@ test('a read through the transport reads the older comments and the newer checks
   // A read without the threads still counts the unresolved ones, and has no thread to read.
   assert.equal(snapshot.unresolvedThreads, 1);
   assert.equal(snapshot.openThreads, undefined);
+  // A read with no rule of the base branch does not know if the threads need a resolution.
+  assert.equal(snapshot.threadsRequired, undefined);
   assert.equal(node.headRefOid, 'head');
   assert.deepEqual(calls[0], { owner: 'sakuga-software', name: 'boo', number: 7 });
   assert.equal(calls.length, 3);

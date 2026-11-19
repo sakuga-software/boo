@@ -44,6 +44,11 @@ export interface PullRequestSnapshot {
   unresolvedThreads?: number;
   /** The `reviewDecision` of GitHub in lower case: approved, changes_requested, review_required. Undefined if GitHub gives none. */
   reviewDecision?: string;
+  /**
+   * A ruleset of the base branch needs the threads resolved before a merge. The classic branch protection
+   * can also need it, but its rules need the admin permission to read: false does not prove the opposite.
+   */
+  threadsRequired?: boolean;
   /** The changed files. Undefined if the query did not read them. */
   files?: string[];
   /** The commit time of the head commit. A rebase or an amend gives a new time. */
@@ -132,7 +137,8 @@ query(${VARIABLES}) {
     timelineItems(itemTypes: [AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, PULL_REQUEST_COMMIT], last: 1) {
       nodes { __typename ... on AutomaticBaseChangeSucceededEvent { oldBase createdAt } } }
     baseRepository { defaultBranchRef { name } }
-    baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { ${CONTEXT_FIELDS} } } } } } }
+    baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { ${CONTEXT_FIELDS} } } } } }
+      rules(first: 50) { nodes { type parameters { ... on PullRequestParameters { requiredReviewThreadResolution } } } } }
     author { login __typename }
     reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
     reviews(last: 100) { ${OLDER} nodes { ${reviewFields(lineComments)} } }
@@ -224,7 +230,10 @@ interface PullRequestNode {
   changedFiles?: number;
   timelineItems?: { nodes: { __typename: string; oldBase?: string; createdAt?: string }[] };
   baseRepository: { defaultBranchRef: { name: string } | null } | null;
-  baseRef?: { target: { statusCheckRollup?: { contexts: Page<ContextNode> } | null } | null } | null;
+  baseRef?: {
+    target: { statusCheckRollup?: { contexts: Page<ContextNode> } | null } | null;
+    rules?: { nodes: { type: string; parameters?: { requiredReviewThreadResolution?: boolean } | null }[] };
+  } | null;
   author: Actor | null;
   reviewRequests: { nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[] };
   reviews: Page<ReviewNode>;
@@ -406,6 +415,11 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
     mergeState: pull.mergeStateStatus.toLowerCase(),
     ...(pull.reviewDecision && { reviewDecision: pull.reviewDecision.toLowerCase() }),
     ...unresolvedOf(pull.reviewThreads ?? pull.threadStates),
+    ...(pull.baseRef?.rules && {
+      threadsRequired: pull.baseRef.rules.nodes.some(
+        (rule) => rule.parameters?.requiredReviewThreadResolution === true,
+      ),
+    }),
     reviews: pull.reviews.nodes.map(toReview).filter((review) => review !== null),
     comments: pull.comments.nodes.map(toComment),
     checks: withUnfinishedRuns(

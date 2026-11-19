@@ -92,6 +92,8 @@ export interface PullRequestFacts {
   unresolvedThreads?: number;
   /** The `reviewDecision` of GitHub in lower case. */
   reviewDecision?: string;
+  /** A ruleset of the base branch needs the threads resolved. */
+  threadsRequired?: boolean;
   policy?: MergePolicy | undefined;
   /** The login of the user of boo. */
   viewer?: string | undefined;
@@ -409,11 +411,12 @@ export interface RequiredAction {
 
 /**
  * The actions that GitHub needs before a merge. Each one comes from a fact of the read, and only if
- * the merge state is `blocked` or `behind`: GitHub can show unresolved threads that no rule needs.
- * A pull request that waits for its checks or its reviewers has no action.
+ * the merge state is `blocked` or `behind`. A pull request that waits for its checks or its reviewers
+ * has no action. The unresolved threads are an action only if a ruleset needs them resolved. Else they
+ * are only a possible cause of a block that GitHub does not explain.
  */
 export function requiredActions(
-  facts: Pick<PullRequestFacts, 'mergeState' | 'reviewDecision' | 'unresolvedThreads'>,
+  facts: Pick<PullRequestFacts, 'mergeState' | 'reviewDecision' | 'unresolvedThreads' | 'threadsRequired'>,
   { overall, pending }: { overall: Overall; pending: number },
 ): RequiredAction[] {
   if (facts.mergeState === 'behind') return [{ reason: 'behind', note: 'behind the base branch: update it' }];
@@ -422,9 +425,16 @@ export function requiredActions(
   if (facts.reviewDecision === 'review_required')
     actions.push({ reason: 'review', note: 'GitHub requires an approving review' });
   const threads = facts.unresolvedThreads ?? 0;
-  if (threads > 0) actions.push({ reason: 'threads', note: `${threads} unresolved thread${threads === 1 ? '' : 's'}` });
+  const unresolved = `${threads} unresolved thread${threads === 1 ? '' : 's'}`;
+  if (threads > 0 && facts.threadsRequired) actions.push({ reason: 'threads', note: unresolved });
   if (actions.length === 0 && overall === 'approved' && pending === 0)
-    actions.push({ reason: 'blocked', note: 'a rule of the branch blocks the merge' });
+    actions.push({
+      reason: 'blocked',
+      note:
+        threads > 0
+          ? `a rule of the branch blocks the merge, maybe the ${unresolved}`
+          : 'a rule of the branch blocks the merge',
+    });
   return actions;
 }
 
