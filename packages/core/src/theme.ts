@@ -45,6 +45,9 @@ export const LEFT_MARKS: Record<'merged' | 'closed' | 'draft', Mark> = {
   draft: { mark: '◌', tone: 'gray' },
 };
 
+/** The mark of a pull request that needs an action of a person before GitHub merges it: see `actions` of the report. */
+export const ACTION_MARK: Mark = { mark: '⚑', tone: 'yellow' };
+
 /** The mark of a pull request that the read failed to read. */
 export const ERROR_MARK: Mark = { mark: '✖', tone: 'red' };
 

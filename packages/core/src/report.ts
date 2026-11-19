@@ -1,7 +1,7 @@
 import { activeBots, plannedRetries } from './bots.js';
 import { decide, quotaScope, quotaSignals, type Decision, type QuotaSignal } from './decide.js';
 import type { PullRequest, PullRequestSnapshot } from './github.js';
-import { confidenceOf, isOnHead, summarize, type Overall, type Summary } from './reviewers.js';
+import { confidenceOf, isOnHead, summarize, type Overall, type RequiredAction, type Summary } from './reviewers.js';
 import { agentLogins, summarizeFindings, type FindingsSummary } from './findings.js';
 import { ownerPathsOf, type MergePolicy, type PolicyMiss } from './policy.js';
 import { isWorkingStatus, ownerWorks, type Owner, type SubAgentState } from './sessions.js';
@@ -181,6 +181,11 @@ export interface PullRequestReport {
    */
   threads: { open: number; answered: number } | null;
   /**
+   * The actions that GitHub needs before a merge, such as a review of a person or unresolved threads.
+   * Empty if GitHub can merge it, or if it waits only for its checks or its reviewers.
+   */
+  actions: RequiredAction[];
+  /**
    * The owner that the changed files need (`ownerOnly`), and these files. `partial` is true if the
    * pull request has more files than the query read. Null if no file of the pull request is owned.
    */
@@ -352,6 +357,7 @@ export function buildReport(
       stale: snapshot?.stale ? { at: snapshot.stale.at, until: snapshot.stale.until ?? null } : null,
       findings: summary?.findings ?? summarizeFindings([]),
       threads: summary?.threads ?? null,
+      actions: summary?.actions ?? [],
       // A merged pull request has no summary: its files still name the owner, for the `left` event.
       needsOwner:
         (summary

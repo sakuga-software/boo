@@ -17,10 +17,16 @@ export interface Glyph {
 // The states where the person, or the agent of the person, must change the code.
 const NEEDS = new Set(['conflicts', 'changes requested', 'checks failing', 'error']);
 
+/** The actions that GitHub needs before a merge. A relay older than these actions gives none. */
+export const actionsOf = (report: Partial<Pick<PullRequestReport, 'actions'>>): PullRequestReport['actions'] =>
+  report.actions ?? [];
+
 /** The group of a pull request. Undefined: it left the list (merged or closed). */
-export function groupOf(report: Pick<PullRequestReport, 'state'>): Group | undefined {
+export function groupOf(
+  report: Pick<PullRequestReport, 'state'> & Partial<Pick<PullRequestReport, 'actions'>>,
+): Group | undefined {
   if (report.state === 'merged' || report.state === 'closed') return undefined;
-  if (NEEDS.has(report.state)) return 'needs';
+  if (NEEDS.has(report.state) || actionsOf(report).length > 0) return 'needs';
   return report.state === 'ready to merge' ? 'ready' : 'reviewing';
 }
 
@@ -82,8 +88,12 @@ export function stateWords(report: PullRequestReport): string {
     }
     case 'error':
       return 'not read';
-    default:
-      return report.state;
+    default: {
+      // The state of a pull request that needs work says more than the actions.
+      const actions = NEEDS.has(report.state) ? [] : actionsOf(report);
+      if (actions.length === 1) return `action required · ${actions[0]!.note}`;
+      return actions.length > 1 ? `${actions.length} actions required` : report.state;
+    }
   }
 }
 

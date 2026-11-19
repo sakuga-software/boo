@@ -45,6 +45,7 @@ const report = (number: number, patch: Partial<PullRequestReport> = {}): PullReq
   stale: null,
   findings: summarizeFindings([]),
   threads: null,
+  actions: [],
   needsOwner: null,
   readyForOwner: false,
   draftState: null,
@@ -850,6 +851,28 @@ test('a change of the policy notes gives one policy event with the notes added a
     diffReports(byKey(after), [report(1)], AT).map((event) => event.event),
     ['policy'],
   );
+});
+
+test('an action that GitHub starts or stops to need gives one actions event', () => {
+  const review = { reason: 'review' as const, note: 'GitHub requires an approving review' };
+  const threads = { reason: 'threads' as const, note: '2 unresolved threads' };
+  const before = report(1, { actions: [review] });
+  const after = report(1, { actions: [review, threads] });
+  assert.deepEqual(diffReports(byKey(before), [after], AT), [
+    {
+      at: AT,
+      pr: 'acme/web#1',
+      event: 'actions',
+      actions: after.actions,
+      added: ['2 unresolved threads'],
+      removed: [],
+    },
+  ]);
+  assert.deepEqual(diffReports(byKey(after), [report(1, { actions: [threads, review] })], AT), []);
+  // A state file of an older boo has no actions: a report with none gives no event.
+  const old = { ...report(1) } as Partial<ReturnType<typeof report>>;
+  delete old.actions;
+  assert.deepEqual(diffReports(byKey(old as ReturnType<typeof report>), [report(1)], AT), []);
 });
 
 test('the saved state forgets the comments and the requests of a pull request that left', async () => {

@@ -36,6 +36,21 @@ test('each state of the terminal goes to one group: the person acts, merges, or 
   assert.equal(groupOf({ state: 'closed' }), undefined);
 });
 
+test('an action that GitHub needs puts the pull request with the ones the person acts on, and says it', () => {
+  const review = { reason: 'review' as const, note: 'GitHub requires an approving review' };
+  const threads = { reason: 'threads' as const, note: '2 unresolved threads' };
+  const one = report({ state: 'approved', actions: [threads] });
+  assert.equal(groupOf(one), 'needs');
+  assert.equal(stateWords(one), 'action required · 2 unresolved threads');
+  assert.equal(stateWords(report({ state: 'approved', actions: [review, threads] })), '2 actions required');
+  // The state of a pull request that needs work says more than the actions.
+  assert.equal(stateWords(report({ state: 'conflicts', actions: [threads] })), 'conflicts');
+  // A relay older than the actions gives none.
+  const old: Partial<ReturnType<typeof report>> = report({ state: 'approved' });
+  delete old.actions;
+  assert.equal(groupOf({ state: 'approved', ...old }), 'reviewing');
+});
+
 test('the list keeps the order of the relay in each group, and counts the merges of the day only', () => {
   const list = [
     report({ number: 1, state: 'checks failing' }),

@@ -40,6 +40,15 @@ export interface PullRequestSnapshot {
   title?: string;
   /** The review threads that are not resolved. Undefined if the query did not read the threads. */
   openThreads?: OpenThread[];
+  /** How many review threads are not resolved, of the first 100. Every read counts them. */
+  unresolvedThreads?: number;
+  /** The `reviewDecision` of GitHub in lower case: approved, changes_requested, review_required. Undefined if GitHub gives none. */
+  reviewDecision?: string;
+  /**
+   * A ruleset of the base branch needs the threads resolved before a merge. The classic branch protection
+   * can also need it, but its rules need the admin permission to read: false does not prove the opposite.
+   */
+  threadsRequired?: boolean;
   /** The changed files. Undefined if the query did not read them. */
   files?: string[];
   /** The commit time of the head commit. A rebase or an amend gives a new time. */
@@ -62,6 +71,9 @@ export interface PullRequestSnapshot {
   /** A hash of the fields that `probePullRequests` reads, at the time of the read. */
   fingerprint?: string;
 }
+
+const unresolvedOf = (threads: { nodes: { isResolved: boolean }[] } | undefined) =>
+  threads && { unresolvedThreads: threads.nodes.filter((thread) => !thread.isResolved).length };
 
 const reviewFields = (lineComments?: boolean) =>
   `author { login __typename } state submittedAt body commit { oid } comments(first: 10) { totalCount nodes { replyTo { id }${lineComments ? ' databaseId body createdAt' : ''} } }`;
@@ -120,12 +132,13 @@ query(${VARIABLES}) {
   rateLimit { limit remaining resetAt }
   ${PULL} {
     ...Probe
-    title state isDraft merged mergedAt mergedBy { login __typename } mergeStateStatus headRefOid headRefName baseRefName isCrossRepository body
+    title state isDraft merged mergedAt mergedBy { login __typename } mergeStateStatus reviewDecision headRefOid headRefName baseRefName isCrossRepository body
     additions deletions changedFiles
     timelineItems(itemTypes: [AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, PULL_REQUEST_COMMIT], last: 1) {
       nodes { __typename ... on AutomaticBaseChangeSucceededEvent { oldBase createdAt } } }
     baseRepository { defaultBranchRef { name } }
-    baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { ${CONTEXT_FIELDS} } } } } } }
+    baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { ${CONTEXT_FIELDS} } } } } }
+      rules(first: 50) { nodes { type parameters { ... on PullRequestParameters { requiredReviewThreadResolution } } } } }
     author { login __typename }
     reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { slug } } } }
     reviews(last: 100) { ${OLDER} nodes { ${reviewFields(lineComments)} } }
@@ -133,7 +146,7 @@ query(${VARIABLES}) {
     commits(last: 1) { nodes { commit { message committedDate authors(first: 10) { nodes { user { login } } }
       checkSuites(first: 100) { nodes { status workflowRun { databaseId workflow { name } } } }
       statusCheckRollup { contexts(first: 100) { ${NEWER} nodes { ${CONTEXT_FIELDS} } } } } } }
-    ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } body } } latest: comments(last: 1) { nodes { author { login __typename } body } } } }' : ''}
+    ${threads ? 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } body } } latest: comments(last: 1) { nodes { author { login __typename } body } } } }' : 'threadStates: reviewThreads(first: 100) { nodes { isResolved } }'}
     ${files ? 'files(first: 100) { nodes { path } }' : ''}
   } }
 }`;
@@ -206,6 +219,7 @@ interface PullRequestNode {
   mergedAt?: string | null;
   mergedBy?: Actor | null;
   mergeStateStatus: string;
+  reviewDecision?: string | null;
   headRefOid: string;
   headRefName: string;
   baseRefName: string;
@@ -216,7 +230,10 @@ interface PullRequestNode {
   changedFiles?: number;
   timelineItems?: { nodes: { __typename: string; oldBase?: string; createdAt?: string }[] };
   baseRepository: { defaultBranchRef: { name: string } | null } | null;
-  baseRef?: { target: { statusCheckRollup?: { contexts: Page<ContextNode> } | null } | null } | null;
+  baseRef?: {
+    target: { statusCheckRollup?: { contexts: Page<ContextNode> } | null } | null;
+    rules?: { nodes: { type: string; parameters?: { requiredReviewThreadResolution?: boolean } | null }[] };
+  } | null;
   author: Actor | null;
   reviewRequests: { nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[] };
   reviews: Page<ReviewNode>;
@@ -228,6 +245,8 @@ interface PullRequestNode {
       latest?: { nodes: { author: Actor | null; body: string }[] };
     }[];
   };
+  /** The state of the threads, with no comment: the read of a pull request with no merge policy. */
+  threadStates?: { nodes: { isResolved: boolean }[] };
   files?: { nodes: { path: string }[] };
   commits: {
     nodes: {
@@ -394,6 +413,13 @@ export function toSnapshot(pull: PullRequestNode): PullRequestSnapshot {
     defaultBranch: pull.baseRepository?.defaultBranchRef?.name ?? pull.baseRefName,
     author: loginOf(pull.author) ?? '',
     mergeState: pull.mergeStateStatus.toLowerCase(),
+    ...(pull.reviewDecision && { reviewDecision: pull.reviewDecision.toLowerCase() }),
+    ...unresolvedOf(pull.reviewThreads ?? pull.threadStates),
+    ...(pull.baseRef?.rules && {
+      threadsRequired: pull.baseRef.rules.nodes.some(
+        (rule) => rule.parameters?.requiredReviewThreadResolution === true,
+      ),
+    }),
     reviews: pull.reviews.nodes.map(toReview).filter((review) => review !== null),
     comments: pull.comments.nodes.map(toComment),
     checks: withUnfinishedRuns(

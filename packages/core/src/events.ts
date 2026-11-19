@@ -33,6 +33,7 @@ export type WatchEvent = { at: string; pr: string } & (
   | { event: 'restack'; oldBase: string; base: string | null; parent: string | null }
   | ({ event: 'ready-for-owner' } & NonNullable<PullRequestReport['needsOwner']>)
   | { event: 'policy'; policy: PullRequestReport['policy']; added: string[]; removed: string[] }
+  | { event: 'actions'; actions: PullRequestReport['actions']; added: string[]; removed: string[] }
   | { event: 'comment'; author: string; createdAt: string; body: string; thread: boolean }
   | ({ event: 'review-request' } & Omit<RequestState, 'id' | 'commentId'>)
   | ({ event: 'findings' } & PullRequestReport['findings'])
@@ -289,6 +290,15 @@ export function changesOf(before: PullRequestReport, after: PullRequestReport, a
   const added = [...notesAfter].filter((note) => !notesBefore.has(note));
   const removed = [...notesBefore].filter((note) => !notesAfter.has(note));
   if (added.length + removed.length > 0) events.push({ at, pr, event: 'policy', policy: after.policy, added, removed });
+  // An action that GitHub starts or stops to need before a merge. A state file of an older boo has no actions.
+  const notesOf = (actions: PullRequestReport['actions'] | undefined) =>
+    new Set((actions ?? []).map(({ note }) => note));
+  const actionsBefore = notesOf(before.actions);
+  const actionsAfter = notesOf(after.actions);
+  const addedActions = [...actionsAfter].filter((note) => !actionsBefore.has(note));
+  const removedActions = [...actionsBefore].filter((note) => !actionsAfter.has(note));
+  if (addedActions.length + removedActions.length > 0)
+    events.push({ at, pr, event: 'actions', actions: after.actions, added: addedActions, removed: removedActions });
   // One event when the pull request starts to wait only for its owner, not one at each read.
   if (after.readyForOwner && !before.readyForOwner && after.needsOwner)
     events.push({ at, pr, event: 'ready-for-owner', ...after.needsOwner });
