@@ -3,8 +3,8 @@ name: Mobile
 # Each push to main that changes the phone app goes to TestFlight:
 # - The native side changed (a new fingerprint): EAS builds the app with the `production` profile and
 #   submits it to TestFlight.
-# - Only the JavaScript changed: a build with the same fingerprint is already on TestFlight, so an
-#   update on the `production` channel reaches it, with no new build and no review by Apple.
+# - Only the JavaScript changed: a build with the same fingerprint is on TestFlight, or on its way
+#   there, so an update on the `production` channel reaches it, with no new build and no review by Apple.
 # A manual run builds and submits, whatever changed.
 #
 # Secrets: EXPO_TOKEN, an access token of a robot of the Expo account sakuga-software. The submission
@@ -58,20 +58,39 @@ jobs:
           eas-version: 21.0.2
           token: ${{ secrets.EXPO_TOKEN }}
 
-      # `set -euo pipefail` and `jq -e` make an error of `eas` stop the job. Without them, an empty
-      # answer reads as "no build", and each push gives a new build.
-      - name: Is a build with this fingerprint on TestFlight?
+      # A finished build is not always on TestFlight: its submission can fail. A build or a submission
+      # still in progress is on its way, and it gets the update at its first start.
+      # - A submission of this fingerprint finished or runs, or a build of it runs: publish an update.
+      # - Else: build and submit. A finished build whose submission failed does not count.
+      # The CLI gives no submission, so the step reads them from the GraphQL API of Expo.
+      # `set -euo pipefail` and `jq -e` stop the job on an error. Without them, an empty answer reads
+      # as "no build", and each push gives a new build.
+      - name: Is this fingerprint on TestFlight, or on its way?
         id: reach
         if: github.event_name == 'push'
         shell: bash
         working-directory: packages/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          PROJECT_ID: c99df17f-1fdf-424f-b5bf-731bd1b0d36d
         run: |
           set -euo pipefail
           hash=$(eas fingerprint:generate --platform ios --json --non-interactive | jq -er '.hash')
-          builds=$(eas build:list --platform ios --build-profile production --status finished \
-            --fingerprint-hash "$hash" --limit 1 --json --non-interactive | jq -e 'length')
-          echo "fingerprint $hash, finished production builds: $builds"
-          if [ "$builds" -gt 0 ]; then echo "update=true" >> "$GITHUB_OUTPUT"; else echo "update=false" >> "$GITHUB_OUTPUT"; fi
+          query='query($app: String!) { app { byId(appId: $app) { submissions(filter: { platform: IOS }, offset: 0, limit: 50) { status submittedBuild { fingerprint { hash } } } } } }'
+          submitted=$(curl -sf https://api.expo.dev/graphql -H "authorization: Bearer $EXPO_TOKEN" -H 'content-type: application/json' \
+            -d "$(jq -nc --arg q "$query" --arg app "$PROJECT_ID" '{query: $q, variables: {app: $app}}')" |
+            jq -e --arg hash "$hash" '[.data.app.byId.submissions[]
+              | select(.submittedBuild.fingerprint.hash == $hash)
+              | select(.status | IN("FINISHED", "IN_PROGRESS", "IN_QUEUE", "AWAITING_BUILD"))] | length')
+          running=$(eas build:list --platform ios --build-profile production --fingerprint-hash "$hash" \
+            --limit 10 --json --non-interactive |
+            jq -e '[.[] | select(.status | ascii_upcase | IN("NEW", "IN_QUEUE", "IN_PROGRESS"))] | length')
+          echo "fingerprint $hash: $submitted submissions finished or on their way, $running builds running"
+          if [ "$submitted" -gt 0 ] || [ "$running" -gt 0 ]; then
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "update=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish an update
         if: steps.reach.outputs.update == 'true'
