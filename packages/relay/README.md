@@ -156,6 +156,8 @@ The key `quiet` of the settings holds the pushes of a user:
   the merges. A recap with nothing in it is not sent. A tap opens `boo://day`.
   - At the end of the work hours (in the next 30 minutes, for a relay that restarts), the recap of the
     day, once a day. It also empties the held changes, so a snooze that ends then gives no second recap.
+    A snooze that runs past the end of the work hours holds this recap too: the end of the snooze sends
+    one recap.
   - At the end of a hold, the recap of the hold. On a Monday after a hold of more than 36 hours, its
     title starts with "Over the weekend".
 - **`GET /quiet`** gives `{ "holding", "held" }`: the relay holds the pushes now, and the count of the

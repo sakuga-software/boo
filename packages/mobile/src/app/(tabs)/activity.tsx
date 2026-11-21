@@ -88,7 +88,8 @@ function EventRow({
 function TodayCard({ palette, now, onPress }: { palette: Palette; now: Date; onPress: () => void }) {
   const { pulls } = usePullsContext();
   const view = listView(pulls);
-  const day = useDay(dateOf(now), 'at' in view ? view.at.getTime() : undefined);
+  // The day is read again when the list changes, and every 5 minutes for the merges outside the list.
+  const day = useDay(dateOf(now), `${'at' in view ? view.at.getTime() : ''} ${Math.floor(now.getTime() / 300_000)}`);
   const summary = todaySummary(
     'reports' in view ? view.reports : [],
     day.status === 'ready' ? day.work : undefined,

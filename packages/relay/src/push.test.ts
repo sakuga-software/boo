@@ -705,3 +705,26 @@ test('recapOf: the counts in the title, the names in the body, nothing when noth
   assert.equal(message?.title, '4 need you · 1 ready to merge');
   assert.equal(message?.body, 'web#1 test failed · web#2 needs a review · web#4 conflicts · 1 more · 4 merged today');
 });
+
+test('a snooze past the end of the work hours holds the recap of the day; its end sends one recap', async () => {
+  const { reports, read, follow, flush, sent, store, notifier, advance } = setup({
+    // Until Tuesday 10:00 in Paris.
+    settings: { quiet: { workHours: WORK, snoozeUntil: new Date(start + 21 * 60 * MINUTE).toISOString() } },
+  });
+  follow(1);
+  reports.get('alice');
+  read(1, { checks: red });
+  await flush();
+  advance(5 * 60 * MINUTE); // 18:00: no recap of the day during the snooze.
+  await notifier.tick();
+  await notifier.idle();
+  assert.equal(sent.length, 0);
+  assert.equal(store.heldOf('alice').length, 1);
+  advance(16 * 60 * MINUTE); // Tuesday 10:00: the snooze ends in the work hours.
+  await notifier.tick();
+  await notifier.idle();
+  assert.deepEqual(
+    sent.map(({ title, data }) => `${title} ${data.recap}`),
+    ['1 needs you hold'],
+  );
+});

@@ -1,6 +1,6 @@
 import type { WatchEvent } from '@sakuga-software/boo-core/events';
 import type { PullRequestReport } from '@sakuga-software/boo-core/report';
-import { held, instantOf, localTime } from '@sakuga-software/boo-core/quiet';
+import { held, instantOf, localTime, snoozed } from '@sakuga-software/boo-core/quiet';
 import { PUSH_STATES, pushOn, type PushState } from '@sakuga-software/boo-core/settings';
 import { SessionExpired } from './access.js';
 import type { Reports, UserState } from './reports.js';
@@ -445,9 +445,11 @@ export class PushNotifier {
     const { store } = this.options;
     const now = new Date(this.now());
     for (const login of store.logins()) {
-      const hours = store.config(login)?.settings.quiet?.workHours;
+      const quiet = store.config(login)?.settings.quiet;
+      const hours = quiet?.workHours;
       const reports = this.latest.get(login.toLowerCase());
-      if (!hours || !reports) continue;
+      // A snooze that runs past the end of the work hours holds the recap of the day too: its own end sends the recap.
+      if (!hours || !reports || snoozed(quiet, now)) continue;
       const local = localTime(now, hours.timeZone);
       const end = instantOf(local.date, hours.end, hours.timeZone).getTime();
       // A relay that stops at the end of the work hours sends the recap at its start, in the next 30 minutes.
