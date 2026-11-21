@@ -159,7 +159,7 @@ The key `quiet` of the settings holds the pushes of a user:
     A snooze that runs past the end of the work hours holds this recap too: the end of the snooze sends
     one recap.
   - At the end of a hold, the recap of the hold. On a Monday after a hold of more than 36 hours, its
-    title starts with "Over the weekend".
+    title starts with "Over the weekend". The day comes from the zone of the work hours: with no work hours, no recap says it.
 - **`GET /quiet`** gives `{ "holding", "held" }`: the relay holds the pushes now, and the count of the
   changes that wait for the recap.
 - **`GET /state/day?date=YYYY-MM-DD&tz=<IANA zone>`** gives the work of one day of the user, from the

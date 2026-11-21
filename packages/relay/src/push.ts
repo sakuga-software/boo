@@ -462,7 +462,7 @@ export class PushNotifier {
         instantOf(local.date, '00:00', hours.timeZone).getTime(),
         now.getTime(),
       ).merged;
-      await this.sendRecap(login, { kind: 'day', reports, merged: 0 }, merged);
+      await this.sendRecap(login, { kind: 'day', reports }, merged);
     }
     for (const login of store.loginsWithHeld()) {
       const quiet = store.config(login)?.settings.quiet;
@@ -471,13 +471,14 @@ export class PushNotifier {
       const first = store.heldOf(login)[0]?.at ?? now.getTime();
       store.clearHeld(login);
       const merged = store.workBetween(login, first, now.getTime()).merged;
-      const zone = quiet?.workHours?.timeZone ?? 'UTC';
-      const weekend = localTime(now, zone).day === 1 && now.getTime() - first > 36 * 3_600_000;
-      await this.sendRecap(login, { kind: 'hold', reports, merged: 0, weekend }, merged);
+      // Only the work hours give the zone of the user: with no work hours, no recap says "weekend".
+      const zone = quiet?.workHours?.timeZone;
+      const weekend = !!zone && localTime(now, zone).day === 1 && now.getTime() - first > 36 * 3_600_000;
+      await this.sendRecap(login, { kind: 'hold', reports, weekend }, merged);
     }
   }
 
-  private sendRecap(login: string, recap: Recap, merged: readonly { repo: string }[]): Promise<void> {
+  private sendRecap(login: string, recap: Omit<Recap, 'merged'>, merged: readonly { repo: string }[]): Promise<void> {
     return this.deliver(login, (token, repos) => {
       const readable = (repo: string) => repos.has(repo.toLowerCase());
       const message = recapOf(

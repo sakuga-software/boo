@@ -728,3 +728,29 @@ test('a snooze past the end of the work hours holds the recap of the day; its en
     ['1 needs you hold'],
   );
 });
+
+test('a hold that ends on a Monday says "weekend" only in the zone of the work hours', async () => {
+  // Monday 16 November 2026, 09:30 in Paris, after a snooze from Friday 13 November.
+  const monday = Date.parse('2026-11-16T08:30:00Z');
+  for (const [quiet, title] of [
+    [{ workHours: WORK }, 'Over the weekend: 1 needs you'],
+    [{}, '1 needs you'],
+  ] as const) {
+    const { reports, read, follow, flush, sent, store, notifier, advance } = setup({
+      settings: { quiet: { ...quiet, snoozeUntil: new Date(monday - MINUTE).toISOString() } },
+    });
+    follow(1);
+    reports.get('alice');
+    advance(Date.parse('2026-11-13T12:00:00Z') - start);
+    read(1, { checks: red });
+    await flush();
+    assert.equal(store.heldOf('alice').length, 1);
+    advance(monday - Date.parse('2026-11-13T12:00:00Z'));
+    await notifier.tick();
+    await notifier.idle();
+    assert.deepEqual(
+      sent.map(({ title: sentTitle }) => sentTitle),
+      [title],
+    );
+  }
+});
