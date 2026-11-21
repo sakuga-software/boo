@@ -6,6 +6,7 @@ import { ActivityProvider } from '../activity/activity-context';
 import { MergeToastProvider } from '../pulls/merge-toast';
 import { PullsProvider } from '../pulls/pulls-context';
 import { PushProvider } from '../push/push-context';
+import { QuietProvider } from '../quiet/quiet-context';
 import { RelayProvider } from '../relay/relay-context';
 import { SettingsProvider } from '../settings/settings-context';
 import { FONT_FILES } from '../ui/fonts';
@@ -28,20 +29,30 @@ export default function RootLayout() {
         <MergeToastProvider>
           <ActivityProvider>
             <SettingsProvider>
-              <PushProvider>
-                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: palette.background } }}>
-                  <Stack.Screen name="(tabs)" />
-                  <Stack.Screen
-                    name="merge/[owner]/[repo]/[number]"
-                    options={{
-                      presentation: 'transparentModal',
-                      animation: 'fade',
-                      contentStyle: { backgroundColor: 'transparent' },
-                    }}
-                  />
-                </Stack>
-                <StatusBar style="auto" />
-              </PushProvider>
+              <QuietProvider>
+                <PushProvider>
+                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: palette.background } }}>
+                    <Stack.Screen name="(tabs)" />
+                    <Stack.Screen
+                      name="snooze"
+                      options={{
+                        presentation: 'transparentModal',
+                        animation: 'fade',
+                        contentStyle: { backgroundColor: 'transparent' },
+                      }}
+                    />
+                    <Stack.Screen
+                      name="merge/[owner]/[repo]/[number]"
+                      options={{
+                        presentation: 'transparentModal',
+                        animation: 'fade',
+                        contentStyle: { backgroundColor: 'transparent' },
+                      }}
+                    />
+                  </Stack>
+                  <StatusBar style="auto" />
+                </PushProvider>
+              </QuietProvider>
             </SettingsProvider>
           </ActivityProvider>
         </MergeToastProvider>

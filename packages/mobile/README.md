@@ -190,6 +190,15 @@ A tap on a notification opens its pull request (`boo://pull/<owner>/<repo>/<numb
 starts the app; the app opens the screen once the session is read. A notification that comes while the
 app is open shows as a banner too.
 
+**Snooze, work hours and the day** (BOO-35). The bell of the list opens the snooze sheet: one tap on a
+preset snoozes every phone of the user, because the snooze is in the settings on the relay. During a
+snooze, the bell turns yellow and a notice gives its end, the count of the changes that wait
+(`GET /quiet`) and **Resume**. **Settings → Notifications → Work hours** sets the days and the hours:
+outside them the relay holds the pushes, and their end sends the recap of the day. The card **Today** on
+top of **Activity**, a tap on a recap, and the line of the merges under the list open the day: what stays
+for tomorrow, the merges with the share of each agent (`GET /state/day`), and the figures. The chevrons
+go to the days before, back to the start of the history of the relay.
+
 The iOS simulator gets no real push from APNs. For a local demo, `BOO_EXPO_PUSH_URL` (only
 `http://localhost` or `127.0.0.1`) points the token request to a fake Expo service, and
 `xcrun simctl push` hands a notification to the simulator.

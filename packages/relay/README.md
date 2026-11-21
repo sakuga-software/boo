@@ -134,6 +134,38 @@ failing, conflicts, merged, or when it starts to stall.
   does. No second try: a request that ran out of time can still be delivered.
 - **A tap** opens `boo://pull/<owner>/<repo>/<number>`, the screen of the pull request in the app.
 
+### Snooze, work hours and recaps (BOO-35)
+
+The key `quiet` of the settings holds the pushes of a user:
+
+```json
+{
+  "quiet": {
+    "snoozeUntil": "2026-11-21T17:00:00Z",
+    "through": ["ready"],
+    "workHours": { "days": [1, 2, 3, 4, 5], "start": "09:00", "end": "18:00", "timeZone": "Europe/Paris" }
+  }
+}
+```
+
+- **The hold.** Before `snoozeUntil`, or outside `workHours` (the days go from 0, Sunday, to 6), the
+  relay sends nothing. It keeps each change in `state.db` (`push_held`). The states of `through` still
+  go out at once.
+- **The recaps.** The relay checks the holds every minute. The recap is one notification for each phone:
+  the title gives what needs the user and what is ready to merge, the body names them, then the count of
+  the merges. A recap with nothing in it is not sent. A tap opens `boo://day`.
+  - At the end of the work hours (in the next 30 minutes, for a relay that restarts), the recap of the
+    day, once a day. It also empties the held changes, so a snooze that ends then gives no second recap.
+  - At the end of a hold, the recap of the hold. On a Monday after a hold of more than 36 hours, its
+    title starts with "Over the weekend".
+- **`GET /quiet`** gives `{ "holding", "held" }`: the relay holds the pushes now, and the count of the
+  changes that wait for the recap.
+- **`GET /state/day?date=YYYY-MM-DD&tz=<IANA zone>`** gives the work of one day of the user, from the
+  history (BOO-9): the pull requests merged that day in the repositories that the session reads, with
+  their agent, their count of reviews and their first time on the relay, the count of the day before
+  (`previousMerged`), the reviews and the red checks of the day, and the start of the history
+  (`historySince`).
+
 ## Merge from the phone
 
 `POST /merge` takes `{ "repo": "owner/name", "number", "method": "squash" | "merge" | "rebase",

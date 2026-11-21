@@ -194,6 +194,17 @@ export class StateStore {
         stalled INTEGER NOT NULL,
         PRIMARY KEY (login, key)
       );
+      CREATE TABLE IF NOT EXISTS push_held (
+        login TEXT NOT NULL,
+        key TEXT NOT NULL,
+        push TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        PRIMARY KEY (login, key, push)
+      );
+      CREATE TABLE IF NOT EXISTS push_recaps (
+        login TEXT PRIMARY KEY,
+        day TEXT NOT NULL
+      );
     `);
   }
 
@@ -534,6 +545,95 @@ export class StateStore {
       )
       .run(login.toLowerCase(), keyOf(pr), mark.state, mark.stalled ? 1 : 0);
   }
+
+  /** BOO-35: keeps the pushes that a hold stops, until the recap at its end. A second push of a state keeps the first time. */
+  hold(login: string, notes: readonly { pr: Pick<PullRequest, 'repo' | 'number'>; push: string }[], at: number): void {
+    const insert = this.db.prepare('INSERT OR IGNORE INTO push_held (login, key, push, at) VALUES (?, ?, ?, ?)');
+    for (const { pr, push } of notes) insert.run(login.toLowerCase(), keyOf(pr), push, at);
+  }
+
+  /** The pushes that wait for the recap of `login`, the oldest first. */
+  heldOf(login: string): HeldPush[] {
+    return this.db
+      .prepare('SELECT key, push, at FROM push_held WHERE login = ? ORDER BY at, key')
+      .all(login.toLowerCase()) as unknown as HeldPush[];
+  }
+
+  clearHeld(login: string): void {
+    this.db.prepare('DELETE FROM push_held WHERE login = ?').run(login.toLowerCase());
+  }
+
+  /** The users that have pushes that wait for a recap. */
+  loginsWithHeld(): string[] {
+    return (this.db.prepare('SELECT DISTINCT login FROM push_held').all() as { login: string }[]).map(
+      ({ login }) => login,
+    );
+  }
+
+  /** The local date (`YYYY-MM-DD`) of the last recap of the day of `login`. */
+  recapDay(login: string): string | undefined {
+    const row = this.db.prepare('SELECT day FROM push_recaps WHERE login = ?').get(login.toLowerCase()) as
+      | { day: string }
+      | undefined;
+    return row?.day;
+  }
+
+  setRecapDay(login: string, day: string): void {
+    this.db
+      .prepare(
+        'INSERT INTO push_recaps (login, day) VALUES (?, ?) ON CONFLICT (login) DO UPDATE SET day = excluded.day',
+      )
+      .run(login.toLowerCase(), day);
+  }
+
+  /**
+   * BOO-35: the work of `login` between `from` and `to` (milliseconds): the pull requests merged in
+   * that time, with their title if the relay still has it, the reviews and the checks that turned red.
+   */
+  workBetween(login: string, from: number, to: number): DayWork {
+    const user = login.toLowerCase();
+    const merged = (
+      this.db
+        .prepare('SELECT * FROM history_pulls WHERE login = ? AND merged_at IS NOT NULL ORDER BY merged_at DESC')
+        .all(user) as unknown as HistoryRow[]
+    )
+      .map(toHistoryPull)
+      .filter((pull) => {
+        const at = Date.parse(pull.mergedAt ?? '');
+        return at >= from && at < to;
+      })
+      .map((pull) => ({ ...pull, title: this.pull(pull)?.pr.title ?? '' }));
+    const count = (where: string) =>
+      (
+        this.db
+          .prepare(`SELECT COUNT(*) AS n FROM history_events WHERE login = ? AND at >= ? AND at < ? AND ${where}`)
+          .get(user, from, to) as { n: number }
+      ).n;
+    const since = this.db.prepare('SELECT MIN(first_seen_at) AS at FROM history_pulls WHERE login = ?').get(user) as {
+      at: number | null;
+    };
+    return {
+      merged,
+      reviews: count("event = 'review'"),
+      redChecks: count("event = 'check' AND json_extract(data, '$.to') = 'failing'"),
+      historySince: since.at,
+    };
+  }
+}
+
+/** A push that a hold stopped. `key` is `owner/name#number` in lower case. */
+export interface HeldPush {
+  key: string;
+  push: string;
+  at: number;
+}
+
+export interface DayWork {
+  merged: (HistoryPull & { title: string })[];
+  reviews: number;
+  redChecks: number;
+  /** The first time that the history saw a pull request of the user, or null. */
+  historySince: number | null;
 }
 
 /** A push token of a phone, and the session that registered it. */

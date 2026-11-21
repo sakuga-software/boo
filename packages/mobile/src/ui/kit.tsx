@@ -347,6 +347,8 @@ export function Notice({
         <Pressable
           accessibilityRole="button"
           onPress={action.onPress}
+          // The button is 36 high: the slop makes a target of 44 or more.
+          hitSlop={6}
           style={({ pressed }) => [
             styles.noticeButton,
             { backgroundColor: palette.noticeButton },

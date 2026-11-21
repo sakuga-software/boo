@@ -3,6 +3,10 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useActivity } from '../../activity/activity-context';
+import { dateOf, todaySummary } from '../../day/day';
+import { useDay } from '../../day/use-day';
+import { listView } from '../../pulls/list';
+import { usePullsContext } from '../../pulls/pulls-context';
 import { groupByDay, isUnread, type ActivityEvent } from '../../activity/events';
 import { accountAvatar } from '../../ui/avatars';
 import { Icon } from '../../ui/icon';
@@ -80,6 +84,55 @@ function EventRow({
   );
 }
 
+/** BOO-35: the day at the top of the activity. A tap opens the day screen. */
+function TodayCard({ palette, now, onPress }: { palette: Palette; now: Date; onPress: () => void }) {
+  const { pulls } = usePullsContext();
+  const view = listView(pulls);
+  const day = useDay(dateOf(now), 'at' in view ? view.at.getTime() : undefined);
+  const summary = todaySummary(
+    'reports' in view ? view.reports : [],
+    day.status === 'ready' ? day.work : undefined,
+    now,
+  );
+  const figures = [
+    { value: summary.merged === undefined ? '–' : String(summary.merged), label: 'merged' },
+    { value: String(summary.needs), label: 'need you', color: summary.needs > 0 ? palette.tones.red : undefined },
+    { value: String(summary.ready), label: 'ready' },
+    { value: summary.median ?? '–', label: 'median merge' },
+  ];
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Today: ${figures.map(({ value, label }) => `${value} ${label}`).join(', ')}. Open the day.`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.today,
+        { backgroundColor: palette.surface, boxShadow: palette.cardShadow },
+        pressed && styles.pressed,
+      ]}
+    >
+      <View style={styles.todayHead}>
+        <Label weight={700} size={15} color={palette.text} style={styles.grow}>
+          Today
+        </Label>
+        <Icon name="chevronRight" size={14} color={palette.muted} />
+      </View>
+      <View style={styles.figures}>
+        {figures.map(({ value, label, color }) => (
+          <View key={label} style={styles.figure}>
+            <Label weight={700} size={20} color={color ?? palette.text}>
+              {value}
+            </Label>
+            <Label size={12} color={palette.muted} lines={2}>
+              {label}
+            </Label>
+          </View>
+        ))}
+      </View>
+    </Pressable>
+  );
+}
+
 // The activity: the changes of the pull requests that this phone saw, newest first.
 export default function ActivityScreen() {
   const palette = usePalette();
@@ -126,6 +179,7 @@ export default function ActivityScreen() {
         </View>
       </View>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <TodayCard palette={palette} now={now} onPress={() => router.push('/day/today')} />
         {groups.length === 0 ? (
           <View style={styles.empty}>
             <Label weight={600} size={15} color={palette.text}>
@@ -183,5 +237,9 @@ const styles = StyleSheet.create({
   empty: { paddingVertical: 32, paddingHorizontal: 12, alignItems: 'center', gap: 6 },
   centered: { textAlign: 'center' },
   grow: { flex: 1 },
+  today: { borderRadius: 14, padding: 12, gap: 8 },
+  todayHead: { flexDirection: 'row', alignItems: 'center', minHeight: 20 },
+  figures: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  figure: { flexGrow: 1, flexBasis: 64, gap: 1 },
   pressed: { opacity: 0.6 },
 });

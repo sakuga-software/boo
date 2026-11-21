@@ -6,6 +6,8 @@ import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, V
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePullsContext } from '../../pulls/pulls-context';
 import { usePushStatus } from '../../push/push-context';
+import { untilWords, workHoursWords } from '../../quiet/quiet';
+import { useQuiet } from '../../quiet/quiet-context';
 import { pushLine } from '../../push/status';
 import { canMergeIn } from '../../pulls/merge';
 import { useRelayContext } from '../../relay/relay-context';
@@ -17,6 +19,7 @@ import { Icon } from '../../ui/icon';
 import type { IconName } from '../../ui/icons';
 import { BigButton, Card, divider, GroupTitle, Label, Notice, Toggle, Well } from '../../ui/kit';
 import type { Palette } from '../../ui/theme';
+import { useNow } from '../../ui/use-now';
 import { usePalette } from '../../ui/use-palette';
 
 /** A row of a card of the settings: an icon, a label, a value, and a chevron when it opens a screen. */
@@ -77,6 +80,8 @@ export default function SettingsScreen() {
   const relay = useRelayContext();
   const { live } = usePullsContext();
   const push = usePushStatus();
+  const quiet = useQuiet();
+  const now = useNow();
   const { remote, retry, save } = useSettings();
   const installations = useInstallations();
   // The merge is on if the App can merge in the organization, or in each account with no organization set.
@@ -212,57 +217,88 @@ export default function SettingsScreen() {
           </Label>
         </Section>
       );
-      notify = (
-        <Section palette={palette} title="Notify me when a pull request">
-          {denied ? (
-            <Notice
+      const held = quiet.held ? ` · ${quiet.held} wait` : '';
+      const hold = (
+        <Section palette={palette} title="Notifications">
+          <Card palette={palette}>
+            <Row
               palette={palette}
-              icon="bellOff"
-              action={{ label: 'Open Settings', onPress: () => void Linking.openSettings() }}
-            >
-              <Label size={13} color={palette.noticeText}>
-                iOS blocks the notifications of boo
-              </Label>
-            </Notice>
-          ) : null}
-          <Card palette={palette} style={denied && styles.dimmed}>
-            {PUSH_ROWS.map((row, index) => {
-              const on = !denied && pushOn(config.settings, row.key);
-              return (
-                <View key={row.key} style={[styles.pushRow, divider(palette, index)]}>
-                  <Well
-                    palette={palette}
-                    icon={row.icon}
-                    color={palette.tones[row.tone]}
-                    size={26}
-                    iconSize={14}
-                    strokeWidth={2.6}
-                  />
-                  <Label size={14} color={palette.text} style={styles.grow}>
-                    {row.label}
-                  </Label>
-                  <Toggle
-                    palette={palette}
-                    label={`Notify me when a pull request ${row.label}`}
-                    value={on}
-                    disabled={denied || remote.saving}
-                    onChange={(next) => void toggle(row.key, next)}
-                  />
-                </View>
-              );
-            })}
+              index={0}
+              icon={quiet.until ? 'bellOff' : 'bell'}
+              label={quiet.until ? 'Snoozed' : 'Snooze'}
+              value={quiet.until ? `until ${untilWords(quiet.until, now)}${held}` : 'Off'}
+              valueColor={quiet.until ? palette.noticeText : undefined}
+              valueWeight={quiet.until ? 500 : 400}
+              onPress={() => router.push('/snooze')}
+            />
+            <Row
+              palette={palette}
+              index={1}
+              icon="clock"
+              label="Work hours"
+              value={workHoursWords(config.settings.quiet?.workHours)}
+              onPress={() => router.push('/work-hours' as Href)}
+            />
           </Card>
-          {push.status !== 'registered' && !denied ? (
-            <Label size={12} color={palette.muted} lines={3} style={styles.footnote}>
-              {pushLine(push)}
-            </Label>
-          ) : null}
-          {(problem ?? remote.error) ? (
-            <Label size={13} color={palette.tones.red} lines={3} style={styles.footnote}>
-              {problem ?? remote.error}
-            </Label>
-          ) : null}
+          <Label size={12} color={palette.muted} lines={3} style={styles.footnote}>
+            Outside work hours or during a snooze, boo holds pushes and sends one recap.
+          </Label>
         </Section>
+      );
+      notify = (
+        <>
+          {hold}
+          <Section palette={palette} title="Notify me when a pull request">
+            {denied ? (
+              <Notice
+                palette={palette}
+                icon="bellOff"
+                action={{ label: 'Open Settings', onPress: () => void Linking.openSettings() }}
+              >
+                <Label size={13} color={palette.noticeText}>
+                  iOS blocks the notifications of boo
+                </Label>
+              </Notice>
+            ) : null}
+            <Card palette={palette} style={denied && styles.dimmed}>
+              {PUSH_ROWS.map((row, index) => {
+                const on = !denied && pushOn(config.settings, row.key);
+                return (
+                  <View key={row.key} style={[styles.pushRow, divider(palette, index)]}>
+                    <Well
+                      palette={palette}
+                      icon={row.icon}
+                      color={palette.tones[row.tone]}
+                      size={26}
+                      iconSize={14}
+                      strokeWidth={2.6}
+                    />
+                    <Label size={14} color={palette.text} style={styles.grow}>
+                      {row.label}
+                    </Label>
+                    <Toggle
+                      palette={palette}
+                      label={`Notify me when a pull request ${row.label}`}
+                      value={on}
+                      disabled={denied || remote.saving}
+                      onChange={(next) => void toggle(row.key, next)}
+                    />
+                  </View>
+                );
+              })}
+            </Card>
+            {push.status !== 'registered' && !denied ? (
+              <Label size={12} color={palette.muted} lines={3} style={styles.footnote}>
+                {pushLine(push)}
+              </Label>
+            ) : null}
+            {(problem ?? remote.error) ? (
+              <Label size={13} color={palette.tones.red} lines={3} style={styles.footnote}>
+                {problem ?? remote.error}
+              </Label>
+            ) : null}
+          </Section>
+        </>
       );
     } else if (remote.status === 'failed')
       follows = (

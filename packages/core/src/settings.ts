@@ -1,5 +1,6 @@
 import { AGENT_COMMANDS, BOTS, mentionProblem, RESERVED_KEYS } from './actions.js';
 import { parseMergePolicy, type MergePolicy } from './policy.js';
+import { parseQuiet, type Quiet } from './quiet.js';
 
 export const SETTINGS = [
   { key: 'hideMerged', label: 'Hide the merged pull requests', fallback: true },
@@ -78,6 +79,8 @@ export type Settings = Record<SettingKey, boolean> & {
   reviewerChecks?: string[];
   /** The push notifications that the user turned on or off, by state. A missing state is on. */
   push?: Partial<Record<PushState, boolean>>;
+  /** BOO-35: the snooze and the work hours, during which the relay holds the pushes. */
+  quiet?: Quiet;
 };
 
 /** True if the user gets a push notification when a pull request enters `state`. */
@@ -221,6 +224,11 @@ export function parseSettings(value: unknown): Settings {
     );
     if (Object.keys(switches).length > 0) settings.push = switches;
   }
+  const quiet = parseQuiet(
+    (value as Record<string, unknown>).quiet,
+    PUSH_STATES.map(({ key }) => key),
+  );
+  if (quiet) settings.quiet = quiet;
   const mergePolicy = parseMergePolicy((value as Record<string, unknown>).mergePolicy);
   if (mergePolicy) settings.mergePolicy = mergePolicy;
   const custom = (value as Record<string, unknown>).customBots;
