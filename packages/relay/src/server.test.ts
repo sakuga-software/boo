@@ -936,6 +936,60 @@ test('GET /state gives the reports of the user, only in the repositories that it
   );
 });
 
+test('GET /state/day gives the merges of a local day in the repositories that the user reads, and GET /quiet the hold', async (t) => {
+  const { base, store } = await startStatefulRelay(t);
+  const merged = (repo: string, number: number, mergedAt: string) =>
+    ({ repo, number, state: 'merged', agent: { kind: 'claude' }, mergedAt, mergedBy: 'alice' }) as never;
+  const at = Date.parse('2026-11-20T08:00:00Z');
+  store.savePull({ repo: 'acme/web', number: 1, title: 'PR 1', url: 'u' }, { snapshot: snapshotOf('a1') }, at);
+  store.recordHistory(
+    'alice',
+    [
+      // 20 November, 23:30 in Paris: the day of the 20th, not the 21st.
+      merged('acme/web', 1, '2026-11-20T22:30:00Z'),
+      merged('acme/secret', 2, '2026-11-20T10:00:00Z'),
+      merged('acme/web', 3, '2026-11-19T10:00:00Z'),
+    ],
+    [],
+    at,
+  );
+  const session = await login(base, 'ghu_alice');
+  const auth = { headers: { authorization: `Bearer ${session}` } };
+  assert.equal((await fetch(`${base}/state/day?date=2026-11-20&tz=Europe/Paris`)).status, 401);
+  assert.equal((await fetch(`${base}/state/day?date=20-11-2026`, auth)).status, 400);
+  assert.equal((await fetch(`${base}/state/day?date=2026-11-20&tz=Mars/Olympus`, auth)).status, 400);
+  const day = (await (await fetch(`${base}/state/day?date=2026-11-20&tz=Europe/Paris`, auth)).json()) as Record<
+    string,
+    unknown
+  >;
+  assert.deepEqual(day, {
+    date: '2026-11-20',
+    timeZone: 'Europe/Paris',
+    merged: [
+      {
+        repo: 'acme/web',
+        number: 1,
+        title: 'PR 1',
+        author: 'alice',
+        agent: 'claude',
+        mergedAt: '2026-11-20T22:30:00Z',
+        mergedBy: 'alice',
+        reviews: 0,
+        firstSeenAt: '2026-11-20T08:00:00.000Z',
+      },
+    ],
+    previousMerged: 1,
+    reviews: 0,
+    redChecks: 0,
+    historySince: '2026-11-20T08:00:00.000Z',
+  });
+
+  assert.deepEqual(await (await fetch(`${base}/quiet`, auth)).json(), { holding: false, held: 0 });
+  store.hold('alice', [{ pr: { repo: 'acme/web', number: 1 }, push: 'conflicts' }], at);
+  assert.equal((await put(base, session, { org: 'acme', quiet: { snoozeUntil: '2099-01-01T00:00:00Z' } })).status, 200);
+  assert.deepEqual(await (await fetch(`${base}/quiet`, auth)).json(), { holding: true, held: 1 });
+});
+
 test('GET /state answers 503 on a relay with no state', async (t) => {
   const { base } = await startRelay(t);
   const session = await login(base, 'ghu_alice');

@@ -4,6 +4,8 @@ import { useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { untilWords } from '../quiet/quiet';
+import { useQuiet } from '../quiet/quiet-context';
 import { useRelayContext } from '../relay/relay-context';
 import { Icon } from '../ui/icon';
 import { GHOST } from '../ui/icons';
@@ -50,6 +52,7 @@ export function PullList() {
   const { pulls, live, refresh } = usePullsContext();
   const toast = useMergeToast();
   const now = useNow();
+  const quiet = useQuiet();
   const scroll = useRef<ScrollView>(null);
   const [offsets, setOffsets] = useState<Partial<Record<Group, number>>>({});
   const view = listView(pulls);
@@ -92,6 +95,23 @@ export function PullList() {
           </Label>
         </View>
       ) : null}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={quiet.until ? `Snoozed until ${untilWords(quiet.until, now)}` : 'Snooze notifications'}
+        onPress={() => router.push('/snooze')}
+        style={({ pressed }) => [
+          styles.bell,
+          { backgroundColor: quiet.until ? palette.noticeBg : palette.surface, boxShadow: palette.cardShadow },
+          pressed && styles.pressed,
+        ]}
+      >
+        <Icon
+          name={quiet.until ? 'bellOff' : 'bell'}
+          size={20}
+          color={quiet.until ? palette.noticeText : palette.accent}
+          strokeWidth={1.9}
+        />
+      </Pressable>
     </View>
   );
 
@@ -208,7 +228,7 @@ export function PullList() {
           {counts.reviewing > 0 ? section('reviewing') : null}
           <Pressable
             accessibilityRole="button"
-            onPress={() => router.navigate('/activity')}
+            onPress={() => router.push('/day/today')}
             style={({ pressed }) => [
               styles.merged,
               { backgroundColor: palette.surface, boxShadow: palette.cardShadow },
@@ -236,6 +256,20 @@ export function PullList() {
           <Notice palette={palette} action={{ label: 'Install', onPress: () => relay.install(signedIn.installUrl!) }}>
             <Label size={13} color={palette.noticeText}>
               The boo App is not installed on your accounts
+            </Label>
+          </Notice>
+        </View>
+      ) : null}
+      {quiet.until ? (
+        <View style={styles.banner}>
+          <Notice
+            palette={palette}
+            action={quiet.snooze && { label: 'Resume', onPress: () => void quiet.snooze?.(undefined) }}
+          >
+            <Label size={13} color={palette.noticeText} lines={2}>
+              {`Snoozed until ${untilWords(quiet.until, now)}.${
+                quiet.held ? ` ${quiet.held} change${quiet.held === 1 ? '' : 's'} wait for the recap.` : ''
+              }`}
             </Label>
           </Notice>
         </View>
@@ -284,6 +318,7 @@ const styles = StyleSheet.create({
   },
   brand: { letterSpacing: -0.44 },
   live: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  bell: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   liveDot: { width: 7, height: 7, borderRadius: 4 },
   banner: { paddingHorizontal: 16, paddingBottom: 10 },
   tiles: { flexDirection: 'row', gap: 6, paddingHorizontal: 16, paddingBottom: 12 },

@@ -7,6 +7,8 @@ test('a tap opens the pull request that the relay names, or the list', () => {
   assert.equal(pathOf({ url: 'boo://pull/acme/web%20app/3/', pr: 'acme/web app#3' }), undefined);
   assert.equal(pathOf({ url: 'boo://pull/my-org/my.repo_2/7' }), '/pull/my-org/my.repo_2/7');
   assert.equal(pathOf({ url: 'boo://' }), '/');
+  // A recap opens the day.
+  assert.equal(pathOf({ url: 'boo://day', recap: 'day' }), '/day/today');
 });
 
 test('any other value opens nothing', () => {
@@ -18,6 +20,7 @@ test('any other value opens nothing', () => {
     { url: 3 },
     { url: 'https://evil.test/pull/acme/web/12' },
     { url: 'boo://settings' },
+    { url: 'boo://day/2026-11-21' },
     { url: 'boo://pull/acme/web' },
     { url: 'boo://pull/acme/web/0' },
     { url: 'boo://pull/acme/web/12/files' },

@@ -1,5 +1,6 @@
 import type { WatchEvent } from '@sakuga-software/boo-core/events';
 import type { PullRequestReport } from '@sakuga-software/boo-core/report';
+import { held, instantOf, localTime, snoozed } from '@sakuga-software/boo-core/quiet';
 import { PUSH_STATES, pushOn, type PushState } from '@sakuga-software/boo-core/settings';
 import { SessionExpired } from './access.js';
 import type { Reports, UserState } from './reports.js';
@@ -31,7 +32,7 @@ export interface ExpoMessage {
   body: string;
   sound: 'default';
   /** `url` is the screen that a tap opens. */
-  data: { url: string; pr?: string; state?: PushState };
+  data: { url: string; pr?: string; state?: PushState; recap?: 'day' | 'hold' };
 }
 
 interface ExpoTicket {
@@ -188,8 +189,12 @@ interface Note {
 /** More changes than this in one window give one notification that counts them. */
 export const MAX_SINGLE = 3;
 
+const readableNotes = (notes: readonly Note[], repos: Set<string>) =>
+  notes.filter(({ report }) => repos.has(report.repo.toLowerCase()));
+
 /** The messages of the changes of one window, for one phone. */
 export function messagesOf(notes: readonly Note[], token: string): ExpoMessage[] {
+  if (notes.length === 0) return [];
   if (notes.length > MAX_SINGLE) {
     const lines = notes.slice(0, 5).map(({ report, push }) => `${LABELS[push]}: ${prOf(report)}`);
     if (notes.length > 5) lines.push(`and ${notes.length - 5} more`);
@@ -231,6 +236,58 @@ export interface PushOptions {
   receiptsAfterMs?: number;
   log?: (message: string) => void;
   error?: (error: unknown) => void;
+  /** BOO-35: the time between two checks of the ends of the holds. */
+  clockMs?: number;
+  now?: () => number;
+}
+
+/** The states of a report that need the user, for a recap. */
+const NEEDS_YOU = new Set(['changes requested', 'checks failing', 'conflicts']);
+
+const needsYou = (report: PullRequestReport) => NEEDS_YOU.has(report.state) || (report.actions ?? []).length > 0;
+
+/** `name#number`, with no owner: a recap names several pull requests on few lines. */
+const shortPr = ({ repo, number }: Pick<PullRequestReport, 'repo' | 'number'>) =>
+  `${repo.slice(repo.indexOf('/') + 1)}#${number}`;
+
+function reasonOf(report: PullRequestReport): string {
+  if (report.state === 'checks failing')
+    return report.checks.failing[0] ? `${report.checks.failing[0]} failed` : 'checks failing';
+  if (NEEDS_YOU.has(report.state)) return report.state;
+  const action = (report.actions ?? [])[0];
+  if (action?.reason === 'review') return 'needs a review';
+  return action?.reason === 'threads' ? 'unresolved threads' : 'action required';
+}
+
+export interface Recap {
+  /** `day`: the end of the work hours. `hold`: the end of a snooze, or the start of the work hours. */
+  kind: 'day' | 'hold';
+  reports: readonly PullRequestReport[];
+  /** The count of the pull requests merged in the time of the recap. */
+  merged: number;
+  /** The hold covered a weekend. */
+  weekend?: boolean;
+}
+
+/**
+ * BOO-35: the one notification at the end of a hold. The title carries what needs the user, the body
+ * names it. Undefined if nothing happened and nothing waits: an empty recap is not sent.
+ */
+export function recapOf({ kind, reports, merged, weekend }: Recap, token: string): ExpoMessage | undefined {
+  const needs = reports.filter(needsYou);
+  const ready = reports.filter((report) => report.state === 'ready to merge' && !needsYou(report));
+  if (needs.length + ready.length + merged === 0) return undefined;
+  const counts = [
+    ...(needs.length > 0 ? [`${needs.length} need${needs.length === 1 ? 's' : ''} you`] : []),
+    ...(ready.length > 0 ? [`${ready.length} ready to merge`] : []),
+  ];
+  let title = counts.length > 0 ? counts.join(' · ') : `${merged} merged, nothing waits`;
+  if (weekend) title = `Over the weekend: ${title}`;
+  const lines = needs.slice(0, 3).map((report) => `${shortPr(report)} ${reasonOf(report)}`);
+  if (needs.length > 3) lines.push(`${needs.length - 3} more`);
+  if (merged > 0 && counts.length > 0) lines.push(`${merged} merged ${kind === 'day' ? 'today' : 'meanwhile'}`);
+  if (lines.length === 0) lines.push(kind === 'day' ? 'Nothing waits for you.' : 'Nothing waits for you now.');
+  return { to: token, title, body: cut(lines.join(' · ')), sound: 'default', data: { url: 'boo://day', recap: kind } };
 }
 
 /** A pull request that changed in the current window, and its mark before the window. */
@@ -262,8 +319,18 @@ export class PushNotifier {
   private readonly receiptsAfterMs: number;
   private readonly log: (message: string) => void;
   private readonly error: (error: unknown) => void;
+  private readonly now: () => number;
+  private readonly clock: NodeJS.Timeout;
+  /** The last reports of each user, by login in lower case: the recaps read them. */
+  private readonly latest = new Map<string, readonly PullRequestReport[]>();
 
   constructor(private readonly options: PushOptions) {
+    this.now = options.now ?? Date.now;
+    this.clock = setInterval(
+      () => void this.tick().catch((error: unknown) => this.error(error)),
+      options.clockMs ?? 60_000,
+    );
+    this.clock.unref();
     this.windowMs = options.windowMs ?? 30_000;
     this.receiptsAfterMs = options.receiptsAfterMs ?? 15 * 60_000;
     this.log = options.log ?? ((message) => console.log(message));
@@ -280,6 +347,7 @@ export class PushNotifier {
 
   private onChange(login: string, before: UserState | undefined, after: UserState, events: readonly WatchEvent[]) {
     const { store } = this.options;
+    this.latest.set(login.toLowerCase(), after.reports);
     if (!before) {
       // The first computation of the user since the start of the relay gives no event: each report is
       // compared with its mark. A report with no mark is new to the notifications: it gives none.
@@ -341,7 +409,7 @@ export class PushNotifier {
   }
 
   private async send(login: string, changed: readonly Pending[]): Promise<void> {
-    const { store, sessions, access, expo } = this.options;
+    const { store } = this.options;
     const settings = store.config(login)?.settings;
     const notes: Note[] = [];
     for (const { report, before } of changed) {
@@ -352,6 +420,85 @@ export class PushNotifier {
       if (push && settings && pushOn(settings, push)) notes.push({ report, push });
     }
     if (notes.length === 0) return;
+    const quiet = settings?.quiet;
+    if (held(quiet, new Date(this.now()))) {
+      const through = new Set<string>(quiet?.through ?? []);
+      store.hold(
+        login,
+        notes.filter(({ push }) => !through.has(push)).map(({ report, push }) => ({ pr: report, push })),
+        this.now(),
+      );
+      const urgent = notes.filter(({ push }) => through.has(push));
+      if (urgent.length > 0)
+        await this.deliver(login, (token, repos) => messagesOf(readableNotes(urgent, repos), token));
+      return;
+    }
+    await this.deliver(login, (token, repos) => messagesOf(readableNotes(notes, repos), token));
+  }
+
+  /**
+   * BOO-35: the recaps. For each user with work hours, the end of the work hours sends the recap of the
+   * day, once a day. Then, for each user whose hold ended, the recap of the hold. The recap of the day
+   * empties the held pushes, so the two never go out together.
+   */
+  async tick(): Promise<void> {
+    const { store } = this.options;
+    const now = new Date(this.now());
+    for (const login of store.logins()) {
+      const quiet = store.config(login)?.settings.quiet;
+      const hours = quiet?.workHours;
+      const reports = this.latest.get(login.toLowerCase());
+      // A snooze that runs past the end of the work hours holds the recap of the day too: its own end sends the recap.
+      if (!hours || !reports || snoozed(quiet, now)) continue;
+      const local = localTime(now, hours.timeZone);
+      const end = instantOf(local.date, hours.end, hours.timeZone).getTime();
+      // A relay that stops at the end of the work hours sends the recap at its start, in the next 30 minutes.
+      const due = hours.days.includes(local.day) && now.getTime() >= end && now.getTime() < end + 30 * 60_000;
+      if (!due || store.recapDay(login) === local.date) continue;
+      store.setRecapDay(login, local.date);
+      store.clearHeld(login);
+      const merged = store.workBetween(
+        login,
+        instantOf(local.date, '00:00', hours.timeZone).getTime(),
+        now.getTime(),
+      ).merged;
+      await this.sendRecap(login, { kind: 'day', reports }, merged);
+    }
+    for (const login of store.loginsWithHeld()) {
+      const quiet = store.config(login)?.settings.quiet;
+      const reports = this.latest.get(login.toLowerCase());
+      if (held(quiet, now) || !reports) continue;
+      const first = store.heldOf(login)[0]?.at ?? now.getTime();
+      store.clearHeld(login);
+      const merged = store.workBetween(login, first, now.getTime()).merged;
+      // Only the work hours give the zone of the user: with no work hours, no recap says "weekend".
+      const zone = quiet?.workHours?.timeZone;
+      const weekend = !!zone && localTime(now, zone).day === 1 && now.getTime() - first > 36 * 3_600_000;
+      await this.sendRecap(login, { kind: 'hold', reports, weekend }, merged);
+    }
+  }
+
+  private sendRecap(login: string, recap: Omit<Recap, 'merged'>, merged: readonly { repo: string }[]): Promise<void> {
+    return this.deliver(login, (token, repos) => {
+      const readable = (repo: string) => repos.has(repo.toLowerCase());
+      const message = recapOf(
+        {
+          ...recap,
+          reports: recap.reports.filter((report) => readable(report.repo)),
+          merged: merged.filter(({ repo }) => readable(repo)).length,
+        },
+        token,
+      );
+      return message ? [message] : [];
+    });
+  }
+
+  /** Sends the messages that `messagesFor` gives to each phone of `login`, for the repositories that its session reads. */
+  private async deliver(
+    login: string,
+    messagesFor: (token: string, repos: Set<string>) => ExpoMessage[],
+  ): Promise<void> {
+    const { store, sessions, access, expo } = this.options;
     const bySession = new Map<string, string[]>();
     for (const { token, session } of store.devicesOf(login))
       bySession.set(session, [...(bySession.get(session) ?? []), token]);
@@ -373,10 +520,8 @@ export class PushNotifier {
         else this.error(error);
         continue;
       }
-      const readable = notes.filter(({ report }) => repos.has(report.repo.toLowerCase()));
-      if (readable.length > 0)
-        for (const token of tokens)
-          for (const message of messagesOf(readable, token)) outgoing.push({ session: id, message });
+      for (const token of tokens)
+        for (const message of messagesFor(token, repos)) outgoing.push({ session: id, message });
     }
     const total = { sent: 0, accepted: 0, tickets: new Map<string, string>() };
     for (let start = 0; start < outgoing.length; start += CHUNK_SIZE) {
@@ -430,6 +575,7 @@ export class PushNotifier {
   /** Stops the windows and the reads of receipts. The changes that wait are not sent. */
   stop(): void {
     this.unsubscribe();
+    clearInterval(this.clock);
     for (const { timer } of this.pending.values()) clearTimeout(timer);
     this.pending.clear();
     for (const timer of this.timers) clearTimeout(timer);

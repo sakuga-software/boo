@@ -8,6 +8,7 @@ import {
   CHUNK_SIZE,
   expoPush,
   messagesOf,
+  recapOf,
   pullUrl,
   pushOf,
   PushNotifier,
@@ -15,7 +16,7 @@ import {
   type ExpoPush,
   type SendResult,
 } from './push.js';
-import { Reports } from './reports.js';
+import { keepHistory, Reports } from './reports.js';
 import type { Session } from './sessions.js';
 import { StateStore } from './state-store.js';
 
@@ -131,6 +132,8 @@ function setup({
     receiptsAfterMs: 10,
     log: (message) => logs.push(message),
     error: (error) => errors.push(error),
+    clockMs: 3_600_000,
+    now: () => clock,
   });
   store.setDevice(TOKEN, { session: 's1', login: 'alice' }, clock);
   const read = (number: number, patch: Partial<PullRequestSnapshot> = {}) => {
@@ -577,4 +580,177 @@ test('a pull request that enters the list again starts from its state then, not 
     sent.map(({ title }) => title),
     ['Conflicts: acme/web#1', 'Conflicts: acme/web#1'],
   );
+});
+
+// BOO-35. `start` is Monday 9 November 2026, 13:00 in Paris.
+const WORK = { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00', timeZone: 'Europe/Paris' };
+
+test('a snooze holds the pushes, lets the states of `through` out, and its end sends one recap', async () => {
+  const { reports, read, follow, flush, sent, store, notifier, advance } = setup({
+    settings: { quiet: { snoozeUntil: new Date(start + 60 * MINUTE).toISOString(), through: ['merged'] } },
+  });
+  keepHistory(reports, store, () => start);
+  follow(1, 2);
+  reports.get('alice');
+  read(1, { checks: red });
+  read(2, { status: 'merged', mergedBy: 'bob', mergedAt: new Date(start).toISOString() });
+  await flush();
+  assert.deepEqual(
+    sent.map(({ title }) => title),
+    ['Merged: acme/web#2'],
+  );
+  assert.deepEqual(
+    store.heldOf('alice').map(({ key, push }) => `${key} ${push}`),
+    ['acme/web#1 checksFailing'],
+  );
+  // Still in the snooze: no recap.
+  await notifier.tick();
+  await notifier.idle();
+  assert.equal(sent.length, 1);
+  advance(61 * MINUTE);
+  await notifier.tick();
+  await notifier.idle();
+  assert.deepEqual(sent.slice(1), [
+    {
+      to: TOKEN,
+      title: '1 needs you',
+      body: 'web#1 ci failed · 1 merged meanwhile',
+      sound: 'default',
+      data: { url: 'boo://day', recap: 'hold' },
+    },
+  ]);
+  assert.deepEqual(store.heldOf('alice'), []);
+  // One recap only.
+  await notifier.tick();
+  await notifier.idle();
+  assert.equal(sent.length, 2);
+});
+
+test('the end of the work hours sends the recap of the day once, and it takes the held pushes', async () => {
+  const { reports, read, follow, flush, sent, store, notifier, advance } = setup({
+    settings: { quiet: { workHours: WORK, snoozeUntil: new Date(start + 5 * 60 * MINUTE).toISOString() } },
+  });
+  follow(1);
+  reports.get('alice');
+  read(1, { mergeState: 'dirty' });
+  await flush();
+  assert.equal(sent.length, 0);
+  assert.equal(store.heldOf('alice').length, 1);
+  // 18:00 in Paris: the snooze ends then too, but only the recap of the day goes out.
+  advance(5 * 60 * MINUTE);
+  await notifier.tick();
+  await notifier.idle();
+  advance(MINUTE);
+  await notifier.tick();
+  await notifier.idle();
+  assert.deepEqual(
+    sent.map(({ title, body, data }) => ({ title, body, recap: data.recap })),
+    [{ title: '1 needs you', body: 'web#1 conflicts', recap: 'day' }],
+  );
+  assert.deepEqual(store.heldOf('alice'), []);
+});
+
+test('outside the work hours the pushes wait for the morning', async () => {
+  const { reports, read, follow, flush, sent, store, notifier, advance } = setup({
+    settings: { quiet: { workHours: WORK } },
+  });
+  follow(1);
+  reports.get('alice');
+  advance(6 * 60 * MINUTE); // 19:00
+  read(1, { checks: red });
+  await flush();
+  assert.equal(sent.length, 0);
+  assert.equal(store.heldOf('alice').length, 1);
+  advance(14 * 60 * MINUTE); // Tuesday 09:00
+  await notifier.tick();
+  await notifier.idle();
+  assert.deepEqual(
+    sent.map(({ title }) => title),
+    ['1 needs you'],
+  );
+});
+
+test('recapOf: the counts in the title, the names in the body, nothing when nothing happened', () => {
+  const report = (number: number, state: string, patch: Partial<PullRequestReport> = {}) =>
+    ({
+      repo: 'acme/web',
+      number,
+      state,
+      checks: { failing: [] },
+      actions: [],
+      ...patch,
+    }) as unknown as PullRequestReport;
+  assert.equal(recapOf({ kind: 'day', reports: [report(1, 'awaiting review')], merged: 0 }, TOKEN), undefined);
+  assert.deepEqual(recapOf({ kind: 'day', reports: [], merged: 3, weekend: true }, TOKEN), {
+    to: TOKEN,
+    title: 'Over the weekend: 3 merged, nothing waits',
+    body: 'Nothing waits for you.',
+    sound: 'default',
+    data: { url: 'boo://day', recap: 'day' },
+  });
+  const message = recapOf(
+    {
+      kind: 'day',
+      merged: 4,
+      reports: [
+        report(1, 'checks failing', { checks: { failing: ['test'] } as PullRequestReport['checks'] }),
+        report(2, 'approved', { actions: [{ reason: 'review', note: '' }] }),
+        report(3, 'ready to merge'),
+        report(4, 'conflicts'),
+        report(5, 'changes requested'),
+      ],
+    },
+    TOKEN,
+  );
+  assert.equal(message?.title, '4 need you · 1 ready to merge');
+  assert.equal(message?.body, 'web#1 test failed · web#2 needs a review · web#4 conflicts · 1 more · 4 merged today');
+});
+
+test('a snooze past the end of the work hours holds the recap of the day; its end sends one recap', async () => {
+  const { reports, read, follow, flush, sent, store, notifier, advance } = setup({
+    // Until Tuesday 10:00 in Paris.
+    settings: { quiet: { workHours: WORK, snoozeUntil: new Date(start + 21 * 60 * MINUTE).toISOString() } },
+  });
+  follow(1);
+  reports.get('alice');
+  read(1, { checks: red });
+  await flush();
+  advance(5 * 60 * MINUTE); // 18:00: no recap of the day during the snooze.
+  await notifier.tick();
+  await notifier.idle();
+  assert.equal(sent.length, 0);
+  assert.equal(store.heldOf('alice').length, 1);
+  advance(16 * 60 * MINUTE); // Tuesday 10:00: the snooze ends in the work hours.
+  await notifier.tick();
+  await notifier.idle();
+  assert.deepEqual(
+    sent.map(({ title, data }) => `${title} ${data.recap}`),
+    ['1 needs you hold'],
+  );
+});
+
+test('a hold that ends on a Monday says "weekend" only in the zone of the work hours', async () => {
+  // Monday 16 November 2026, 09:30 in Paris, after a snooze from Friday 13 November.
+  const monday = Date.parse('2026-11-16T08:30:00Z');
+  for (const [quiet, title] of [
+    [{ workHours: WORK }, 'Over the weekend: 1 needs you'],
+    [{}, '1 needs you'],
+  ] as const) {
+    const { reports, read, follow, flush, sent, store, notifier, advance } = setup({
+      settings: { quiet: { ...quiet, snoozeUntil: new Date(monday - MINUTE).toISOString() } },
+    });
+    follow(1);
+    reports.get('alice');
+    advance(Date.parse('2026-11-13T12:00:00Z') - start);
+    read(1, { checks: red });
+    await flush();
+    assert.equal(store.heldOf('alice').length, 1);
+    advance(monday - Date.parse('2026-11-13T12:00:00Z'));
+    await notifier.tick();
+    await notifier.idle();
+    assert.deepEqual(
+      sent.map(({ title: sentTitle }) => sentTitle),
+      [title],
+    );
+  }
 });

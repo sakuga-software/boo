@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { WatchEvent } from '@sakuga-software/boo-core/events';
+import { addDays, held, instantOf } from '@sakuga-software/boo-core/quiet';
 import { parseSettings, resolveRepos } from '@sakuga-software/boo-core/settings';
 import { Access, SessionExpired } from './access.js';
 import { changesAccess, changesOf } from './events.js';
@@ -250,6 +251,60 @@ export function createRelay(options: RelayOptions) {
   }
 
   /**
+   * BOO-35: the work of one day, `?date=YYYY-MM-DD&tz=<IANA zone>`: the pull requests merged that day
+   * in the repositories that the user reads now, the count of the day before, the reviews and the
+   * checks that turned red, and the first time of the history.
+   */
+  async function onGetDay(request: IncomingMessage, session: Session, response: ServerResponse): Promise<void> {
+    const { store } = stateOf();
+    const query = new URL(request.url ?? '/', 'http://relay').searchParams;
+    const date = query.get('date') ?? '';
+    const timeZone = query.get('tz') ?? 'UTC';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date)))
+      throw new HttpError(400, 'date must be YYYY-MM-DD');
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone });
+    } catch {
+      throw new HttpError(400, 'tz must be an IANA time zone');
+    }
+    const repos = await access.repos(session);
+    const login = session.user.login;
+    const startOf = (day: string) => instantOf(day, '00:00', timeZone).getTime();
+    const readable = <T extends { repo: string }>(pulls: T[]) =>
+      pulls.filter(({ repo }) => repos.has(repo.toLowerCase()));
+    const day = store.workBetween(login, startOf(date), startOf(addDays(date, 1)));
+    const before = store.workBetween(login, startOf(addDays(date, -1)), startOf(date));
+    response.setHeader('cache-control', 'no-store');
+    json(response, 200, {
+      date,
+      timeZone,
+      merged: readable(day.merged).map((pull) => ({
+        repo: pull.repo,
+        number: pull.number,
+        title: pull.title,
+        author: pull.author,
+        agent: pull.agent,
+        mergedAt: pull.mergedAt,
+        mergedBy: pull.mergedBy,
+        reviews: pull.reviews,
+        firstSeenAt: new Date(pull.firstSeenAt).toISOString(),
+      })),
+      previousMerged: readable(before.merged).length,
+      reviews: day.reviews,
+      redChecks: day.redChecks,
+      historySince: day.historySince === null ? null : new Date(day.historySince).toISOString(),
+    });
+  }
+
+  /** BOO-35: the hold of the pushes of the user now, and the count of the pushes that wait for its recap. */
+  function onGetQuiet(session: Session, response: ServerResponse): void {
+    const { store } = stateOf();
+    const quiet = store.config(session.user.login)?.settings.quiet;
+    response.setHeader('cache-control', 'no-store');
+    json(response, 200, { holding: held(quiet, new Date()), held: store.heldOf(session.user.login).length });
+  }
+
+  /**
    * The changes of the reports of the user, in the vocabulary of `boo --watch --events`, with `id` set
    * to the cursor of `GET /state`. A client reads `GET /state`, then opens the stream with its cursor in
    * `Last-Event-ID`: it gets the changes after that cursor, or `event: reset` if the relay cannot give
@@ -438,6 +493,10 @@ export function createRelay(options: RelayOptions) {
         return onEvents(request, response, authenticate(request));
       case 'GET /state':
         return onGetState(authenticate(request), response);
+      case 'GET /state/day':
+        return onGetDay(request, authenticate(request), response);
+      case 'GET /quiet':
+        return onGetQuiet(authenticate(request), response);
       case 'GET /state/events':
         return onStateEvents(request, response, authenticate(request));
       case 'GET /settings':
