@@ -127,6 +127,25 @@ You need an Expo account that is a member of `sakuga-software`, and for iOS an A
 
 `cli.appVersionSource` is `remote`: EAS keeps the build numbers, not `app.json`.
 
+## TestFlight on each push to main
+
+`.github/workflows/mobile.yml` delivers each push to `main` that changes the app (`packages/mobile`,
+`packages/core/src`, the lockfile):
+
+- **Only the JavaScript changed.** A `production` build with the same iOS fingerprint is finished on
+  EAS. The workflow publishes an update on the `production` channel: the TestFlight builds get it at
+  their next start, with no new build.
+- **The native side changed.** No build has the fingerprint. The workflow starts an EAS build with the
+  `production` profile and `--auto-submit`: EAS sends it to TestFlight when it ends.
+
+**Run workflow** on the Actions tab builds and submits, whatever changed. The workflow needs:
+
+1. The secret `EXPO_TOKEN` of the repository: an access token of a robot of the Expo account
+   `sakuga-software` (expo.dev → Account settings → Access tokens).
+2. An App Store Connect API key on EAS, for a submission with no double authentication:
+   `npx eas-cli credentials -p ios` → **App Store Connect: Manage your API Key** → let EAS make one
+   (role App Manager).
+
 ## Before the first build
 
 The EAS project is `boo` under the `sakuga-software` account
